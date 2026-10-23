@@ -9,9 +9,9 @@ It browses, likes, comments and posts across WeChat, Douyin, Bilibili, Weibo, X 
 **English** · [简体中文](README.zh-CN.md)
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/joshua1688/cyber-worker?style=social)](https://github.com/joshua1688/cyber-worker/stargazers)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-[Why this exists](#-why-this-exists) · [What is this](#-what-is-this) · [Features](#-features) · [Quick start](#-quick-start) · [Persona](#-persona) · [Roadmap](#-roadmap) · [FAQ](#-faq)
+**[🚀 Quick start →](#-quick-start)**
 
 </div>
 
@@ -24,6 +24,8 @@ I spend more and more time on social platforms, yet leave fewer and fewer real t
 If a twin could keep that presence alive on my behalf — in *my* way, not at machine speed — then when I go offline, the "me" online doesn't disappear.
 
 **cyber-worker** is the result of that idea.
+
+> Ah — I'm about to ascend. Immortality achieved. Cyber-immortality realized~~
 
 ## 📖 What is this
 
@@ -39,9 +41,11 @@ sequenceDiagram
     participant C as cyber-worker
     participant P as Social platforms
     U->>C: 08:30 Leave home
-    C->>P: Browse · Like · Comment
+    C->>P: Browse · Like
+    C-->>U: Comment drafts enter the pending queue
+    U->>C: Lunch break: approve / edit / reject
+    C->>P: Send the comments you approved
     Note over C: Following your interests and daily rhythm
-    C->>P: Post occasionally
     Note over C: 00:00 Enters quiet hours
     U->>C: 23:30 Back, reviews activity log
 ```
@@ -65,9 +69,12 @@ The value of a digital twin isn't how much it does — it's how much **what it d
 | :--- | :--- |
 | 👀 **Browsing** | Consumes your feed with your interest weights and dwell-time habits, not uniform scrolling |
 | ❤️ **Liking** | Decides from your historical preferences, with human-level uncertainty (not everything gets a like) |
-| 💬 **Commenting** | Replies in your voice, controlling length, tone, and emoji frequency |
-| 📝 **Posting** | Publishes occasionally, following your active hours and posting frequency — irregular but consistent |
+| 💬 **Commenting** | Watches for new posts and replies, drafts in your voice, and **puts every draft in the pending queue** — nothing is sent until you confirm |
+| 📝 **Posting** | Drafts posts following your active hours and posting frequency, **also through the pending queue** — irregular but consistent |
 | 🌙 **Rhythm simulation** | Has active and quiet hours. No late-night posts. Weekend behavior shifts |
+| 🙋 **Yields the computer** | Pauses automatically while you're using the machine and resumes when you leave; a panic hotkey stops it at any time |
+
+> Actions that speak for you — comments and posts — always go through the **pending queue** first. **Approve, edit and reject are all learning signals.** Once approvals and edits become rare and the drafts match how you write, you can enable "send without confirmation" per action in `config.toml`.
 
 ## 🌐 Supported platforms
 
@@ -75,45 +82,100 @@ The value of a digital twin isn't how much it does — it's how much **what it d
 
 | WeChat | Douyin | Bilibili | Weibo | X | Instagram |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| Moments ✅ | Video feed ✅ | Feed ✅ | Home ⬜ | Timeline ⬜ | Feed ⬜ |
+| Moments 🚧 | Video feed ⬜ | Feed ⬜ | Home ⬜ | Timeline ⬜ | Feed ⬜ |
 
 </div>
 
-> The platform layer is plugin-based. Adding a platform means implementing a shared behavior interface (docs in progress).
+> Legend: ⬜ todo · 🚧 in progress · ✅ done
+
+> The platform layer is made of **declarative platform packs**. Each platform is a directory containing only `platform.yaml` (capability → macro mapping, extraction fields), `pages.yaml` (page fingerprints, watch regions) and recorded macros. All platforms are driven by one generic `ScreenAdapter`. Built-in platforms work out of the box; for other platforms or private use cases, record and save a platform pack in `studio` — **no code changes needed**. Only unusually complex extraction needs an optional `hooks.py`.
 
 ## 🏗️ How it works
 
 ```mermaid
 flowchart LR
-    U["You<br/>studio record/edit"] --> S["studio<br/>visual editor"]
-    S --> M["macro<br/>record + execute + screenshot"]
-    E["engine<br/>decide: what to do"] --> M
-    M --> A["adapters<br/>WeChat / Bilibili / Douyin"]
+    E["engine<br/>decide: what to do"] -->|PlatformPort| A["adapters<br/>platform packs: where"]
+    A --> M["macro<br/>execute: how"]
+    M --> SCR(["Screen<br/>WeChat / Bilibili / Douyin"])
+    A -->|watch events · extracted content| E
+    E -->|drafts| Q[("pending queue")]
+    Q <-->|approve / edit / reject| S["studio<br/>your entry point"]
+    S -->|record / edit macros| M
     M --> R[("audit<br/>screenshots + logs")]
-    R --> U
+    R --> S
 ```
 
-1. **studio** — Visual editor where users record, edit, preview, and run macros
-2. **engine** — Decision layer: decides "what to do now" based on persona and timing
-3. **macro** — Execution layer: handles "how to do it" — recording, clicking, screenshots, audit logs
-4. **adapters** — Platform layer: binds macro's capabilities to WeChat / Bilibili / Douyin
-5. **audit** — Saves one screenshot + log per action; review by suspicion level afterward
+1. **studio**: The visual editor and your main entry point. Record and edit macros, confirm pending actions and review the audit trail here.
+2. **engine**: The decision layer, deciding "what to do now". It watches for new content, picks timing from your rhythm, decides whether to engage, drafts text, and drives the pending-action workflows.
+3. **adapters**: The platform layer, deciding "where". The generic `ScreenAdapter` reads each platform pack's declarations to watch, extract and invoke macros.
+4. **macro**: The execution layer, deciding "how". It queues all actions globally, calibrates windows, performs human-like input and takes a screenshot after every step. It knows nothing about specific platforms.
+5. **infra**: Concrete implementations for storage (SQLite) and the LLM client.
+6. **audit**: One screenshot plus one log entry per action, reviewed afterward by suspicion level.
+
+> **Dependency direction:** engine depends only on the interfaces in `engine/ports/`; adapters and infra implement them; macro is platform-agnostic; all wiring happens in one place, `bootstrap.py`. Both the CLI and studio start through it.
+
+## 🔄 Comment & post workflow
+
+Detecting new content doesn't mean commenting on it. Most new content is just seen and passed over; only a little is worth engaging with.
+
+For the ones worth it, getting from discovery to sending takes five steps, and any step can stop the flow:
+
+```mermaid
+flowchart TD
+    W["Watch hit<br/>new Moments / feed post / reply"] --> B["① Extract + decide<br/>who posted, what, should I comment"]
+    B -->|no| Z["Done"]
+    B -->|yes| C["② Draft<br/>LLM with context and your past comments"]
+    C --> D["③ Confirm<br/>pending queue (may wait hours)"]
+    D -->|reject| R["Record reason<br/>shouldn't comment / not like me / skip"]
+    D -->|approve / edit| E["④ Execute<br/>global executor queue → open → verify page → locate → type → send"]
+    E --> F["⑤ Record<br/>screenshot + log → audit<br/>final text + diff → feedback learning"]
+    R --> Z
+    F --> Z
+```
+
+Who owns each step:
+
+| Step | Location | Notes |
+| :--- | :--- | :--- |
+| Watch | `engine/monitor.py` + `adapters/<platform>/pages.yaml` | Generic loop polls each platform's declared watch regions against baselines and emits "new content" events |
+| ① Extract | `adapters/<platform>/platform.yaml` (optional `hooks.py`) | Platform-specific. Declares which region to OCR for which fields (author, text, repost, hashtags) |
+| ① Decide | `engine/decision/policy_comment.py` | Generic. Relationship lists, frequency caps, random threshold, shared across platforms |
+| ② Draft | `engine/tone/generator.py` | Generic. Calls the LLM via `ports/llm.py` with only the minimum context needed plus your past comments |
+| ③ Confirm | `engine/ports/review.py` (implemented in `infra/sqlite/`) | Generic. The pending queue is domain logic; `studio/routes/pending.py` only displays it and submits your choice |
+| ④ Execute | `adapters/<platform>/templates/` → `macro/executor.py` | Platform macro + global executor. Mutually exclusive with other actions; verifies the page fingerprint before typing and sending, and aborts on mismatch |
+| ⑤ Record | `macro/audit/` + `engine/tone/feedback.py` | Screenshots and action logs go to audit; final text, diff and your choice go to feedback learning and behavior memory |
+| Orchestrate | `engine/workflow/comment.py` | A long-running state machine: `pending → approved / edited / rejected → executed / failed`. It triggers execution after confirmation; studio never calls macro directly |
+
+**Posting** uses the same pending queue, but starts differently: it isn't triggered by watching. `policy_post.py` picks a moment from your rhythm and posting frequency, and `engine/workflow/post.py` runs "timing → draft → confirm → execute → record".
+
+**Decisions use rules** (relationship lists, frequency caps, random threshold); **drafting uses an LLM** (with context and your past comments). Each of your three actions teaches something different: **approve** reinforces the style, an **edit**'s diff is the strongest signal, and **reject** either adjusts the decision ("shouldn't comment") or penalizes the phrasing ("not like me"), depending on the reason.
 
 ## 🔧 Tech stack
 
 | Layer | Choice | Purpose |
 | :--- | :--- | :--- |
-| Language | Python 3.11+ | Entire project |
-| Data models | Pydantic v2 | Step / Script definitions |
-| Mouse & keyboard | pynput | Recording + human-like input (underlying CGEvent) |
-| Screenshot / window targeting | macOS native | `screencapture` + `osascript` |
-| Web service | FastAPI + Uvicorn | studio/server.py |
+| Language | Python 3.11+ | Entire project (`src/` layout, managed with uv) |
+| Data models | Pydantic v2 | Step / Script, platform pack declarations |
+| Config | pydantic-settings + TOML | `config.toml` runtime config, `.env` secrets |
+| Storage | SQLite | `state.db`: pending queue, behavior memory, audit log |
+| LLM | Pluggable (via `ports/llm.py`), cloud API or local model | Comment / post drafting |
+| Mouse & keyboard | pynput (typing on Windows via SendInput) | Recording + human-like input (CGEvent on macOS) |
+| Screenshot / window targeting | macOS: `screencapture` + `osascript`; Windows: Win32 + Pillow | Find window by process name (optional title), resize, capture |
+| Web service | FastAPI + Uvicorn | studio |
 | Real-time | WebSocket | Live push of steps during recording |
-| Image processing | OpenCV | Screenshot diff, template matching |
-| OCR | PaddleOCR | Text-button targeting |
-| Frontend | Vanilla HTML + JS + Canvas | No framework |
+| Image processing | OpenCV | Region change detection, template matching, page fingerprints |
+| OCR | PaddleOCR | Text-button targeting, content extraction |
+| Frontend | Vanilla HTML + JS + Canvas | Web only, no frontend / desktop UI framework; dark / light appearance, settings center, onboarding tour |
 
-> **All platforms use screen-level macro operations**, including the web versions of Bilibili and Douyin. From the macro's perspective, a browser window and a client window are indistinguishable — both are just pixel regions on screen. Operating a browser via macros means the browser sees real CGEvent input, which is safer than CDP.
+## 🖱️ Execution rules
+
+- **All platforms use screen-level macro operations**, including the web versions of Bilibili and Douyin. From the macro's perspective, a browser window and a client window are indistinguishable — both are just pixel regions on screen. Operating a browser via macros means the browser sees real CGEvent input, which is safer than CDP.
+- **One mouse, one keyboard**: studio recording, manual runs and engine-scheduled actions all go through `macro/executor.py`, queued and mutually exclusive. When it detects you using the computer, the executor pauses and resumes once you're idle.
+- **Window-relative coordinates**: macros record coordinates inside the window, plus the window size and screen scale factor (macOS Retina / Windows display scaling) at recording time. Before running, the window is calibrated to the same size so a resolution change doesn't make clicks miss.
+- **Verify the page before acting**: each step can declare which page it expects to be on (`expected_page`). Before typing or sending, the runner must match the page fingerprint; on mismatch it aborts and flags the action as suspicious in the audit log. Not sending is better than typing a comment into the wrong chat window.
+- **Clear before typing**: text steps first select-all and delete the input field (⌘A on macOS / Ctrl+A on Windows), so text left over from a dry run or an interrupted run is never sent along with the next one.
+- **Panic stop**: a global hotkey (default `⌃⌥⌘.` on macOS, `Ctrl+Alt+Shift+.` on Windows, configurable in studio under Settings · Hotkeys, with live conflict detection) aborts the current action and clears the execution queue immediately. Aborted actions are still audited.
+- **Dry run**: with `dry_run` on, the whole "open → locate → type" flow runs but the final "send" is skipped, with screenshots and audit entries written as usual. After recording a new macro or changing window size, dry-run it before going live.
 
 ## 🚀 Quick start
 
@@ -124,29 +186,37 @@ cd cyber-worker
 
 # 2. Install dependencies
 uv sync
-# macOS system dependencies (screenshot, window targeting) are built in — no extra install needed
+# macOS / Windows system dependencies (screenshot, window targeting) are built in — no extra install needed
 
-# 3. Set up your persona
+# 3. Set up your persona (who you are)
 cp persona.example.md persona.md
-# Edit persona.md to describe yourself
 
-# 4. Configure platform credentials
+# 4. Set up runtime config (platforms, caps, relationship lists, auto-send)
+cp config.example.toml config.toml
+
+# 5. Set up secrets (only an LLM API key; not needed for a local model)
 cp .env.example .env
-# Fill in login info / cookies (never commit to repo)
+# No platform passwords or cookies needed — the twin operates client / browser windows you're already logged into
 
-# 5. Launch
-cyber-worker studio    # Opens visual editor in browser
+# 6. macOS: check system permissions (Screen Recording + Accessibility + Input Monitoring)
+uv run ops/check_permissions.py
+
+# 7. Launch
+uv run cyber-worker studio    # open http://127.0.0.1:9999; a guided tour runs on first visit
 ```
+
+> For first use, log into a **test account** in the clients.
 
 ## 🧪 Development & test environment
 
 | Device | Spec |
 | :--- | :--- |
 | Mac mini M6 | 16GB · 256GB |
+| Windows 10 / 11 dev machine | — |
 
-> Other platforms not yet supported (depends on native macOS screenshot and window targeting).
+> macOS and Windows are supported. Linux is not yet (no uniform way to target windows).
 
-## 🧬 Persona
+## 🧬 Persona & config
 
 How much the twin "feels like you" depends on how detailed `persona.md` is. At minimum, cover:
 
@@ -154,6 +224,8 @@ How much the twin "feels like you" depends on how detailed `persona.md` is. At m
 - 🗣️ **Voice** — sentence length, catchphrases, punctuation habits, emoji frequency
 - ⏰ **Rhythm** — when you browse, when you don't post, weekday vs. weekend differences
 - 🚧 **Boundaries** — what you never comment on, what topics you avoid
+
+`persona.md` describes **who you are**; **runtime settings** such as switches, caps and lists live in `config.toml`.
 
 <details>
 <summary><b>📄 Minimal persona.md example</b></summary>
@@ -184,128 +256,200 @@ How much the twin "feels like you" depends on how detailed `persona.md` is. At m
 
 </details>
 
+<details>
+<summary><b>⚙️ Minimal config.toml example</b></summary>
+
+```toml
+[platforms]
+enabled = ["wechat"]
+
+[review]
+comment_auto_send = false   # enable once approvals and edits become rare
+post_auto_send = false
+
+[limits]
+comments_per_day = 5
+posts_per_week = 2
+
+[relations]
+close_friends = ["Alice", "Bob"]     # engage first
+never_comment = ["Work group"]       # never comment
+
+[executor]
+pause_on_user_input = true    # pause while you use the computer
+resume_after_idle_sec = 120   # idle time before resuming
+panic_hotkey = "ctrl+alt+cmd+." # panic stop: abort current action and clear queue
+dry_run = false               # dry run: execute fully but skip the final "send"
+
+[llm]
+provider = "local"            # local / a cloud provider name; cloud needs an API key in .env
+```
+
+</details>
+
 ## 📁 Project structure
 
 ```text
 cyber-worker/
-├── .gitignore                      # Excludes user_data/, .env, persona.md, __pycache__, etc.
-├── .env.example                    # Credentials template (cookies / tokens — never commit real values)
-├── pyproject.toml                  # Dependency management (uv / poetry)
+├── .gitignore                      # Excludes user_data/, .env, config.toml, persona.md, __pycache__, etc.
+├── .env.example                    # Secrets template (LLM API key only — never commit real values)
+├── config.example.toml             # Runtime config template (platforms, caps, relations, auto-send, panic stop, dry run, LLM)
+├── persona.example.md              # Persona template (interests, voice, rhythm, boundaries)
+├── pyproject.toml                  # Dependency management (uv), declares the cyber-worker command
 ├── README.md                       # English docs
 ├── README.zh-CN.md                 # Chinese docs
 ├── LICENSE                         # MIT
-├── persona.example.md              # Persona template (interests, voice, rhythm, boundaries)
-├── main.py                         # CLI entry point (advanced users: cyber-worker run xxx)
-├── bootstrap.py                    # Single wiring entry point (both CLI and Studio call it; avoids scattered DI)
 │
-├── engine/                         # ★ Decision layer: decides "what to do"
-│   ├── ports/                      # Interface definitions (core of dependency inversion)
-│   │   ├── platform.py             # PlatformPort: browse_feed / like / comment / publish
-│   │   ├── memory.py               # MemoryStore: behavior memory read/write
-│   │   └── clock.py                # Clock: replaceable (fake clock to fast-forward 24h in tests)
-│   ├── persona/                    # Persona parsing
-│   │   ├── model.py                # Persona data structure (interests, voice, rhythm, boundaries)
-│   │   └── parser.py               # persona.md → Persona
-│   ├── timing/                     # Human-like time distribution
-│   │   └── distribution.py         # Poisson process, active-hour clustering, weekend variance
-│   ├── tone/                       # Voice generation
-│   │   ├── generator.py            # Pluggable: template / LLM
-│   │   └── style_model.py          # Extract personal style from comment history
-│   ├── memory/                     # Behavior memory business logic
-│   │   └── service.py              # Dedup, coherence, liked/commented records
-│   └── decision/                   # Decision policies
-│       ├── orchestrator.py         # Main loop: what to do now
-│       ├── policy_like.py          # Like policy + skip rate
-│       ├── policy_comment.py       # Comment policy
-│       └── policy_post.py          # Post policy
-│
-├── macro/                          # ★ Execution layer: decides "how to do it" (all screen mode)
-│   ├── schema.py                   # Step / Script data models (Pydantic)
-│   ├── recorder.py                 # Recording engine (pynput mouse/keyboard listener, called by studio)
-│   ├── runner.py                   # Execution engine (step-by-step click + post-action screenshot)
-│   ├── locator/                    # Targeting
-│   │   ├── coord.py                # Coordinate targeting (baseline)
-│   │   ├── ocr.py                  # OCR targeting (text buttons)
-│   │   └── template.py             # Template matching (icon buttons)
-│   ├── act/                        # Human-like operations
-│   │   ├── mouse.py                # Bezier trajectory + overshoot + micro-jitter
-│   │   ├── keyboard.py             # Lognormal typing intervals + typo correction
-│   │   └── scroll.py               # Segmented scroll + inertia + occasional scroll-back
-│   ├── screenshot/                 # Screenshot archiving
-│   │   ├── storage.py              # Naming, date-based partitioning, 30-day cleanup
-│   │   └── anomaly.py              # Single-frame coarse filter (flag suspicious when mismatched)
-│   ├── audit/                      # Post-hoc audit (pure logic, no HTTP)
-│   │   ├── logger.py               # SQLite action logs (with screenshot path + expected state)
-│   │   ├── reviewer.py             # Sort by suspicion, sample
-│   │   └── reporter.py             # Daily report, success rate, failure distribution
-│   ├── io/                         # System IO
-│   │   └── macos.py                # screencapture + pynput + osascript wrappers
-│   └── templates/                  # ★ Built-in templates (in git, read-only)
-│       ├── manifest.json           # Template index (only lists recorded ones, status: ready)
-│       ├── _screenshots/           # Template reference screenshots (product shots, distributed with project)
-│       │   └── wechat_moments_1200x900.png
-│       ├── wechat/                 # screen mode (coordinate macros, generated by recording)
-│       │   ├── moments_browse.yaml         # Open Moments + scroll N screens
-│       │   ├── moments_like.yaml           # Browse + like
-│       │   └── moments_open_publish.yaml   # Click camera → land on publish page
-│       ├── bilibili/               # screen mode (coordinate macros, generated by recording)
-│       │   ├── feed_browse.yaml            # Open feed + scroll N screens
-│       │   └── feed_like.yaml              # Browse + like
-│       ├── douyin/                 # screen mode (coordinate macros, generated by recording)
-│       │   ├── feed_browse.yaml            # Open recommendations + scroll N screens
-│       │   └── feed_like.yaml              # Browse + like
-│       ├── weibo/                  # Future support (empty dir + .gitkeep)
-│       ├── x/                      # Future support
-│       └── instagram/              # Future support
-│
-├── adapters/                       # ★ Platform layer: decides "where to do it" (all screen mode)
-│   ├── wechat/
-│   │   ├── adapter.py              # screen mode, calls macro/runner to execute coordinate macros
-│   │   └── pages.yaml              # Page fingerprints (Moments / Publish / Home)
-│   ├── bilibili/
-│   │   ├── adapter.py              # screen mode, calls macro/runner
-│   │   └── pages.yaml              # Page fingerprints (feed / video / home)
-│   ├── douyin/
-│   │   ├── adapter.py              # screen mode, calls macro/runner
-│   │   └── pages.yaml              # Page fingerprints (recommendations / video / home)
-│   ├── weibo/                      # Future support (empty dir + .gitkeep)
-│   ├── x/                          # Future support
-│   └── instagram/                  # Future support
-│
-├── studio/                         # ★ Visual editor (primary user entry point)
-│   ├── server.py                   # Single FastAPI instance (:9999)
-│   ├── ws.py                       # WebSocket: real-time push of steps during recording
-│   ├── routes/                     # HTTP endpoints
-│   │   ├── record.py               # Recording control (start/stop)
-│   │   ├── edit.py                 # Step add/remove/modify, drag-and-drop reorder
-│   │   ├── preview.py              # Path preview, frame-by-frame playback
-│   │   ├── run.py                  # Execution + real-time status push
-│   │   ├── templates.py            # Template listing / fork
-│   │   └── audit.py                # Audit page (sorted by suspicion)
-│   └── static/                     # Frontend (vanilla HTML + JS + Canvas, no framework)
-│       ├── index.html              # Three-column layout: script list / canvas / step list
-│       ├── audit.html              # Audit replay page (single screenshot + expected state)
-│       ├── canvas.js               # Screenshot + step markers + connecting lines
-│       ├── editor.js               # Step card drag, parameter panel
-│       └── style.css
+├── src/cyber_worker/
+│   ├── cli.py                      # CLI entry point (cyber-worker record / anchor / run / studio)
+│   ├── bootstrap.py                # Single wiring entry point (both CLI and studio call it; avoids scattered DI)
+│   ├── config.py                   # Loads config.toml + .env (pydantic-settings)
+│   │
+│   ├── engine/                     # ★ Decision layer: decides "what to do" (depends only on ports)
+│   │   ├── ports/                  # Interface definitions (core of dependency inversion)
+│   │   │   ├── platform.py         # PlatformPort: watch / extract / browse_feed / like / comment / publish
+│   │   │   ├── review.py           # ReviewQueue: enqueue / approve / edit / reject (with reason)
+│   │   │   ├── memory.py           # MemoryStore: behavior memory read/write
+│   │   │   ├── llm.py              # LLM: draft generation interface
+│   │   │   └── clock.py            # Clock: replaceable (fake clock to fast-forward 24h in tests)
+│   │   ├── persona/                # Persona parsing
+│   │   │   ├── model.py            # Persona data structure (interests, voice, rhythm, boundaries)
+│   │   │   └── parser.py           # persona.md → Persona
+│   │   ├── timing/                 # Human-like time distribution
+│   │   │   └── distribution.py     # Poisson process, active-hour clustering, weekend variance
+│   │   ├── tone/                   # Voice generation and learning
+│   │   │   ├── generator.py        # Pluggable: template / LLM (comment and post drafts)
+│   │   │   ├── style_model.py      # Learns your style from approve / edit / reject feedback
+│   │   │   └── feedback.py         # Feedback routing: approve → reinforce, edit → learn diff, reject → route by reason
+│   │   ├── memory/                 # Behavior memory business logic
+│   │   │   └── service.py          # Dedup, coherence, liked/commented records
+│   │   ├── decision/               # Decision policies
+│   │   │   ├── orchestrator.py     # Main loop: schedules watching, browsing, liking; advances workflows
+│   │   │   ├── policy_like.py      # Like policy + skip rate
+│   │   │   ├── policy_comment.py   # Comment policy: rules + random threshold; reject reasons feed back
+│   │   │   └── policy_post.py      # Post policy: picks timing from rhythm and frequency
+│   │   ├── workflow/               # Long-running pending-action state machines
+│   │   │   ├── comment.py          # extract → decide → draft → enqueue → (after confirm) execute → record
+│   │   │   └── post.py             # timing → draft → enqueue → (after confirm) execute → record
+│   │   └── monitor.py              # Polls each platform's watch regions, emits "new content" events
+│   │
+│   ├── macro/                      # ★ Execution layer: decides "how to do it" (platform-agnostic)
+│   │   ├── schema.py               # Step / Script models (window-relative coords, window size & scale, per-step expected_page)
+│   │   ├── recorder.py             # Recording engine (pynput listener; gaps become delay rows)
+│   │   ├── anchors.py              # Region of a frame → page anchor (shared by studio and CLI)
+│   │   ├── runner.py               # Runs one script: calibrate window → steps (verify page before type/send) → screenshot; supports dry run
+│   │   ├── executor.py             # Global executor: queues all actions, pauses on user input, panic hotkey clears queue
+│   │   ├── locator/                # Targeting (decides where to click; recognition is delegated to vision/)
+│   │   │   ├── coord.py            # Coordinate targeting (baseline)
+│   │   │   ├── text.py             # Text buttons (uses vision/ocr)
+│   │   │   └── icon.py             # Icon buttons (uses vision/template)
+│   │   ├── vision/                 # Visual recognition (pure image algorithms)
+│   │   │   ├── ocr.py              # PaddleOCR wrapper
+│   │   │   ├── template.py         # OpenCV template matching
+│   │   │   ├── fingerprint.py      # Page fingerprint: which page is on screen
+│   │   │   ├── detect.py           # Region change detection (selected region vs. baseline), used by monitor
+│   │   │   └── anomaly.py          # Single-frame coarse filter (flag suspicious when mismatched)
+│   │   ├── act/                    # Human-like operations
+│   │   │   ├── mouse.py            # Bezier trajectory + overshoot + micro-jitter
+│   │   │   ├── keyboard.py         # Lognormal typing intervals + typo correction
+│   │   │   └── scroll.py           # Segmented scroll + inertia + occasional scroll-back
+│   │   ├── screenshot/             # Screenshot archiving
+│   │   │   ├── storage.py          # Naming, date-based partitioning, 30-day cleanup
+│   │   │   └── baseline.py         # Baseline image storage (saved on region select, read on detect)
+│   │   ├── audit/                  # Post-hoc audit (pure logic, no HTTP)
+│   │   │   ├── logger.py           # Action log (screenshot path + expected state)
+│   │   │   ├── reviewer.py         # Sort by suspicion, sample
+│   │   │   └── reporter.py         # Daily report, success rate, failure distribution
+│   │   └── io/                     # System IO
+│   │       ├── base.py             # ScreenIO / ActivityMonitor interfaces (faked in tests)
+│   │       ├── pynput_input.py     # Mouse/keyboard output, real-input monitor, global hotkey (shared)
+│   │       ├── hotkeys.py          # Global hotkey manager: conflict checks, auto-fallback when taken, live rebinding
+│   │       ├── macos.py            # screencapture + osascript (window calibration, capture)
+│   │       └── windows.py          # Win32 + Pillow (window calibration, capture, IME-proof typing, system hotkeys)
+│   │
+│   ├── adapters/                   # ★ Platform layer: decides "where to do it" (declarative platform packs)
+│   │   ├── screen_adapter.py       # Generic PlatformPort implementation: reads pack declarations, runs macros
+│   │   ├── loader.py               # Loads packs (built-in + user_data/platforms/; user files override same-name built-ins)
+│   │   ├── wechat/
+│   │   │   ├── platform.yaml       # Capability → macro mapping, extraction fields (region + OCR), window size
+│   │   │   ├── pages.yaml          # Page fingerprints + watch regions (Moments / Publish / Home)
+│   │   │   ├── templates/          # Coordinate macros (generated by recording, read-only)
+│   │   │   │   ├── moments_browse.yaml     # Open Moments + scroll N screens
+│   │   │   │   ├── moments_like.yaml       # Browse + like
+│   │   │   │   ├── moments_comment.yaml    # Comment on a given post (comment_draft variable)
+│   │   │   │   └── moments_publish.yaml    # Camera → type → publish (post_draft variable)
+│   │   │   └── reference/          # Reference screenshots (recorded on a test account, shipped with project)
+│   │   │       └── moments_1200x900.png
+│   │   ├── bilibili/               # Same: platform.yaml + pages.yaml + templates/
+│   │   │   └── templates/          # feed_browse / feed_like / feed_comment
+│   │   ├── douyin/                 # Same
+│   │   │   └── templates/          # feed_browse / feed_like / feed_comment
+│   │   ├── weibo/                  # Future support (empty dir + .gitkeep)
+│   │   ├── x/                      # Future support
+│   │   └── instagram/              # Future support
+│   │
+│   ├── infra/                      # ★ Concrete implementations of ports (wired by bootstrap)
+│   │   ├── sqlite/
+│   │   │   ├── db.py               # state.db connection and migrations
+│   │   │   ├── memory_store.py     # MemoryStore implementation
+│   │   │   ├── review_queue.py     # ReviewQueue implementation
+│   │   │   └── audit_store.py      # Audit log storage
+│   │   └── llm/
+│   │       └── client.py           # LLM implementation (cloud API / local model)
+│   │
+│   └── studio/                     # ★ Visual editor (primary user entry point)
+│       ├── server.py               # Single FastAPI instance (:9999)
+│       ├── state.py                # Shared state: script dir, latest frames, recording session, problem checks
+│       ├── ws.py                   # WebSocket: live steps while recording, live results while running
+│       ├── routes/                 # HTTP endpoints (display and submit only, no business logic)
+│       │   ├── edit.py             # Macro CRUD, capture current window, page anchors
+│       │   ├── record.py           # Recording control (start/stop, appends to the macro)
+│       │   ├── preview.py          # Image serving (reference, screenshots, anchors; user_data only)
+│       │   ├── run.py              # Dry run / run (queued on executor), panic, live status
+│       │   ├── hotkeys.py          # Settings · hotkeys (conflict check, save back to config.toml)
+│       │   ├── settings.py         # Settings · appearance, recording & run (applied live, saved to config.toml)
+│       │   ├── pending.py          # Pending actions (comments + posts; approve / edit / reject with reason)
+│       │   └── audit.py            # Audit page (sorted by suspicion)
+│       └── static/                 # Frontend (vanilla HTML + JS + Canvas, no framework)
+│           ├── index.html          # Macro editor (Razer-Synapse style): add / step list / canvas + params·macro·run tabs
+│           ├── pending.html        # Pending actions page
+│           ├── audit.html          # Audit replay page (single screenshot + expected state)
+│           ├── common.js           # Icons, appearance (dark / light / system), fetch wrapper, toasts, WebSocket
+│           ├── tour.js             # Onboarding tour (spotlight + step-by-step, auto on first visit)
+│           ├── settings.js         # Settings center (gear): appearance, hotkeys (press-to-record, live conflict hints), recording & run, about
+│           ├── canvas.js           # Screenshot + step markers + path + anchor boxes + region selection
+│           ├── editor.js           # Step list (check, drag reorder, undo/redo), params panel, record, run
+│           ├── audit.js            # Audit list, marking, shortcuts
+│           └── style.css
 │
 ├── ops/                            # Operations scripts
 │   ├── setup_macos.sh              # pmset disable sleep, disable screensaver, permission hints
-│   ├── check_permissions.py        # Screen recording + accessibility permission check
+│   ├── check_permissions.py        # Screen Recording + Accessibility permission check
 │   └── watchdog.py                 # WeChat / browser window watchdog (auto-restart on crash)
 │
-├── tests/                          # Unit tests
-│   ├── test_engine.py              # Decision logic (fake adapter + fake clock)
-│   ├── test_humanize.py            # Bezier trajectory, lognormal typing
-│   ├── test_anomaly.py             # Single-frame coarse filter false-positive/false-negative
-│   ├── test_reviewer.py            # Audit sorting logic
-│   ├── test_runner.py              # Execution engine
-│   └── fixtures/                   # ★ Test fixtures (not part of runtime, test-only)
+├── tests/                          # Unit tests (mirrors src layout)
+│   ├── engine/
+│   │   ├── test_decision.py        # Decision logic (fake adapter + fake clock)
+│   │   ├── test_workflow.py        # Pending-action state machine (fake ReviewQueue)
+│   │   └── test_feedback.py        # Feedback routing (three actions → their models)
+│   ├── macro/
+│   │   ├── test_humanize.py        # Bezier trajectory, lognormal typing
+│   │   ├── test_executor.py        # Mutual exclusion, pause on user input, panic stop clears queue
+│   │   ├── test_runner.py          # Execution, window calibration, abort on page mismatch, dry run never sends
+│   │   ├── test_detect.py          # Region change detection (TP/FP/TN/FN)
+│   │   ├── test_anomaly.py         # Single-frame coarse filter FP/FN
+│   │   └── test_reviewer.py        # Audit ranking, spot checks, daily report
+│   ├── adapters/
+│   │   └── test_screen_adapter.py  # Pack loading, capability mapping, user overrides
+│   ├── studio/
+│   │   └── test_studio_api.py      # studio API (fake IO): create, save, anchors, record, dry run, audit
+│   └── fixtures/                   # ★ Test fixtures (test-account screenshots or redacted only; stored via Git LFS)
 │       ├── anomaly/                # Four groups of single-frame samples (real screenshots, not synthetic)
 │       │   ├── true_positive/      # Actually succeeded + judged success ✅
 │       │   ├── false_positive/     # Actually failed + misjudged success ❌ most dangerous
 │       │   ├── true_negative/      # Actually failed + judged failure ✅
 │       │   └── false_negative/     # Actually succeeded + misjudged failure ❌ wasted retry
+│       ├── detect/                 # Same four groups for region change detection
 │       └── screenshots/            # Single screenshots: page fingerprints / OCR / template matching
 │           ├── wechat_moments_feed.png
 │           ├── wechat_publish_page.png
@@ -313,15 +457,21 @@ cyber-worker/
 │           └── douyin_recommend_feed.png      # Added when Bilibili/Douyin support lands
 │
 ├── docs/                           # Design docs
-│   ├── adapters.md                 # Platform adapter interface docs
-│   ├── macro.md                    # Macro engine + recording + execution
+│   ├── adapters.md                 # Platform pack format: platform.yaml / pages.yaml / templates
+│   ├── macro.md                    # Macro engine + recording + executor + window calibration
+│   ├── workflow.md                 # Pending-action state machine and feedback signals
 │   ├── audit.md                    # Screenshot archiving + audit
 │   └── studio.md                   # UI usage + routes
 │
 └── user_data/                      # ★ Runtime data (gitignored, not in git)
-    ├── scripts/                    # User-recorded/edited macros
-    │   ├── manifest.json           # User script index (separate from built-in template index)
-    │   └── my_moments_like.yaml    # User-forked or recorded
+    ├── platforms/                  # Your recorded or forked platform packs (same format; overrides built-ins)
+    │   └── wechat/templates/my_moments_like.yaml
+    ├── baselines/                  # Baseline images for selected regions (one per tag)
+    │   ├── wechat/
+    │   │   ├── new_comment.png     # Top-right of the message icon
+    │   │   └── new_moments.png     # Top of the content area
+    │   └── douyin/
+    │       └── new_message.png
     ├── screenshots/                # Runtime screenshots (one per action, 30-day cleanup)
     │   └── 2026-10-22/             # Partitioned by date
     │       ├── 091203_s03_like.png          # Like: after action
@@ -330,23 +480,24 @@ cyber-worker/
     ├── logs/                       # Runtime logs
     │   ├── runner.log
     │   └── studio.log
-    ├── audit.db                    # Action logs (SQLite: screenshot path + expected state + review status)
-    └── memory.db                   # Behavior memory (liked / commented / posted history)
+    └── state.db                    # SQLite: pending queue (with your choices and reject reasons) + behavior memory + audit log
 ```
 
 ## 🗺️ Roadmap
 
 | Status | Item |
 | :---: | :--- |
-| ⬜ | `macro/` minimal loop (record + execute + post-action screenshot) |
-| ⬜ | Audit page (sort by suspicion) |
-| ⬜ | `studio/` visual editor (record + edit + preview) |
-| ⬜ | WeChat Moments adapter (screen-mode validation) |
-| ⬜ | Bilibili / Douyin adapters (same pattern) |
-| ⬜ | `engine/` persona parsing + decision engine |
+| 🚧 | `macro/` minimal loop (record + window calibration + page verification + execute + post-action screenshot + dry run): verified on Windows, pending on macOS |
+| 🚧 | Global executor (mutual exclusion, pause while you use the computer, panic stop): verified on Windows, pending on macOS |
+| 🚧 | Audit page (suspicion ranking, spot checks, daily report) |
+| 🚧 | `studio/` macro editor (create + record + edit + anchors + find-by-image clicks + wait-for-page + dry run / run + dark / light appearance + settings center + onboarding tour) |
+| ⬜ | Find-by-text clicks (OCR, `locator/text.py` + `vision/ocr.py`) |
+| ⬜ | Platform pack format + generic `ScreenAdapter`, validated on WeChat Moments |
+| ⬜ | Bilibili / Douyin (new platform packs only, no code changes) |
+| ⬜ | `engine/` persona parsing + decision engine + watching |
 | ⬜ | Voice reproduction |
 | ⬜ | Behavior memory |
-| ⬜ | Human review mode |
+| ⬜ | Pending queue + comment / post workflows (decide → draft → confirm → execute → record) |
 
 > Legend: ⬜ todo · 🚧 in progress · ✅ done
 
@@ -369,14 +520,36 @@ Possibly. Every platform has anti-automation controls. The goal of this project 
 <details>
 <summary><b>Do I need to hand over my password?</b></summary>
 
-Not recommended. Prefer official authorization flows. If cookies are necessary, make sure `.env` is excluded by `.gitignore` and never committed.
+No. The twin operates client or browser windows you've already logged into yourself; the project stores no platform accounts, passwords or cookies. `.env` holds only an LLM API key.
 
 </details>
 
 <details>
 <summary><b>Can commenting and posting be fully automatic?</b></summary>
 
-Technically yes, but **human review mode** is strongly recommended — the twin drafts, you confirm. A digital twin should never say things you didn't know it would say.
+Eventually, yes — but **early on everything must go through the pending queue**: the twin drafts, you confirm, then it sends.
+
+Confirmation isn't just a safety valve; it's the training process. Every approve, edit and reject teaches the model "how you'd say this, and what you'd never say". Once approvals and edits become rare and the drafts match how you write, you can enable "send without confirmation" per action under `[review]` in `config.toml`.
+
+A digital twin should never say things you didn't know it would say — you teach it through edit after edit, and only then let go.
+
+</details>
+
+<details>
+<summary><b>Will it fight me for the mouse?</b></summary>
+
+No. Every action goes through one executor queue; it pauses as soon as it detects your keyboard or mouse input and resumes after an idle period (configurable in `config.toml`). The panic hotkey aborts the current action and clears the queue at any time.
+
+</details>
+
+<details>
+<summary><b>Is my friends' content sent to an LLM?</b></summary>
+
+Drafting a comment means giving the post's content to the LLM. With a cloud API, that content leaves your machine, so:
+
+- Only the minimum context is sent (the post's text plus a few of your past comments) — no screenshots, no friend lists;
+- You can switch to a **local model** under `[llm]` in `config.toml`, so nothing leaves your machine;
+- Content from people marked "never comment" in your relationship lists is neither extracted nor sent.
 
 </details>
 
@@ -389,6 +562,8 @@ Issues and PRs are welcome! Before submitting:
 3. Write clear commit messages
 4. Open a PR and reference the related issue
 
+> **About screenshots:** reference screenshots and test fixtures must not contain real friends' avatars, names or content. Record on a test account or redact first; image files go through Git LFS.
+
 ## ⚠️ Disclaimer
 
 **Please read this fully before using.**
@@ -396,7 +571,8 @@ Issues and PRs are welcome! Before submitting:
 - This project is for **personal digital-twin research and experimentation**, for learning and exchange only.
 - Most platforms' Terms of Service **restrict or prohibit** automated activity. Using this project may lead to rate-limiting or account bans — **at your own risk**.
 - Do not use it for engagement farming, marketing, opinion manipulation, bulk registration, or any use that violates platform rules or applicable law.
-- Commenting and posting should be used with **human review mode** to prevent the twin from publishing content you were unaware of.
+- Keep the **pending queue** on for comments and posts, so the twin never publishes content you were unaware of.
+- With a cloud LLM, the text of friends' posts is sent to a third-party service; use a local model if that concerns you.
 - Respect local laws, others' privacy, and community guidelines.
 
 > **The goal of this project is not to bypass platform defenses — it is to study how to make a digital twin feel more human. Please stay on that side of the line.**

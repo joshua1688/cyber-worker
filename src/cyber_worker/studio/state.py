@@ -1,0 +1,304 @@
+"""studio 的共享状态：脚本目录、最新截图帧、录制会话。路由只通过这里访问文件系统。"""
+
+from __future__ import annotations
+
+import re
+import shutil
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import HTTPException
+
+from cyber_worker.bootstrap import App
+from cyber_worker.macro.anchors import anchors_dir, default_pages_ref, targets_dir
+from cyber_worker.macro.io.base import stable_title
+from cyber_worker.macro.recorder import RecordingBuilder
+from cyber_worker.macro.schema import Click, Script, Step, TypeText, WaitPage, needs_page_check
+from cyber_worker.macro.vision.fingerprint import PageBook
+from cyber_worker.studio.ws import Hub
+
+_NAME = re.compile(r"^[\w\-]+$")
+DRAFT = "_draft/"  # 草稿宏 id 的前缀
+_VAR_USE = re.compile(r"\{(\w+)\}")
+
+
+def check_name(value: str, what: str) -> str:
+    if not _NAME.match(value):
+        raise HTTPException(400, f"{what}只能包含文字、数字、下划线和连字符")
+    return value
+
+
+# 文件名里不能出现的字符（Windows 最严），以及会破坏 URL 的字符
+_UNSAFE = re.compile(r'[\\/:*?"<>|#%&\s]+')
+
+
+def safe_stem(name: str) -> str:
+    """用户起的宏名（可以是中文、带空格）→ 文件名。"""
+    stem = _UNSAFE.sub("_", name.strip()).strip("._")
+    return stem[:60] or "macro"
+
+
+def window_json(w, shared_apps: set[str]) -> dict:
+    """窗口 → 前端需要的一切，包括替用户想好的宏名和用来认窗口的标题。"""
+    title = stable_title(w.title)
+    shared = w.app.lower() in shared_apps
+    return {
+        "app": w.app, "title": w.title, "width": w.width, "height": w.height,
+        "minimized": getattr(w, "minimized", False),
+        "platform": platform_slug(w.app),
+        "shared": shared,
+        # 同一程序开着多个窗口时才需要按标题认
+        "match_title": title if shared and title else None,
+        "suggested_name": title if title and title.lower() != w.app.lower() else w.app,
+    }
+
+
+def platform_slug(app: str) -> str:
+    """程序名 → 平台目录名：WeChat.exe → wechat。"""
+    app = re.sub(r"\.(exe|app)$", "", app.strip(), flags=re.I)
+    return safe_stem(app).lower() or "app"
+
+
+@dataclass
+class Frame:
+    path: Path
+    scale: float
+    win: str | None = None  # 截的是哪个窗口
+
+
+@dataclass
+class Recording:
+    script_id: str
+    builder: RecordingBuilder
+    stop: threading.Event
+    thread: threading.Thread
+    geo: object = None  # WindowGeometry
+    frames: list = field(default_factory=list)  # 录制期间定时截的图 (窗口键, 缩放, 图)，录完用来自动选锚点
+    sampler: threading.Thread | None = None
+    # 每次鼠标按下时截的目标图：按下序号 → (缩放, 目标区域, 目标图)；认不出来的点击不在里面
+    press_targets: dict = field(default_factory=dict)
+    press_threads: list = field(default_factory=list)
+
+
+@dataclass
+class Studio:
+    app: App
+    hub: Hub = field(default_factory=Hub)
+    # studio 里手动点「执行」后只需空闲这么久就开始（默认配置是 120 秒，面向无人值守）
+    run_idle_sec: float = 2.0  # 设置里可改（[studio] run_idle_sec）
+    latest: dict[str, Frame] = field(default_factory=dict)
+    recording: Recording | None = None
+    current_id: str | None = None  # 界面上当前打开的宏：按录制快捷键时录的就是它
+    record_delays: bool = True  # 上次录制时「录制延迟」的选择，快捷键开始录制时沿用
+    record_seq: int = 0  # 每次录制的编号：界面靠它避免同一次录制的结果处理两遍
+
+    @property
+    def user_data(self) -> Path:
+        return self.app.user_data.resolve()
+
+    @property
+    def root(self) -> Path:
+        return self.user_data / "platforms"
+
+    @property
+    def drafts(self) -> Path:
+        return self.user_data / "drafts"
+
+    # ---- 脚本 ----
+
+    def script_path(self, script_id: str) -> Path:
+        root, rel = (self.drafts, script_id[len(DRAFT):]) if script_id.startswith(DRAFT) else (self.root, script_id)
+        path = (root / rel).resolve()
+        if not path.is_relative_to(root.resolve()) or path.suffix != ".yaml":
+            raise HTTPException(400, "非法的脚本路径")
+        if not path.exists():
+            raise HTTPException(404, f"脚本不存在：{script_id}")
+        return path
+
+    def script_id(self, path: Path) -> str:
+        path = path.resolve()
+        if path.is_relative_to(self.drafts.resolve()):
+            return DRAFT + path.relative_to(self.drafts.resolve()).as_posix()
+        return path.relative_to(self.root.resolve()).as_posix()
+
+    def list_scripts(self) -> list[dict]:
+        out = []
+        for root, draft in ((self.drafts, True), (self.root, False)):
+            for p in sorted(root.glob("*/templates/*.yaml")):
+                if p.name.endswith(".pages.yaml"):  # 宏自己的页面锚点文件，不是宏
+                    continue
+                out.append({"id": self.script_id(p), "platform": p.parent.parent.name,
+                            "name": _display_name(p), "draft": draft})
+        return out
+
+    def unique_stem(self, platform: str, stem: str) -> str:
+        """在宏库和草稿里都不重名。"""
+        taken = lambda s: any((r / platform / "templates" / f"{s}.yaml").exists()  # noqa: E731
+                              for r in (self.root, self.drafts))
+        if stem.endswith(".pages"):  # 会和页面文件同名
+            stem += "_"
+        out, n = stem, 2
+        while taken(out):
+            out, n = f"{stem}-{n}", n + 1
+        return out
+
+    def commit(self, script_id: str) -> str:
+        """把草稿搬进宏库（连同参考图、页面锚点），返回新的 id。"""
+        src = self.script_path(script_id)
+        if not script_id.startswith(DRAFT):
+            raise HTTPException(400, "这个宏已经在宏库里了")
+        platform = src.parent.parent.name
+        dst_dir = self.root / platform / "templates"
+        stem = src.stem
+        while (dst_dir / f"{stem}.yaml").exists():  # 草稿期间别处建了同名宏
+            stem = self.unique_stem(platform, src.stem)
+        dst = relocate_macro(src, dst_dir, stem)
+        new_id = self.script_id(dst)
+        if script_id in self.latest:
+            self.latest[new_id] = self.latest.pop(script_id)
+        return new_id
+
+    def delete(self, script_id: str) -> None:
+        """删除宏及它自己的参考图、页面锚点（共用的页面文件不动）。"""
+        path = self.script_path(script_id)
+        _remove_macro_files(path)
+        self.latest.pop(script_id, None)
+
+    def load(self, script_id: str) -> Script:
+        return Script.load(self.script_path(script_id))
+
+    def file_url(self, path: Path | None) -> str | None:
+        if path is None or not path.exists():
+            return None
+        rel = path.resolve().relative_to(self.user_data).as_posix()
+        return f"/api/file?path={quote(rel)}&v={path.stat().st_mtime_ns}"
+
+    def describe(self, script_id: str) -> dict:
+        """前端需要的一切：脚本、页面锚点、参考图、问题列表。"""
+        script = self.load(script_id)
+        book = PageBook.load(script.pages_path) if script.pages_path else PageBook()
+        pages = {
+            name: [
+                {**a.model_dump(), "url": self.file_url(script.pages_path.parent / a.image)}
+                for a in fp.anchors
+            ]
+            for name, fp in book.pages.items()
+        }
+        ref = script.reference_path
+        latest = self.latest.get(script_id)
+        return {
+            "id": script_id,
+            "draft": script_id.startswith(DRAFT),
+            "script": script.model_dump(mode="json"),
+            "pages": pages,
+            "frames": {
+                "reference": ref and ref.exists() and {"url": self.file_url(ref), "scale": script.window.scale},
+                "latest": latest and {"url": self.file_url(latest.path), "scale": latest.scale,
+                                      "win": latest.win},
+            },
+            "problems": problems(script, set(pages)),
+            # 按图找的目标图：步骤编号 → 图片地址（步骤参数里显示缩略图）
+            "targets": {
+                s.id: self.file_url(script.base_dir / s.target.image)
+                for s in script.steps if isinstance(s, Click) and s.target is not None
+            },
+        }
+
+
+def _own_files(path: Path, script: Script) -> tuple[Path | None, Path | None, Path | None]:
+    """宏自己的参考图、页面文件、锚点目录（页面文件是平台共用的就返回 None）。"""
+    ref = script.reference_path
+    own_pages = script.pages == default_pages_ref(path)
+    pages = script.pages_path if own_pages else None
+    anchors = path.parent / anchors_dir(path) if own_pages else None
+    return ref, pages, anchors
+
+
+def _remove_macro_files(path: Path) -> None:
+    script = Script.load(path)
+    ref, pages, anchors = _own_files(path, script)
+    for f in (ref, pages):
+        if f is not None:
+            f.unlink(missing_ok=True)
+    for d in (anchors, path.parent / targets_dir(path)):
+        if d is not None and d.exists():
+            shutil.rmtree(d)
+    path.unlink()
+
+
+def relocate_macro(src: Path, dst_dir: Path, stem: str) -> Path:
+    """把宏连同自己的参考图、页面锚点搬到 dst_dir 下、改名为 stem，修正文件里的引用。"""
+    from cyber_worker.macro.vision.fingerprint import PageBook
+
+    script = Script.load(src)
+    ref, pages, anchors = _own_files(src, script)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / f"{stem}.yaml"
+    if ref is not None and ref.exists():
+        shutil.move(ref, dst_dir / f"{stem}{ref.suffix}")
+        script.reference = f"{stem}{ref.suffix}"
+    if pages is not None and pages.exists():
+        book = PageBook.load(pages)
+        old_dir, new_dir = anchors_dir(src), anchors_dir(dst)
+        if anchors is not None and anchors.exists():
+            shutil.move(anchors, dst_dir / new_dir)
+        for fp in book.pages.values():
+            for a in fp.anchors:
+                if a.image.startswith(old_dir + "/"):
+                    a.image = new_dir + a.image[len(old_dir):]
+        book.dump(dst_dir / default_pages_ref(dst))
+        pages.unlink()
+        script.pages = default_pages_ref(dst)
+    old_t, new_t = targets_dir(src), targets_dir(dst)
+    if (src.parent / old_t).exists():
+        shutil.move(src.parent / old_t, dst_dir / new_t)
+    for step in script.steps:
+        if isinstance(step, Click) and step.target and step.target.image.startswith(old_t + "/"):
+            step.target.image = new_t + step.target.image[len(old_t):]
+    script.dump(dst)
+    src.unlink()
+    return dst
+
+
+def _display_name(path: Path) -> str:
+    """列表里显示宏名（脚本里的 name，可能是中文），读不出来就用文件名。"""
+    try:
+        return Script.load(path).name
+    except Exception:  # noqa: BLE001 —— 坏文件也要能在列表里看到并删除
+        return path.stem
+
+
+def problems(script: Script, pages: set[str]) -> list[dict]:
+    """执行前就能发现的问题；runner 遇到这些也会拒绝执行。"""
+    out = []
+    seen: set[str] = set()
+    for step in script.steps:
+        def add(msg: str) -> None:
+            out.append({"step": step.id, "message": msg})
+
+        if step.id in seen:
+            add("步骤编号重复")
+        seen.add(step.id)
+        if needs_page_check(step) and not step.expected_page:
+            add("输入 / 发送前必须指定所在页面（expected_page）")
+        if step.expected_page and step.expected_page not in pages:
+            add(f"页面 {step.expected_page} 还没有锚点")
+        if isinstance(step, TypeText) and step.typed_with_ime:
+            add(f"录制时开着中文输入法，录到的只是按键「{step.text}」：请改成实际要输入的文字")
+        if isinstance(step, TypeText):
+            for name in _VAR_USE.findall(step.text):
+                if name not in script.variables:
+                    add(f"{{{name}}} 没有声明为变量，会按原文输入")
+        if isinstance(step, WaitPage):
+            if not step.page:
+                add("选一个要等的页面")
+            elif step.page not in pages:
+                add(f"页面 {step.page} 还没有锚点")
+    return out
+
+
+def next_step_number(steps: list[Step]) -> int:
+    nums = [int(s.id[1:]) for s in steps if s.id[:1] == "s" and s.id[1:].isdigit()]
+    return max(nums, default=0) + 1

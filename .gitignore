@@ -3,6 +3,7 @@ user_data/
 
 # 敏感配置
 .env
+config.toml
 persona.md
 
 # Python

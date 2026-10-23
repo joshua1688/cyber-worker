@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>宏设计 · 赛博打工人</title>
+  <script>
+    // 首帧前确定主题（默认深色），避免闪一下
+    try {
+      const p = localStorage.getItem("cw.theme") || "dark";
+      const dark = p === "system" ? matchMedia("(prefers-color-scheme: dark)").matches : p !== "light";
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    } catch (e) { document.documentElement.dataset.theme = "dark"; }
+  </script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22 role=%22img%22 aria-label=%22cyber-worker%22%3E%3Ctext x=%2250%22 y=%2254%22 text-anchor=%22middle%22 dominant-baseline=%22central%22 font-size=%2286%22 font-family=%22'Segoe UI Emoji'%2C'Apple Color Emoji'%2C'Noto Color Emoji'%2Csans-serif%22%3E%F0%9F%A4%96%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="logo" href="/" aria-label="赛博打工人 Studio"><span class="logo-mark" aria-hidden="true">🤖</span><span class="wordmark">赛博打工人</span><span class="brand-tag">Studio</span></a>
+    <nav class="nav">
+      <a href="/" class="active"><i data-icon="layers"></i>宏设计</a>
+      <a href="/audit" id="nav-audit"><i data-icon="audit"></i>审计</a>
+    </nav>
+    <span class="grow"></span>
+    <span id="status" class="status-pill">空闲</span>
+    <button class="icon-btn" id="btn-settings" title="设置"><i data-icon="gear"></i></button>
+    <button class="icon-btn" id="btn-tour" title="新手引导"><i data-icon="help"></i></button>
+    <button class="btn danger sm" id="btn-panic" title="中止当前动作并清空执行队列"><i data-icon="octagon"></i>急停</button>
+  </header>
+
+  <div class="subbar">
+    <div class="macro-picker" id="macro-picker">
+      <div class="mp" id="mp">
+        <button class="mp-trigger" id="mp-trigger" aria-haspopup="listbox" aria-expanded="false" title="切换宏（Ctrl / ⌘ + K）">
+          <span class="mp-avatar" id="mp-avatar"></span>
+          <span class="mp-text"><b id="mp-name">还没有宏</b><small id="mp-sub"></small></span>
+          <span id="mp-badge"></span>
+          <i data-icon="chevron" class="mp-chev"></i>
+        </button>
+        <div class="mp-pop" id="mp-pop" hidden>
+          <div class="mp-search">
+            <i data-icon="search"></i>
+            <input id="mp-q" placeholder="搜索宏…" autocomplete="off" aria-label="搜索宏">
+            <kbd>Esc</kbd>
+          </div>
+          <div class="mp-list" id="mp-list" role="listbox" aria-label="宏"></div>
+          <button class="mp-foot" id="mp-new"><i data-icon="plus"></i>新建宏</button>
+        </div>
+      </div>
+      <button class="btn" id="btn-new" title="新建一个宏"><i data-icon="plus"></i>新建</button>
+      <button class="btn primary" id="btn-save" title="保存（Ctrl / ⌘ + S）"><i data-icon="check"></i><span>保存</span></button>
+      <button class="btn danger-ghost" id="btn-delete-macro" title="删除这个宏"><i data-icon="trash"></i>删除</button>
+    </div>
+    <div class="meta-chips" id="meta-chips"></div>
+  </div>
+
+  <main class="layout">
+    <!-- 左：添加 -->
+    <aside class="card palette" id="palette">
+      <div class="card-head"><span class="card-title">添加步骤</span></div>
+      <div class="scroller">
+        <button class="palette-item" data-add="click">
+          <span class="type-ico click"><i data-icon="pointer"></i></span>
+          <span><b>点击</b><small>点击窗口里的某个位置</small></span>
+        </button>
+        <button class="palette-item" data-add="type">
+          <span class="type-ico type"><i data-icon="type"></i></span>
+          <span><b>输入文本</b><small>输入文字，可以用变量</small></span>
+        </button>
+        <button class="palette-item" data-add="key">
+          <span class="type-ico key"><i data-icon="keyboard"></i></span>
+          <span><b>按键</b><small>回车、快捷键等组合键</small></span>
+        </button>
+        <button class="palette-item" data-add="scroll">
+          <span class="type-ico scroll"><i data-icon="scroll"></i></span>
+          <span><b>滚动</b><small>上下、左右滚动页面内容</small></span>
+        </button>
+        <button class="palette-item" data-add="drag">
+          <span class="type-ico click"><i data-icon="move"></i></span>
+          <span><b>拖动</b><small>按住从一处拖到另一处</small></span>
+        </button>
+        <button class="palette-item" data-add="wait">
+          <span class="type-ico wait"><i data-icon="clock"></i></span>
+          <span><b>延迟</b><small>等待一段时间</small></span>
+        </button>
+        <button class="palette-item" data-add="wait_page">
+          <span class="type-ico wait_page"><i data-icon="page"></i></span>
+          <span><b>等待页面</b><small>等某个页面出来再往下走</small></span>
+        </button>
+        <div class="palette-group">即将支持</div>
+        <button class="palette-item" disabled>
+          <span class="type-ico"><i data-icon="layers"></i></span>
+          <span><b>嵌套宏</b><small>调用另一个宏</small></span>
+        </button>
+        <button class="palette-item" disabled>
+          <span class="type-ico"><i data-icon="loop"></i></span>
+          <span><b>循环</b><small>重复执行一组步骤</small></span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 中：步骤列表 -->
+    <section class="card steps-card" id="steps-card">
+      <div class="card-head">
+        <input type="checkbox" id="select-all" title="全选" aria-label="全选">
+        <span class="total" id="total" title="预计耗时（延迟 + 每步操作后的等待）"><i data-icon="clock"></i>0.0s</span>
+        <span class="grow"></span>
+        <div class="split" id="record-group">
+          <button class="btn" id="btn-record" title="录制你在目标窗口里的操作"><span class="rec-dot"></span><span>录制</span></button>
+          <button class="btn" id="btn-record-menu" aria-label="录制选项"><i data-icon="chevron"></i></button>
+          <div class="menu" id="record-menu" hidden>
+            <label><input type="checkbox" id="opt-delays" checked>
+              <span>录制延迟<small>操作之间的间隔录成延迟行</small></span></label>
+          </div>
+        </div>
+        <span class="divider"></span>
+        <button class="icon-btn" id="btn-undo" title="撤销 (Ctrl / ⌘ + Z)"><i data-icon="undo"></i></button>
+        <button class="icon-btn" id="btn-redo" title="重做 (Ctrl / ⌘ + Shift + Z)"><i data-icon="redo"></i></button>
+        <button class="icon-btn" id="btn-delete" title="删除勾选的步骤 (Delete)"><i data-icon="trash"></i></button>
+      </div>
+      <div class="scroller" style="flex:1;display:flex;flex-direction:column">
+        <ol id="step-list"></ol>
+        <div id="steps-empty" class="empty" hidden></div>
+      </div>
+    </section>
+
+    <!-- 右：画布 + 标签页 -->
+    <section class="card inspector" id="inspector">
+      <div class="card-head">
+        <div class="seg" id="frame-seg" role="tablist" aria-label="画面">
+          <button data-frame="reference" class="on">参考图</button>
+          <button data-frame="latest">最新截图</button>
+          <button data-frame="shot" hidden>运行截图</button>
+        </div>
+        <span class="grow"></span>
+        <span class="coord" id="coord"></span>
+        <button class="btn sm" id="btn-capture" title="把目标窗口调到宏的尺寸，截取当前画面"><i data-icon="camera"></i>截取当前窗口</button>
+        <button class="btn sm" id="btn-anchor-mode" title="在画面上拖出一块区域，作为页面锚点"><i data-icon="scan"></i>框选锚点</button>
+      </div>
+      <div class="anchor-bar" id="anchor-bar" hidden>
+        <i data-icon="scan"></i>
+        <span id="anchor-hint">在画面上拖出一块这个页面独有、不会变化的区域（按钮、标题），别选头像和正文</span>
+        <span class="grow"></span>
+        <span id="anchor-form" hidden style="display:flex;gap:8px;align-items:center">
+          <input type="text" class="input" id="anchor-page" list="page-names" placeholder="页面名" size="18">
+          <datalist id="page-names"></datalist>
+          <button class="btn primary sm" id="anchor-ok">保存锚点</button>
+        </span>
+        <button class="btn ghost sm" id="anchor-cancel">取消</button>
+      </div>
+      <div class="canvas-wrap" id="canvas-area">
+        <canvas id="canvas" width="10" height="10"></canvas>
+        <div id="canvas-empty" class="canvas-empty" hidden>
+          还没有画面<br>点右上角「截取当前窗口」
+        </div>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button data-tab="step" id="tab-step" class="on"><i data-icon="sliders"></i>步骤参数</button>
+        <button data-tab="macro" id="tab-macro"><i data-icon="page"></i>宏设置</button>
+        <button data-tab="run" id="tab-run"><i data-icon="play"></i>运行</button>
+      </div>
+      <div class="scroller" style="flex:1">
+        <div class="tab-body" id="pane-step"></div>
+        <div class="tab-body" id="pane-macro" hidden></div>
+        <div class="tab-body" id="pane-run" hidden>
+          <div class="fields" id="run-vars"></div>
+          <div class="run-actions" id="run-idle">
+            <button class="btn" id="btn-dry" title="完整走一遍，但跳过「发送」"><i data-icon="flask"></i>空跑</button>
+            <button class="btn primary" id="btn-run" title="真的执行，会发送"><i data-icon="play"></i>执行</button>
+          </div>
+          <div class="run-busy" id="run-busy" hidden>
+            <span class="run-busy-ico"><i data-icon="clock"></i></span>
+            <span class="grow"><b id="run-busy-title">准备开始…</b>
+              <small id="run-busy-sub">为了不跟你抢鼠标，键鼠停下 2 秒才会开始</small></span>
+            <button class="btn sm" id="btn-cancel-run"><i data-icon="x"></i>取消</button>
+            <span class="run-busy-bar" id="run-busy-bar" hidden><i></i></span>
+          </div>
+          <div class="callout" id="run-hint">
+            <i data-icon="info"></i>
+            <span>先空跑：会点开、核对页面、打字，但不点「发送」。确认截图都对，再点执行（需要点两次确认）。</span>
+          </div>
+          <ol class="log" id="run-log"></ol>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="new-dialog">
+    <form method="dialog" id="new-form">
+      <div class="dialog-head">
+        <h3>新建宏</h3>
+        <p>告诉我要操作哪个窗口，其余的都会自动识别。</p>
+      </div>
+      <div class="dialog-body">
+        <button type="button" class="pick-card" id="win-pick">
+          <span class="pick-ico"><i data-icon="pointer" class="lg"></i></span>
+          <span><b id="win-pick-text">点一下目标窗口</b>
+            <small id="win-pick-sub">点这里，然后切过去点一下那个窗口（比如聊天窗口）</small></span>
+        </button>
+        <div class="win-head">
+          <span class="muted">或者从打开的窗口里选</span>
+          <button type="button" class="btn ghost sm" id="win-refresh"><i data-icon="refresh"></i>刷新</button>
+        </div>
+        <div class="win-list" id="win-list" role="listbox" aria-label="选择窗口"></div>
+        <details class="advanced" id="nf-advanced">
+          <summary>自定义名称、尺寸…</summary>
+          <div class="fields">
+            <label for="nf-name">宏名</label>
+            <input type="text" class="input" id="nf-name" placeholder="自动：用窗口标题">
+            <label for="nf-platform">平台</label>
+            <input type="text" class="input" id="nf-platform" placeholder="自动">
+            <label for="nf-title">窗口标题</label>
+            <input type="text" class="input" id="nf-title" placeholder="自动">
+            <span class="help">同一个程序开了多个窗口时，按标题里的这段文字来认</span>
+            <label>窗口尺寸</label>
+            <div class="row">
+              <input type="number" class="input" id="nf-width" min="200"> ×
+              <input type="number" class="input" id="nf-height" min="150">
+            </div>
+            <span class="help">默认就是窗口现在的大小；坐标都相对这个尺寸</span>
+          </div>
+        </details>
+      </div>
+      <div class="dialog-foot">
+        <span class="muted grow" style="font-size:12px">选中窗口后会直接创建</span>
+        <button class="btn" value="cancel" formnovalidate>取消</button>
+        <button class="btn primary" value="ok" id="nf-create" hidden>创建</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/common.js"></script>
+  <script src="/static/tour.js"></script>
+  <script src="/static/settings.js"></script>
+  <script src="/static/canvas.js"></script>
+  <script src="/static/editor.js"></script>
+</body>
+</html>

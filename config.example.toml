@@ -1,0 +1,32 @@
+[platforms]
+enabled = ["wechat"]
+
+[review]
+comment_auto_send = false   # 确认和修改足够少之后再打开
+post_auto_send = false
+
+[limits]
+comments_per_day = 5
+posts_per_week = 2
+
+[relations]
+close_friends = []          # 优先互动
+never_comment = []          # 永不评论，内容也不会被提取或发送给 LLM
+
+[executor]
+pause_on_user_input = true      # 你在用电脑时暂停
+resume_after_idle_sec = 120     # 空闲多久后继续
+# panic_hotkey = "ctrl+alt+cmd+." # 急停：中止当前动作并清空队列（默认 macOS ⌃⌥⌘. / Windows Ctrl+Alt+Shift+.；被占用时自动换一个）
+dry_run = false                 # 空跑：完整执行但跳过最后的「发送」
+
+[studio]                        # 下面这些在 studio 右上角 ⚙ 设置里都能改，改了会写回这里
+# record_hotkey = "alt+r"       # 开始 / 停止录制的全局快捷键（在任何窗口里都能按）
+# theme = "dark"                # 外观：dark 深色 / light 浅色 / system 跟随系统
+# record_delays = true          # 录制时把操作之间的间隔录成延迟行
+# run_idle_sec = 2.0            # 在 studio 里点空跑 / 执行后，等键鼠停下几秒才开始
+
+[llm]
+provider = "local"          # local / 云端厂商名；云端需要在 .env 填 API Key
+
+[paths]
+user_data = "user_data"

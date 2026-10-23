@@ -1,0 +1,305 @@
+// 画布：窗口截图 + 步骤标记（编号圆点、连线、滚动箭头）+ 页面锚点框 + 区域框选。
+// 坐标约定：脚本里存的是「点」，截图是像素，像素 = 点 × scale。
+"use strict";
+
+class Stage {
+  constructor(canvas, handlers) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.h = handlers; // onMove(index, x, y) / onPlace(x, y) / onRegion(rect) / onHover(pt|null)
+    this.img = null;
+    this.scale = 1;
+    this.steps = [];
+    this.pages = {};
+    this.selected = -1;
+    this.anchorMode = false;
+    this.drag = null; // {kind: "marker", index, x, y} | {kind: "rect", x0, y0, x1, y1}
+    this.region = null; // 框选完成、等待命名的区域
+
+    canvas.addEventListener("mousedown", (e) => this._down(e));
+    window.addEventListener("mousemove", (e) => this._move(e));
+    window.addEventListener("mouseup", (e) => this._up(e));
+    canvas.addEventListener("mouseleave", () => this.h.onHover?.(null));
+    new ResizeObserver(() => this.draw()).observe(canvas);
+  }
+
+  get hasImage() {
+    return !!this.img;
+  }
+
+  setFrame(url, scale) {
+    this.scale = scale || 1;
+    if (!url) {
+      this.img = null;
+      this.draw();
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        this.img = img;
+        this.canvas.width = img.naturalWidth;
+        this.canvas.height = img.naturalHeight;
+        this.draw();
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
+  // win：画面上显示的是哪个窗口（null = 主窗口）。只画这个窗口里的步骤标记和锚点
+  setData(steps, pages, selected, win = null) {
+    this.steps = steps;
+    this.pages = pages || {};
+    this.selected = selected;
+    this.win = win || null;
+    this.draw();
+  }
+
+  setAnchorMode(on) {
+    this.anchorMode = on;
+    this.region = null;
+    this.draw();
+  }
+
+  clearRegion() {
+    this.region = null;
+    this.draw();
+  }
+
+  // ---- 坐标换算 ----
+  _k() {
+    // 一个 CSS 像素对应多少画布像素：用来让标记在屏幕上大小一致
+    const w = this.canvas.getBoundingClientRect().width || this.canvas.width;
+    return this.canvas.width / w;
+  }
+  _eventPt(e) {
+    const r = this.canvas.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * this.canvas.width;
+    const py = ((e.clientY - r.top) / r.height) * this.canvas.height;
+    return { x: px / this.scale, y: py / this.scale };
+  }
+  _inside(pt) {
+    return this.img && pt.x >= 0 && pt.y >= 0 &&
+      pt.x <= this.canvas.width / this.scale && pt.y <= this.canvas.height / this.scale;
+  }
+  _markers() {
+    const out = [];
+    this.steps.forEach((s, i) => {
+      if ((s.win || null) !== (this.win || null)) return;
+      if ((s.action === "click" || s.action === "scroll" || s.action === "drag") && s.x != null && s.y != null) {
+        out.push({ i, x: s.x, y: s.y, step: s, which: "start" });
+      }
+      if (s.action === "drag") out.push({ i, x: s.x2, y: s.y2, step: s, which: "end" });
+    });
+    return out;
+  }
+  _hit(pt) {
+    const r = (12 * this._k()) / this.scale;
+    const ms = this._markers();
+    for (let j = ms.length - 1; j >= 0; j--) {
+      const m = ms[j];
+      if (Math.hypot(m.x - pt.x, m.y - pt.y) <= r) return m;
+    }
+    return null;
+  }
+
+  // ---- 交互 ----
+  _down(e) {
+    if (!this.img || e.button !== 0) return;
+    const pt = this._eventPt(e);
+    if (this.anchorMode) {
+      this.drag = { kind: "rect", x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y };
+      return;
+    }
+    const m = this._hit(pt);
+    if (m) {
+      this.drag = { kind: "marker", index: m.i, which: m.which, x: m.x, y: m.y, moved: false };
+      return;
+    }
+    const sel = this.steps[this.selected];
+    if (sel && (sel.action === "click" || sel.action === "scroll" || sel.action === "drag")) {
+      this.h.onPlace?.(round1(pt.x), round1(pt.y));
+    }
+  }
+
+  _move(e) {
+    if (!this.img) return;
+    const pt = this._eventPt(e);
+    if (this.drag?.kind === "marker") {
+      this.drag.x = clamp(pt.x, 0, this.canvas.width / this.scale);
+      this.drag.y = clamp(pt.y, 0, this.canvas.height / this.scale);
+      this.drag.moved = true;
+      this.draw();
+    } else if (this.drag?.kind === "rect") {
+      this.drag.x1 = clamp(pt.x, 0, this.canvas.width / this.scale);
+      this.drag.y1 = clamp(pt.y, 0, this.canvas.height / this.scale);
+      this.draw();
+    }
+    if (e.target === this.canvas) this.h.onHover?.(this._inside(pt) ? pt : null);
+  }
+
+  _up() {
+    const d = this.drag;
+    this.drag = null;
+    if (!d) return;
+    if (d.kind === "marker") {
+      if (d.moved) this.h.onMove?.(d.index, round1(d.x), round1(d.y), d.which);
+      else this.h.onSelect?.(d.index);
+    } else if (d.kind === "rect") {
+      const rect = {
+        x: round1(Math.min(d.x0, d.x1)), y: round1(Math.min(d.y0, d.y1)),
+        w: round1(Math.abs(d.x1 - d.x0)), h: round1(Math.abs(d.y1 - d.y0)),
+      };
+      if (rect.w >= 4 && rect.h >= 4) {
+        this.region = rect;
+        this.h.onRegion?.(rect);
+      }
+      this.draw();
+    }
+  }
+
+  // ---- 绘制 ----
+  draw() {
+    const { ctx, canvas } = this;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!this.img) return;
+    ctx.drawImage(this.img, 0, 0);
+    const s = this.scale;
+    const k = this._k();
+    const css = getComputedStyle(document.documentElement);
+    const accent = css.getPropertyValue("--accent").trim();
+    const info = css.getPropertyValue("--info").trim();
+    const danger = css.getPropertyValue("--danger").trim();
+
+    // 页面锚点
+    ctx.save();
+    ctx.lineWidth = 2 * k;
+    ctx.setLineDash([6 * k, 4 * k]);
+    ctx.font = `${12 * k}px sans-serif`;
+    for (const [page, anchors] of Object.entries(this.pages)) {
+      for (const a of anchors) {
+        if ((a.win || null) !== (this.win || null)) continue;
+        ctx.strokeStyle = info;
+        ctx.strokeRect(a.x * s, a.y * s, a.w * s, a.h * s);
+        // 贴着顶边的锚点，标签画到框里面，免得被裁掉
+        const ly = a.y * s - 4 * k >= 14 * k ? a.y * s - 4 * k : a.y * s + 16 * k;
+        label(ctx, page, a.x * s, ly, info, k);
+      }
+    }
+    ctx.restore();
+
+    // 选中的点击步骤：按图找的目标框
+    const sel = this.steps[this.selected];
+    if (sel?.action === "click" && sel.target && sel.use_target !== false && (sel.win || null) === (this.win || null)) {
+      const t = sel.target;
+      const orange = css.getPropertyValue("--orange").trim();
+      ctx.save();
+      ctx.lineWidth = 2 * k;
+      ctx.setLineDash([5 * k, 3 * k]);
+      ctx.strokeStyle = orange;
+      ctx.font = `${12 * k}px sans-serif`;
+      ctx.strokeRect(t.x * s, t.y * s, t.w * s, t.h * s);
+      const ly = t.y * s - 4 * k >= 14 * k ? t.y * s - 4 * k : t.y * s + t.h * s + 16 * k;
+      label(ctx, "目标", t.x * s, ly, orange, k);
+      ctx.restore();
+    }
+
+    // 鼠标路径（拖动的终点不参与连线，单独画箭头）
+    const ms = this._markers().map((m) =>
+      this.drag?.kind === "marker" && this.drag.index === m.i && this.drag.which === m.which
+        ? { ...m, x: this.drag.x, y: this.drag.y } : m);
+    const starts = ms.filter((m) => m.which === "start");
+    if (starts.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,255,255,.45)";
+      ctx.lineWidth = 2 * k;
+      ctx.setLineDash([4 * k, 4 * k]);
+      ctx.beginPath();
+      starts.forEach((m, j) => (j ? ctx.lineTo(m.x * s, m.y * s) : ctx.moveTo(m.x * s, m.y * s)));
+      ctx.stroke();
+      ctx.restore();
+    }
+    for (const m of ms.filter((m) => m.which === "end")) {
+      const a = ms.find((x) => x.i === m.i && x.which === "start");
+      arrow(ctx, a.x * s, a.y * s, m.x * s, m.y * s, m.i === this.selected ? accent : "#f28b3c", k);
+    }
+
+    // 标记
+    for (const m of ms) {
+      const x = m.x * s, y = m.y * s, r = 11 * k;
+      const selected = m.i === this.selected;
+      ctx.save();
+      ctx.lineWidth = 2 * k;
+      ctx.fillStyle = selected ? accent : "rgba(20,20,22,.85)";
+      ctx.strokeStyle = m.step.sends ? danger : selected ? "#fff" : accent;
+      ctx.beginPath();
+      if (m.which === "end") {
+        const q = r * 0.7;
+        ctx.rect(x - q, y - q, q * 2, q * 2);
+      } else if (m.step.action === "scroll") {
+        ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
+      } else {
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = selected ? "#0b0b0b" : "#fff";
+      ctx.font = `bold ${11 * k}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const text = m.which === "end" ? "" : m.step.action === "scroll"
+        ? (m.step.dy > 0 ? "↓" : m.step.dy < 0 ? "↑" : m.step.dx > 0 ? "→" : "←")
+        : String(m.i + 1);
+      ctx.fillText(text, x, y + 0.5 * k);
+      ctx.restore();
+    }
+
+    // 框选中 / 待命名的区域
+    const r = this.drag?.kind === "rect"
+      ? { x: Math.min(this.drag.x0, this.drag.x1), y: Math.min(this.drag.y0, this.drag.y1),
+          w: Math.abs(this.drag.x1 - this.drag.x0), h: Math.abs(this.drag.y1 - this.drag.y0) }
+      : this.region;
+    if (r) {
+      ctx.save();
+      ctx.fillStyle = "rgba(47,201,142,.15)";
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2 * k;
+      ctx.setLineDash([6 * k, 4 * k]);
+      ctx.fillRect(r.x * s, r.y * s, r.w * s, r.h * s);
+      ctx.strokeRect(r.x * s, r.y * s, r.w * s, r.h * s);
+      ctx.restore();
+    }
+  }
+}
+
+function arrow(ctx, x0, y0, x1, y1, color, k) {
+  const ang = Math.atan2(y1 - y0, x1 - x0), head = 10 * k;
+  ctx.save();
+  ctx.strokeStyle = ctx.fillStyle = color;
+  ctx.lineWidth = 3 * k;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1 - Math.cos(ang) * head * 0.6, y1 - Math.sin(ang) * head * 0.6);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x1 - head * Math.cos(ang - 0.45), y1 - head * Math.sin(ang - 0.45));
+  ctx.lineTo(x1 - head * Math.cos(ang + 0.45), y1 - head * Math.sin(ang + 0.45));
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function label(ctx, text, x, y, color, k) {
+  const w = ctx.measureText(text).width + 8 * k;
+  ctx.fillStyle = "rgba(10,10,12,.8)";
+  ctx.fillRect(x, y - 14 * k, w, 16 * k);
+  ctx.fillStyle = color;
+  ctx.setLineDash([]);
+  ctx.fillText(text, x + 4 * k, y - 2 * k);
+}
+
+const round1 = (v) => Math.round(v * 10) / 10;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
