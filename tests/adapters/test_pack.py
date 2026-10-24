@@ -64,9 +64,13 @@ def test_round_trip_keeps_macro_anchors_and_targets(tmp_path):
     assert (tpl / "聊天.pages.yaml").exists()
 
 
-def test_export_drops_reference_screenshot(tmp_path):
+def test_export_keeps_screenshots_unless_turned_off(tmp_path):
+    """默认带上录制截图，导入的人能看到每一步在哪操作；设置里关掉时图和引用都去掉。"""
     src = make_platform(tmp_path / "src")
     with zipfile.ZipFile(io.BytesIO(export_pack(src))) as z:
+        assert "templates/聊天.png" in z.namelist()
+        assert yaml.safe_load(z.read("templates/聊天.yaml"))["reference"] == "聊天.png"
+    with zipfile.ZipFile(io.BytesIO(export_pack(src, screenshots=False))) as z:
         names = z.namelist()
         raw = yaml.safe_load(z.read("templates/聊天.yaml"))
     assert "templates/聊天.png" not in names

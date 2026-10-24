@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cyber_worker.macro.schema import Script, Target
+from cyber_worker.macro.schema import MAIN, Script, Target
 from cyber_worker.macro.screenshot.storage import write_image
 from cyber_worker.macro.vision.fingerprint import Anchor, PageBook, PageFingerprint
 
@@ -78,6 +78,37 @@ def remove_anchor(script_path: Path, page: str, index: int) -> None:
         del book.pages[page]
     book.dump(script.pages_path)
     (script.pages_path.parent / anchor.image).unlink(missing_ok=True)
+
+
+def refs_dir(script_path: Path) -> str:
+    """主窗口以外的窗口的参考截图，放在宏文件旁边的 <宏名>.refs/<窗口键>.png。"""
+    return f"{script_path.stem}.refs"
+
+
+def save_reference(script_path: Path, script: Script, key: str | None, img: np.ndarray) -> None:
+    """把这一帧存成窗口 key 的参考图，并记进 script（调用方负责 dump）。
+    主窗口是 <宏名>.png（Script.reference），其他窗口是 <宏名>.refs/<键>.png（Window.reference）。"""
+    if key in (None, MAIN):
+        script.reference = script.reference or f"{script_path.stem}.png"
+        rel = script.reference
+    else:
+        rel = f"{refs_dir(script_path)}/{key}.png"
+        script.window_for(key).reference = rel
+    write_image(script_path.parent / rel, img)
+
+
+def shots_dir(script_path: Path) -> str:
+    """每一步录制时的窗口画面，放在宏文件旁边的 <宏名>.shots/<步骤编号>.png。"""
+    return f"{script_path.stem}.shots"
+
+
+def save_shot(script_path: Path, step_id: str, img: np.ndarray, *, keep_existing: bool = False) -> str:
+    """存这一步的画面，返回相对脚本文件的路径。keep_existing 同 save_target_crop：重新录制时旧图留给撤销用。"""
+    rel, n = f"{shots_dir(script_path)}/{step_id}.png", 2
+    while keep_existing and (script_path.parent / rel).exists():
+        rel, n = f"{shots_dir(script_path)}/{step_id}-{n}.png", n + 1
+    write_image(script_path.parent / rel, img)
+    return rel
 
 
 def targets_dir(script_path: Path) -> str:

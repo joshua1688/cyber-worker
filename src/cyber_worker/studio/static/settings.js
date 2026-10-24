@@ -300,6 +300,10 @@ const Settings = (() => {
         ${row("追加到末尾", "重新录制时接在已有步骤后面。关着时会替换掉旧步骤，录完按 Ctrl+Z 能恢复。录制按钮旁的 ▾ 里也能切换", sw("record_append"))}
       </div>
       <div class="set-group">
+        <div class="set-group-head"><b>分享</b></div>
+        ${row("导出时带上截图", "导出平台包时带上录制时的窗口截图（参考图、每一步的画面），别人导入后能看到每一步在哪操作。截图里可能有聊天内容，不想分享就关掉；执行不受影响", sw("pack_screenshots"))}
+      </div>
+      <div class="set-group">
         <div class="set-group-head"><b>执行</b></div>
         ${row("开始前等你停手", "在 studio 里点空跑 / 执行后，等键盘鼠标停下这么久才开始，免得跟你抢鼠标", secs("run_idle_sec", 0, 60, 0.5))}
         ${row("你在用电脑时暂停", "无人值守执行时，检测到你在用键盘鼠标就先停下，等你离开再继续", sw("pause_on_user_input"))}

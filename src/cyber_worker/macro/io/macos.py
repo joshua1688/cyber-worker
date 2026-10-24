@@ -130,6 +130,20 @@ class MacScreenIO(PynputInput):
             subprocess.Popen(["afplay", str(chime_file(kind))],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    def locate_window(self, window: Window) -> WindowGeometry:
+        if not _APP_NAME.match(window.app) or (window.title and not _TITLE.match(window.title)):
+            raise CalibrationError(f"窗口名不合法：{window.app!r} / {window.title!r}")
+        target = (f'(first window whose name contains "{window.title}")'
+                  if window.title else "window 1")
+        out = _osascript(  # 不 activate、不 AXRaise、不改尺寸；找不到时 _osascript 抛 CalibrationError
+            f'tell application "System Events" to tell process "{window.app}"\n'
+            f"  get (position of {target}) & (size of {target})\n"
+            f"end tell"
+        )
+        x, y, w, h = (float(v) for v in out.split(","))
+        shot = self.capture(WindowGeometry(x, y, w, h, scale=1.0))
+        return WindowGeometry(x, y, w, h, scale=shot.shape[1] / w)
+
     def calibrate(self, window: Window) -> WindowGeometry:
         if not _APP_NAME.match(window.app):
             raise CalibrationError(f"进程名不合法：{window.app!r}")

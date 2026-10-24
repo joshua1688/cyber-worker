@@ -198,6 +198,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .seg button:hover:not(:disabled) { color: var(--text); }
 .seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
 .seg button:disabled { opacity: .4; cursor: not-allowed; }
+#win-seg button { max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- 顶栏 ---------- */
 .topbar {
@@ -507,7 +508,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .type-ico.wait { background: var(--surface-2); color: var(--text-2); }
 .type-ico.wait_page { background: var(--info-soft); color: var(--info); }
 .type-ico.key { background: var(--accent-soft); color: var(--accent); }
-.type-ico.click, .type-ico.scroll, .type-ico.drag { background: var(--orange-soft); color: var(--orange); }
+.type-ico.click, .type-ico.scroll, .type-ico.drag, .type-ico.hover { background: var(--orange-soft); color: var(--orange); }
 .type-ico.type { background: var(--info-soft); color: var(--info); }
 .type-ico.sm { width: 26px; height: 26px; border-radius: 7px; }
 .type-ico.sm .icon { width: 14px; height: 14px; }
@@ -653,6 +654,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 }
 .canvas-empty { padding: 36px 16px; color: var(--text-3); text-align: center; font-size: 13px; }
 .coord { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text-3); min-width: 110px; text-align: right; }
+.frame-note { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .anchor-bar {
   display: flex;
   gap: 8px;

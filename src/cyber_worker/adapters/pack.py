@@ -62,8 +62,12 @@ def is_macro(rel: str) -> bool:
 
 # ---- 导出 ----
 
-def export_pack(platform_dir: Path) -> bytes:
-    """把一个平台目录打成 .cwpack（字节）。宏的参考截图不打进去，宏里对它的引用也去掉。"""
+def export_pack(platform_dir: Path, *, screenshots: bool = True) -> bytes:
+    """把一个平台目录打成 .cwpack（字节）。
+
+    screenshots：带上录制时的整窗口截图（每个窗口的参考图、每一步的画面），导入的人打开宏就能看到
+    当时在哪点的。截图里可能有聊天内容；关掉时这些图不打进去，宏里对它们的引用也去掉（执行不受影响，
+    执行只看锚点和目标图）。"""
     platform_dir = platform_dir.resolve()
     files = sorted(p for p in platform_dir.rglob("*") if p.is_file() and p.suffix.lower() in ALLOWED)
     skip: set[Path] = set()
@@ -76,9 +80,18 @@ def export_pack(platform_dir: Path) -> bytes:
             continue
         raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         script = Script.model_validate(raw)
-        if script.reference:
-            skip.add((p.parent / script.reference).resolve())
-            raw.pop("reference", None)
+        if not screenshots:
+            if script.reference:
+                skip.add((p.parent / script.reference).resolve())
+                raw.pop("reference", None)
+            for key, win in script.windows.items():
+                if win.reference:
+                    skip.add((p.parent / win.reference).resolve())
+                    raw["windows"][key].pop("reference", None)
+            for raw_step, step in zip(raw.get("steps", []), script.steps):
+                if step.shot:
+                    skip.add((p.parent / step.shot).resolve())
+                    raw_step.pop("shot", None)
         texts[p] = yaml.safe_dump(raw, allow_unicode=True, sort_keys=False).encode("utf-8")
         macros.append(PackMacro(file=rel, name=script.name))
         apps.update(w.app for w in (script.window, *script.windows.values()))
@@ -175,7 +188,8 @@ def _check_file(name: str, content: bytes) -> None:
     try:
         if is_macro(name):
             script = Script.model_validate(raw or {})
-            refs = [script.pages, script.reference]
+            refs = [script.pages, script.reference, *(w.reference for w in script.windows.values())]
+            refs += [s.shot for s in script.steps]
             refs += [s.target.image for s in script.steps if isinstance(s, Click) and s.target]
         elif name.endswith(".pages.yaml"):
             refs = [a.image for fp in PageBook.model_validate(raw or {}).pages.values() for a in fp.anchors]

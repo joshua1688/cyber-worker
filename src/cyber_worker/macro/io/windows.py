@@ -226,7 +226,7 @@ def _geometry(hwnd) -> WindowGeometry:
     scale = user32.GetDpiForWindow(hwnd) / 96 or 1.0
     f = _frame(hwnd)
     return WindowGeometry(f.left / scale, f.top / scale, (f.right - f.left) / scale,
-                          (f.bottom - f.top) / scale, scale)
+                          (f.bottom - f.top) / scale, scale, handle=hwnd or 0)
 
 
 def _with_geometry(hwnd) -> tuple[WindowInfo, WindowGeometry] | None:
@@ -326,6 +326,67 @@ def _outer(hwnd) -> wintypes.RECT:
     return rect
 
 
+gdi32 = ctypes.WinDLL("gdi32")
+gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+gdi32.CreateCompatibleDC.restype = wintypes.HDC
+gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+gdi32.SelectObject.restype = wintypes.HGDIOBJ
+gdi32.GetDIBits.argtypes = [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+                            ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT]
+gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+gdi32.DeleteDC.argtypes = [wintypes.HDC]
+user32.GetWindowDC.argtypes = [wintypes.HWND]
+user32.GetWindowDC.restype = wintypes.HDC
+user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+user32.PrintWindow.restype = wintypes.BOOL
+user32.IsWindow.argtypes = [wintypes.HWND]
+_PW_RENDERFULLCONTENT = 2  # 硬件加速的窗口（Chromium / Electron，QQ NT 就是）也能截到
+
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+                ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                ("biClrImportant", wintypes.DWORD)]
+
+
+def _print_window(hwnd) -> np.ndarray | None:
+    """截窗口自己的内容（PrintWindow），被别的窗口挡住也截得到；裁掉透明边，只留可见边框以内。
+    截不到、或者截出来是全黑（有的程序不支持）返回 None，由调用方退回屏幕截图。"""
+    if not user32.IsWindow(hwnd) or user32.IsIconic(hwnd):
+        return None
+    outer, frame = _outer(hwnd), _frame(hwnd)
+    w, h = outer.right - outer.left, outer.bottom - outer.top
+    if w <= 0 or h <= 0:
+        return None
+    hdc = user32.GetWindowDC(hwnd)
+    mem = gdi32.CreateCompatibleDC(hdc)
+    bmp = gdi32.CreateCompatibleBitmap(hdc, w, h)
+    try:
+        gdi32.SelectObject(mem, bmp)
+        if not user32.PrintWindow(hwnd, mem, _PW_RENDERFULLCONTENT):
+            return None
+        bmi = _BITMAPINFOHEADER(biSize=ctypes.sizeof(_BITMAPINFOHEADER), biWidth=w, biHeight=-h,
+                                biPlanes=1, biBitCount=32)
+        buf = ctypes.create_string_buffer(w * h * 4)
+        if not gdi32.GetDIBits(mem, bmp, 0, h, buf, ctypes.byref(bmi), 0):
+            return None
+    finally:
+        gdi32.DeleteObject(bmp)
+        gdi32.DeleteDC(mem)
+        user32.ReleaseDC(hwnd, hdc)
+    img = np.frombuffer(buf, np.uint8).reshape(h, w, 4)[:, :, :3]
+    dx, dy = frame.left - outer.left, frame.top - outer.top
+    img = img[dy:dy + frame.bottom - frame.top, dx:dx + frame.right - frame.left]
+    if img.size == 0 or img.max() < 16:  # 全黑：这个程序不让 PrintWindow 截
+        return None
+    return img.copy()
+
+
 class WinScreenIO(PynputInput):
     def __init__(self, *, settle: float = 0.4) -> None:
         super().__init__()
@@ -352,6 +413,17 @@ class WinScreenIO(PynputInput):
 
     def chime(self, kind: str) -> None:
         chime(kind)
+
+    def locate_window(self, window: Window) -> WindowGeometry:
+        hwnd = find_window(window.app, window.title)
+        if hwnd is None or user32.IsIconic(hwnd):
+            raise CalibrationError(f"找不到 {window.title or window.app} 的窗口")
+        scale = user32.GetDpiForWindow(hwnd) / 96 or 1.0
+        frame = _frame(hwnd)
+        self.input_factor = scale
+        return WindowGeometry(frame.left / scale, frame.top / scale,
+                              (frame.right - frame.left) / scale, (frame.bottom - frame.top) / scale, scale=scale,
+                              handle=hwnd or 0)
 
     def calibrate(self, window: Window) -> WindowGeometry:
         hwnd = find_window(window.app, window.title)
@@ -389,9 +461,15 @@ class WinScreenIO(PynputInput):
 
         self.input_factor = scale
         return WindowGeometry(frame.left / scale, frame.top / scale,
-                              window.width, window.height, scale=scale)
+                              window.width, window.height, scale=scale, handle=hwnd or 0)
 
     def capture(self, geo: WindowGeometry) -> np.ndarray:
+        """知道窗口句柄就截窗口自己的内容（被挡住也对）；不知道、或者这个程序不让截，就截屏幕上那块区域。"""
+        if geo.handle:
+            img = _print_window(geo.handle)
+            want = (round(geo.height * geo.scale), round(geo.width * geo.scale))
+            if img is not None and abs(img.shape[0] - want[0]) <= 2 and abs(img.shape[1] - want[1]) <= 2:
+                return img
         from PIL import ImageGrab
 
         s = geo.scale

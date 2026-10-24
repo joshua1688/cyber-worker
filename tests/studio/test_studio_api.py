@@ -69,8 +69,8 @@ def new_script(client, name="comment"):
 def test_new_macro_is_a_draft_until_saved(client, tmp_path):
     d = new_script(client)
     assert d["id"] == "_draft/demo/templates/comment.yaml" and d["draft"] is True
-    assert d["frames"]["reference"]["url"].startswith("/api/file?path=drafts/demo/templates/comment.png")
-    assert client.get(d["frames"]["reference"]["url"]).status_code == 200
+    assert d["frames"]["reference"]["main"]["url"].startswith("/api/file?path=drafts/demo/templates/comment.png")
+    assert client.get(d["frames"]["reference"]["main"]["url"]).status_code == 200
     assert client.get("/api/scripts").json() == [
         {"id": d["id"], "platform": "demo", "name": "comment", "draft": True}]
     assert not (tmp_path / "user_data/platforms").exists()  # 宏库里还没有
@@ -91,9 +91,9 @@ def test_save_moves_draft_with_reference_and_anchors(client, tmp_path):
     assert sorted(p.name for p in lib.iterdir()) == [
         "comment.anchors", "comment.pages.yaml", "comment.png", "comment.yaml"]
     assert not list((tmp_path / "user_data/drafts").rglob("*.*"))  # 草稿清空了
-    assert client.get(saved["frames"]["reference"]["url"]).status_code == 200
+    assert client.get(saved["frames"]["reference"]["main"]["url"]).status_code == 200
     assert client.get(saved["pages"]["页面1"][0]["url"]).status_code == 200  # 锚点图跟着搬过来了
-    assert saved["frames"]["latest"]["url"]  # 最新截图也还在
+    assert saved["frames"]["latest"]["main"]["url"]  # 最新截图也还在
     assert client.post(f"/api/scripts/{saved['id']}/commit").status_code == 400  # 已经保存过了
 
 
@@ -122,7 +122,7 @@ def test_chinese_name_and_auto_platform(client):
     d = r.json()
     assert d["id"] == "_draft/wechat/templates/朋友圈_评论.yaml"
     assert d["script"]["name"] == "朋友圈 评论"
-    assert client.get(d["frames"]["reference"]["url"]).status_code == 200
+    assert client.get(d["frames"]["reference"]["main"]["url"]).status_code == 200
     saved = client.post(f"/api/scripts/{d['id']}/commit").json()
     assert saved["id"] == "wechat/templates/朋友圈_评论.yaml"
     assert client.get("/api/scripts").json() == [
@@ -169,7 +169,7 @@ def test_capture_then_anchor(client):
         "page": "compose", "x": 50, "y": 40, "w": 40, "h": 30}).status_code == 400  # 还没截图
 
     d = client.post(f"/api/scripts/{sid}/capture").json()
-    assert d["frames"]["latest"]["url"]
+    assert d["frames"]["latest"]["main"]["url"]
     d = client.post(f"/api/scripts/{sid}/anchors", json={
         "page": "compose", "x": 50, "y": 40, "w": 40, "h": 30}).json()
     assert d["script"]["pages"] == "comment.pages.yaml"  # 每个宏自己一份
@@ -206,7 +206,7 @@ def test_record_automates_send_and_page(client):
     typed = next(s for s in steps if s["action"] == "type")
     assert typed["expected_page"] == send["expected_page"] == "页面1"
     assert r["problems"] == []
-    assert r["frames"]["latest"]["url"]  # 录制最后一帧可以直接在画布上看
+    assert r["frames"]["latest"]["main"]["url"]  # 录制最后一帧可以直接在画布上看
 
 
 def test_pick_window_skips_studio_and_cleans_title(client):
@@ -313,13 +313,18 @@ def test_record_across_windows_saves_window_and_its_anchor(client):
     client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
     r = client.post("/api/record/stop").json()
     s = r["script"]
-    assert s["windows"] == {"w2": {"app": "Demo", "title": "My Sky", "width": 300, "height": 200, "scale": 1.0}}
+    assert s["windows"] == {"w2": {"app": "Demo", "title": "My Sky", "width": 300, "height": 200, "scale": 1.0,
+                                   "reference": "comment.refs/w2.png", "popup": False}}
     assert [(x["action"], x.get("win")) for x in s["steps"]] == [("click", None), ("type", "w2"), ("click", "w2")]
     assert s["steps"][0]["count"] == 2
     typed, send = s["steps"][1], s["steps"][2]
     assert send["sends"] and typed["expected_page"] == send["expected_page"]
     assert r["pages"][typed["expected_page"]][0]["win"] == "w2"  # 锚点截自聊天窗口
-    assert r["frames"]["latest"]["win"] == "w2"
+    assert r["last_win"] == "w2"
+    # 每个窗口各有参考图和最新截图：画布上选到聊天窗口的步骤就能看到聊天窗口
+    assert set(r["frames"]["reference"]) == set(r["frames"]["latest"]) == {"main", "w2"}
+    assert s["windows"]["w2"]["reference"] == "comment.refs/w2.png"
+    assert client.get(r["frames"]["reference"]["w2"]["url"]).status_code == 200
     assert r["problems"] == []
 
 
@@ -567,11 +572,11 @@ def test_pack_export_then_import_renames_same_name_macros(client, tmp_path):
     assert imported == {"platform": "demo", "ids": ["demo/templates/comment-2.yaml"]}
     lib = tmp_path / "user_data/platforms/demo/templates"
     assert sorted(p.name for p in lib.iterdir()) == [
-        "comment-2.anchors", "comment-2.pages.yaml", "comment-2.yaml",  # 参考截图没有导出
+        "comment-2.anchors", "comment-2.pages.yaml", "comment-2.png", "comment-2.yaml",  # 参考截图跟着导出、改名
         "comment.anchors", "comment.pages.yaml", "comment.png", "comment.yaml"]
     d = client.get(f"/api/scripts/{imported['ids'][0]}/detail").json()
     assert client.get(d["pages"]["页面1"][0]["url"]).status_code == 200  # 锚点图跟着改了名
-    assert d["frames"]["reference"] is None
+    assert client.get(d["frames"]["reference"]["main"]["url"]).status_code == 200
     assert d["script"]["name"] == "comment-2"
     assert not list((tmp_path / "user_data").glob(".import-*"))  # 临时目录清掉了
     assert saved["id"] in [s["id"] for s in client.get("/api/scripts").json()]
@@ -704,3 +709,268 @@ def test_page_from_another_window_is_a_problem(client):
     msgs = {p["step"]: p["message"] for p in r["problems"]}
     assert "s01" not in msgs
     assert "截自别的窗口" in msgs["s02"]
+
+
+def _record_two_windows(client):
+    """主窗口点一下，弹出的聊天窗口里打字、点发送。返回录完的结果。"""
+    from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
+
+    chat = (WindowInfo("Demo", "My Sky", 300, 200), WindowGeometry(150, 80, 300, 200, 1.0))
+
+    def listen(builder, stop):
+        builder.on_click(120, 80, "left", (), (WindowInfo("Demo", "Demo 窗口", 400, 300), builder.geo))
+        for ch in "hi":
+            builder.on_char(ch, chat)
+        builder.on_click(400, 250, "left", (), chat)
+        stop.wait()
+
+    client.app.state.studio.app.listen = listen
+    d = new_script(client)
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    return client.post("/api/record/stop").json()
+
+
+def test_each_window_has_its_own_reference(client, tmp_path):
+    """主窗口点开的聊天窗口也有参考图：画布切到它就能看、能在上面框锚点；跟着宏一起保存、删除，不进平台包。"""
+    r = _record_two_windows(client)
+    sid = r["id"]
+    # 在聊天窗口的参考图上框锚点：锚点属于聊天窗口
+    d = client.post(f"/api/scripts/{sid}/anchors", json={
+        "page": "聊天", "x": 10, "y": 10, "w": 40, "h": 30, "frame": "reference", "win": "w2"}).json()
+    assert d["pages"]["聊天"][0]["win"] == "w2"
+
+    # 保存进宏库：参考图目录跟着搬，引用也改了
+    saved = client.post(f"/api/scripts/{sid}/commit").json()
+    lib = tmp_path / "user_data/platforms/demo/templates"
+    assert saved["script"]["windows"]["w2"]["reference"] == "comment.refs/w2.png"
+    assert (lib / "comment.refs/w2.png").exists()
+    assert not (tmp_path / "user_data/drafts/demo/templates/comment.refs").exists()
+    assert client.get(saved["frames"]["reference"]["w2"]["url"]).status_code == 200
+
+    # 平台包默认带上每个窗口的参考图和每一步的画面；设置里关掉就都不带
+    import io
+    import zipfile
+    r = client.get("/api/packs/demo")
+    assert r.headers["X-Pack-Screenshots"] == "1"
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert "templates/comment.refs/w2.png" in names and any(".shots/" in n for n in names)
+    client.patch("/api/settings", json={"pack_screenshots": False})
+    r = client.get("/api/packs/demo")
+    assert r.headers["X-Pack-Screenshots"] == "0"
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert not any(".refs/" in n or ".shots/" in n or n == "templates/comment.png" for n in names)
+
+    client.delete(f"/api/scripts/{saved['id']}/detail")
+    assert not (lib / "comment.refs").exists() and not (lib / "comment.shots").exists()
+
+
+def test_capture_fills_missing_window_reference(client):
+    """以前录的宏，聊天窗口没有参考图：在它上面截一张就顺便存成参考图；最新截图每个窗口各一张。"""
+    r = _record_two_windows(client)
+    sid = r["id"]
+    sc = r["script"]
+    sc["windows"]["w2"].pop("reference")
+    client.put(f"/api/scripts/{sid}/detail", json=sc)
+    assert "w2" not in client.get(f"/api/scripts/{sid}/detail").json()["frames"]["reference"]
+
+    d = client.post(f"/api/scripts/{sid}/capture?win=w2").json()
+    assert d["script"]["windows"]["w2"]["reference"] == "comment.refs/w2.png"
+    assert set(d["frames"]["reference"]) == {"main", "w2"}
+    d = client.post(f"/api/scripts/{sid}/capture").json()  # 截主窗口不会把聊天窗口的最新截图冲掉
+    assert set(d["frames"]["latest"]) == {"main", "w2"}
+    assert client.post(f"/api/scripts/{sid}/anchors", json={
+        "page": "x", "x": 1, "y": 1, "w": 10, "h": 10, "frame": "reference", "win": "w9"}).status_code == 400
+
+
+def test_each_step_keeps_the_frame_it_was_recorded_on(client):
+    """每一步存它动作之前的画面：画面变了才另存一张，没变（或只多了几个字）就和上一步共用。"""
+    import time as _time
+
+    io = client.io
+    page_a = screen_with(pattern(seed=1))
+    page_b = screen_with(pattern(80, 60, seed=2), at=(200, 150))  # 点开了别的页面：大块变化
+
+    def listen(builder, stop):
+        def settle():
+            _time.sleep(0.15)  # 截图在后台线程里，等它截完再换画面
+
+        io.screen = lambda: page_a.copy()
+        builder.on_click(120, 80, "left")       # s01：画面 A
+        settle()
+        builder.on_click(300, 200, "left")      # s02：还是 A → 共用
+        settle()
+        io.screen = lambda: page_b.copy()
+        for ch in "hi":                          # s03：画面 B → 新存一张
+            builder.on_char(ch)
+        settle()
+        typed = page_b.copy()
+        typed[5:9, 5:12] = 0                     # 输入框里多了几个字：不算变了
+        io.screen = lambda: typed.copy()
+        builder.on_combo("enter")                # s04：共用 B
+        settle()
+        stop.wait()
+
+    client.app.state.studio.app.listen = listen
+    d = new_script(client)
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    r = client.post("/api/record/stop").json()
+    shots = {s["id"]: s.get("shot") for s in r["script"]["steps"]}
+    assert shots == {"s01": "comment.shots/s01.png", "s02": "comment.shots/s01.png",
+                     "s03": "comment.shots/s03.png", "s04": "comment.shots/s03.png"}
+    assert set(r["shots"]) == {"s01", "s02", "s03", "s04"}
+    assert client.get(r["shots"]["s03"]["url"]).status_code == 200
+
+    # 在某一步的画面上直接框锚点、重框目标图
+    a = client.post(f"/api/scripts/{d['id']}/anchors", json={
+        "page": "页面B", "x": 200, "y": 150, "w": 60, "h": 40, "frame": "step", "step_id": "s03"}).json()
+    assert a["pages"]["页面B"][0]["win"] is None
+    t = client.post(f"/api/scripts/{d['id']}/targets", json={
+        "step_id": "s02", "x": 50, "y": 40, "w": 40, "h": 30, "frame": "step", "shot_of": "s02"})
+    assert t.status_code == 200, t.text
+
+    # 保存进宏库：画面目录跟着搬
+    saved = client.post(f"/api/scripts/{d['id']}/commit").json()
+    assert client.get(saved["shots"]["s01"]["url"]).status_code == 200
+
+
+def test_hover_recorded_only_when_something_pops_up(client):
+    """停一下什么都没变：不记。停在头像上弹出了资料卡：记一步悬停（带目标图和画面），资料卡标成弹出窗口。"""
+    import time as _time
+
+    from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
+
+    io = client.io
+    base = io.list_windows()
+    card = (WindowInfo("Demo", "资料卡", 200, 150), WindowGeometry(300, 100, 200, 150, 1.0))
+
+    def listen(builder, stop):
+        io.screen = lambda: screen_with(pattern())
+        builder.on_move(250, 200)          # 停在空白处：画面没变、没弹窗口
+        _time.sleep(1.3)
+        builder.on_move(165, 105)          # 停在 (50, 40) 那块纹理（头像）上
+        _time.sleep(0.4)                   # 已经截了「悬停前」
+        io.list_windows = lambda: [*base, card[0]]  # 资料卡弹出来了
+        _time.sleep(1.0)
+        builder.on_click(400, 200, "left", (), card)  # 在资料卡上点「发消息」
+        done.set()
+        stop.wait()
+
+    done = threading.Event()
+    client.app.state.studio.app.listen = listen
+    d = new_script(client)
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    assert done.wait(10)  # 操作完了再停（盯悬停的线程在停止录制时就退出了）
+    r = client.post("/api/record/stop").json()
+    io.list_windows = lambda: base
+    steps = r["script"]["steps"]
+    assert [(s["action"], s.get("win")) for s in steps] == [("hover", None), ("click", "w2")]
+    hover = steps[0]
+    assert (hover["x"], hover["y"]) == (65, 55) and 0.5 <= hover["seconds"] <= 3
+    assert hover["target"] and hover["shot"]  # 按图找头像；画面是悬停之前的主窗口
+    assert r["script"]["windows"]["w2"]["popup"] is True
+    assert set(r["targets"]) >= {hover["id"]}
+
+
+def test_short_pause_on_the_way_is_not_a_hover(client):
+    """移动途中顿了一下（不到半秒就移开），哪怕那块画面正好在变（比如被挡住的地方有动画）：不算悬停。"""
+    import time as _time
+
+    io = client.io
+    frames = iter(range(10_000))
+    # 每截一次都不一样：画面一直在变
+    io.screen = lambda: screen_with(pattern(seed=next(frames) % 7 + 1), at=(150, 100))
+
+    def listen(builder, stop):
+        builder.on_move(165, 105)
+        _time.sleep(0.35)                 # 顿了一下：已经截了「悬停前」
+        builder.on_move(260, 200)         # 不到半秒就移开了
+        _time.sleep(0.1)
+        builder.on_click(260, 200, "left")
+        done.set()
+        stop.wait()
+
+    done = threading.Event()
+    client.app.state.studio.app.listen = listen
+    d = new_script(client)
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    assert done.wait(10)
+    r = client.post("/api/record/stop").json()
+    assert [s["action"] for s in r["script"]["steps"]] == ["click"]
+
+
+def _record_with(client, listen):
+    """用这段假操作录一遍，等操作做完再停（盯悬停的线程在停止录制时就退出了）。"""
+    done = threading.Event()
+
+    def run(builder, stop):
+        listen(builder)
+        done.set()
+        stop.wait()
+
+    client.app.state.studio.app.listen = run
+    d = new_script(client)
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    assert done.wait(15)
+    return client.post("/api/record/stop").json()
+
+
+def test_hover_with_jitter_and_slow_popup_is_recorded(client):
+    """停在头像上手一直在抖，资料卡 1.5 秒才弹出来：照样记成悬停，时长是等到它弹出的时间。"""
+    import time as _time
+
+    from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
+
+    io = client.io
+    base = io.list_windows()
+    card = (WindowInfo("Demo", "资料卡", 200, 150), WindowGeometry(300, 100, 200, 150, 1.0))
+    io.screen = lambda: screen_with(pattern())
+
+    def listen(builder):
+        builder.on_move(165, 105)
+        for i in range(15):                       # 1.5 秒里一直抖 1～2 个像素
+            _time.sleep(0.1)
+            builder.on_move(165 + (i % 3) - 1, 105 + (i % 2))
+        io.list_windows = lambda: [*base, card[0]]  # 1.5 秒后资料卡才弹出来
+        _time.sleep(0.5)
+        builder.on_click(400, 200, "left", (), card)
+
+    r = _record_with(client, listen)
+    io.list_windows = lambda: base
+    steps = r["script"]["steps"]
+    assert [s["action"] for s in steps] == ["hover", "click"]
+    assert 1.4 <= steps[0]["seconds"] <= 2.2
+
+
+def test_hover_highlight_vanishing_on_leave_is_not_a_change(client):
+    """停在会话那一行上（有悬停高亮），什么都没弹出来；移开时高亮消失、画面变了：不算悬停。"""
+    import time as _time
+
+    io = client.io
+    highlighted = screen_with(pattern(seed=3), at=(20, 80))
+    plain = screen_with(None)
+
+    def listen(builder):
+        io.screen = lambda: highlighted.copy()
+        builder.on_move(165, 145)
+        _time.sleep(0.9)                          # 停着：高亮一直在，画面没变
+        io.screen = lambda: plain.copy()          # 移开：高亮消失
+        builder.on_move(300, 300)
+        _time.sleep(0.5)
+        builder.on_click(300, 300, "left")
+
+    r = _record_with(client, listen)
+    assert [s["action"] for s in r["script"]["steps"]] == ["click"]
+
+
+def test_rerecording_drops_unused_windows(client):
+    """重新录一遍（替换）：以前录过、现在没有步骤用到的窗口去掉；还在用的按这次的尺寸记。"""
+    r = _record_two_windows(client)
+    sid = r["id"]
+    sc = r["script"]
+    sc["windows"]["w3"] = {"app": "Demo", "title": "旧窗口", "width": 930, "height": 613}
+    sc["windows"]["w2"]["width"] = 999
+    client.put(f"/api/scripts/{sid}/detail", json=sc)
+    r = client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+    r = client.post("/api/record/stop").json()
+    assert set(r["script"]["windows"]) == {"w2"}
+    assert r["script"]["windows"]["w2"]["width"] == 300

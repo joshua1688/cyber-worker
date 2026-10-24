@@ -80,6 +80,10 @@
           <span class="type-ico scroll"><i data-icon="scroll"></i></span>
           <span><b>滚动</b><small>上下、左右滚动页面内容</small></span>
         </button>
+        <button class="palette-item" data-add="hover">
+          <span class="type-ico hover"><i data-icon="mouse"></i></span>
+          <span><b>悬停</b><small>停在某处，等资料卡、菜单弹出</small></span>
+        </button>
         <button class="palette-item" data-add="drag">
           <span class="type-ico click"><i data-icon="move"></i></span>
           <span><b>拖动</b><small>按住从一处拖到另一处</small></span>
@@ -139,6 +143,8 @@
           <button data-frame="latest">最新截图</button>
           <button data-frame="shot" hidden>运行截图</button>
         </div>
+        <div class="seg" id="win-seg" role="tablist" aria-label="窗口" title="画面上显示哪个窗口；选中步骤时自动切到它所在的窗口" hidden></div>
+        <span class="muted frame-note" id="frame-note"></span>
         <span class="grow"></span>
         <span class="coord" id="coord"></span>
         <button class="btn sm" id="btn-capture" title="把目标窗口调到宏的尺寸，截取当前画面"><i data-icon="camera"></i>截取当前窗口</button>

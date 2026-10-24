@@ -90,7 +90,7 @@ The value of a digital twin isn't how much it does — it's how much **what it d
 
 > The platform layer is made of **declarative platform packs**. Each platform is a directory containing only `platform.yaml` (capability → macro mapping, extraction fields), `pages.yaml` (page fingerprints, watch regions) and recorded macros. All platforms are driven by one generic `ScreenAdapter`. Built-in platforms work out of the box; for other platforms or private use cases, record and save a platform pack in `studio` — **no code changes needed**. Only unusually complex extraction needs an optional `hooks.py`.
 >
-> A platform pack can be **exported in one click** as a single `.cwpack` file to share with others; they drag the file onto the studio page and it is imported, giving them the whole set of platform operations right away. Export automatically leaves out the full-window reference screenshots (only used for display in the editor), drafts and run screenshots; import validates the file automatically and renames same-name macros with a `-2` suffix, with no confirmation dialogs.
+> A platform pack can be **exported in one click** as a single `.cwpack` file to share with others; they drag the file onto the studio page and it is imported, giving them the whole set of platform operations right away. By default, export includes the screenshots taken while recording (each window's reference image and each step's frame), so whoever imports the macro can see where every step acts; the screenshots may contain chat content, so this can be turned off in settings (running only uses anchors and target images, so it is unaffected). Drafts and run screenshots are never included; import validates the file automatically and renames same-name macros with a `-2` suffix, with no confirmation dialogs.
 
 ## 🏗️ How it works
 
@@ -349,7 +349,7 @@ cyber-worker/
 │   │   │   ├── ocr.py              # PaddleOCR wrapper
 │   │   │   ├── template.py         # OpenCV template matching
 │   │   │   ├── fingerprint.py      # Page fingerprint: which page is on screen
-│   │   │   ├── detect.py           # Region change detection (selected region vs. baseline), used by monitor
+│   │   │   ├── detect.py           # Region change detection (selected region vs. baseline), used by monitor; also tells whether the frame changed while recording
 │   │   │   └── anomaly.py          # Single-frame coarse filter (flag suspicious when mismatched)
 │   │   ├── act/                    # Human-like operations
 │   │   │   ├── mouse.py            # Bezier trajectory + overshoot + micro-jitter
@@ -445,7 +445,7 @@ cyber-worker/
 │   │   └── test_reviewer.py        # Audit ranking, spot checks, daily report
 │   ├── adapters/
 │   │   ├── test_screen_adapter.py  # Pack loading, capability mapping, user overrides
-│   │   └── test_pack.py            # Pack export / import: round trip, skips references and drafts, rejects bad packs and path traversal
+│   │   └── test_pack.py            # Pack export / import: round trip, screenshots optional, skips drafts, rejects bad packs and path traversal
 │   ├── studio/
 │   │   └── test_studio_api.py      # studio API (fake IO): create, save, anchors, record, dry run, audit
 │   └── fixtures/                   # ★ Test fixtures (test-account screenshots or redacted only; stored via Git LFS)

@@ -20,6 +20,10 @@ class Window(BaseModel):
     width: int
     height: int
     scale: float = 1.0  # 录制时的屏幕缩放倍率（Retina 为 2.0）
+    # 这个窗口的参考截图，相对脚本文件；studio 画布用。主窗口的在 Script.reference，这里只给其他窗口用
+    reference: str | None = None
+    # 悬停弹出的窗口（资料卡、悬浮菜单）：执行时只找位置，不切前台、不改尺寸——一抢焦点它就没了
+    popup: bool = False
 
 
 MAIN = "main"  # 主窗口的键
@@ -33,6 +37,8 @@ class _StepBase(BaseModel):
     expected_page: str | None = None  # 执行这一步之前应当所在的页面（pages.yaml 中的名字）
     delay_after: float = 0.5  # 动作完成后等待多久再截图
     note: str = ""
+    # 录制时这一步动作之前的窗口画面（相对脚本文件）；studio 画布用，执行时不看。画面没变的几步共用一张
+    shot: str | None = None
 
 
 Button = Literal["left", "right", "middle"]
@@ -85,6 +91,23 @@ class Drag(_StepBase):
     modifiers: list[Modifier] = []
 
 
+class Hover(_StepBase):
+    """把鼠标移到 (x, y) 停 seconds 秒：悬停才会出现的资料卡、菜单、浮出的按钮。
+    录制时只有悬停之后画面真的变了（弹出新窗口、窗口内容变了）才记这一步。"""
+
+    action: Literal["hover"] = "hover"
+    x: float
+    y: float
+    seconds: float = Field(1.0, ge=0, le=30)  # 停多久（录制时你实际停的时间）
+    target: Target | None = None  # 同点击：有就按图找（比如头像），列表顺序变了也能停对地方
+    use_target: bool = True
+    delay_after: float = 0.0  # 停够 seconds 已经等过了
+
+    @property
+    def finds_target(self) -> bool:
+        return self.target is not None and self.use_target
+
+
 class TypeText(_StepBase):
     action: Literal["type"] = "type"
     text: str  # 支持 {变量}，变量需在 Script.variables 中声明
@@ -125,7 +148,7 @@ class WaitPage(_StepBase):
     delay_after: float = 0.0
 
 
-Step = Annotated[Click | Drag | TypeText | Key | Scroll | Wait | WaitPage, Field(discriminator="action")]
+Step = Annotated[Click | Drag | Hover | TypeText | Key | Scroll | Wait | WaitPage, Field(discriminator="action")]
 
 _VAR = re.compile(r"\{(\w+)\}")
 
@@ -176,6 +199,11 @@ class Script(BaseModel):
     @property
     def reference_path(self) -> Path | None:
         return None if self.reference is None else self.base_dir / self.reference
+
+    def reference_for(self, key: str | None) -> Path | None:
+        """某个窗口的参考截图（None / MAIN = 主窗口）。"""
+        ref = self.reference if key in (None, MAIN) else self.window_for(key).reference
+        return None if ref is None else self.base_dir / ref
 
     def render_text(self, text: str, values: dict[str, str]) -> str:
         """只替换已声明的变量；未声明的 {xxx} 原样保留。"""

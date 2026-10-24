@@ -14,6 +14,7 @@ const S = {
   anchorMode: false,
   regionFor: "anchor", // 框选的用途：anchor = 页面锚点；target = 当前点击步骤的目标图
   frame: "reference", // reference | latest | shot
+  win: null, // 画面上显示的是哪个窗口（null = 主窗口）：每个窗口各有参考图和最新截图
   shot: null, // 运行截图 {url}
   tab: "step",
   recording: false,
@@ -39,6 +40,7 @@ const TYPE = {
   scroll: { icon: "scroll", name: "滚动" },
   wait: { icon: "clock", name: "延迟" },
   drag: { icon: "move", name: "拖动" },
+  hover: { icon: "mouse", name: "悬停" },
   wait_page: { icon: "page", name: "等待页面" },
 };
 
@@ -92,7 +94,8 @@ async function open(id) {
   try { localStorage.setItem("cw.script", id); } catch {}
   reportCurrent();
   applyDetail(d);
-  S.frame = d.frames.reference ? "reference" : "latest";
+  S.win = null;
+  S.frame = d.frames.reference.main ? "reference" : "latest";
   await showFrame();
 }
 
@@ -117,18 +120,73 @@ function applyDetail(d) {
   render();
 }
 
+// 选中的步骤录制时的画面（这一步在画面上显示的窗口里才算）
+function stepShot() {
+  const s = S.script?.steps[S.selected];
+  return s && (s.win || null) === S.win ? S.detail?.shots?.[s.id] : undefined;
+}
+
+// 当前窗口的参考图 / 最新截图（没有就是 undefined）。选中的步骤有录制时的画面，「参考图」就显示它
+function frameOf(kind) {
+  if (kind === "reference" && stepShot()) return stepShot();
+  return S.detail?.frames[kind]?.[S.win || "main"];
+}
+
+// 框锚点 / 目标图时告诉服务端画面上是哪一张
+function frameParams() {
+  if (S.frame === "reference" && stepShot()) return { frame: "step", step_id: S.script.steps[S.selected].id };
+  return { frame: S.frame === "reference" ? "reference" : "latest", win: S.win };
+}
+
+// 切换画面上显示的窗口。选中步骤时自动切到它所在的窗口；这个窗口没有当前这种画面就换另一种
+function setWin(win, redraw = true) {
+  win = win || null;
+  if (win === S.win) return;
+  S.win = win;
+  if (S.frame === "shot" && (S.shot?.win || null) !== win) S.frame = "reference";
+  if (redraw) showFrame();
+}
+
+// 只列步骤用到的窗口（以前录过、现在没有步骤在用的不列），再加上画面上正显示的那个；不到两个就不显示
+function renderWinSeg() {
+  const used = new Set([...(S.script?.steps || []).map((s) => s.win || null), S.win]);
+  const keys = [null, ...Object.keys(S.script?.windows || {})].filter((k) => used.has(k));
+  const seg = $("#win-seg");
+  seg.hidden = keys.length < 2;
+  if (seg.hidden) return;
+  seg.innerHTML = keys.map((k) => `<button type="button" data-win="${k ?? ""}" class="${(k || null) === S.win ? "on" : ""}"
+      title="${escapeHtml(windowLabel(k))}">${escapeHtml(windowLabel(k))}</button>`).join("");
+}
+
 async function showFrame() {
-  const f = S.frame === "shot" ? S.shot : S.detail?.frames[S.frame];
-  const scale = S.frame === "shot" ? S.script?.window.scale : f?.scale;
+  // 这个窗口没有当前这种画面（比如聊天窗口只截过「最新截图」）：换另一种
+  const other = S.frame === "reference" ? "latest" : "reference";
+  if (S.frame !== "shot" && !frameOf(S.frame) && frameOf(other)) S.frame = other;
+  // 选中的是延迟：不操作任何窗口，不显示画面（显示了反而像在哪里做了什么）
+  const sel = S.script?.steps[S.selected];
+  const idle = sel?.action === "wait" && S.frame !== "shot";
+  const f = idle ? undefined : S.frame === "shot" ? S.shot : frameOf(S.frame);
+  const scale = S.frame === "shot" ? (S.script?.windows?.[S.shot?.win]?.scale ?? S.script?.window.scale) : f?.scale;
   $$("#frame-seg button").forEach((b) => {
     b.classList.toggle("on", b.dataset.frame === S.frame);
     if (b.dataset.frame === "shot") b.hidden = !S.shot;
-    if (b.dataset.frame === "latest") b.disabled = !S.detail?.frames.latest;
-    if (b.dataset.frame === "reference") b.disabled = !S.detail?.frames.reference;
+    if (b.dataset.frame === "latest") b.disabled = !frameOf("latest");
+    if (b.dataset.frame === "reference") b.disabled = !frameOf("reference");
   });
+  renderWinSeg();
+  $("#canvas-empty").innerHTML = idle ? `延迟：等 ${escapeHtml(String(sel.seconds))} 秒，不操作窗口，没有画面`
+    : S.win ? `「${escapeHtml(windowLabel(S.win))}」还没有画面<br>打开这个窗口，再点右上角「截取当前窗口」`
+    : "还没有画面<br>点右上角「截取当前窗口」";
+  const shot = S.frame === "reference" && f && f === stepShot();
+  $("#frame-note").textContent = shot ? `第 ${S.selected + 1} 步录制时的画面`
+    : sel?.action === "wait_page" && f ? `等待页面「${sel.page}」：高亮的是它的锚点`
+    : S.frame === "reference" && f ? `${windowLabel(S.win)}的参考图` : "";
   $("#canvas-empty").hidden = !!f;
   $("#canvas").hidden = !f;
-  await stage.setFrame(f?.url, scale).catch(() => toast("画面加载失败", true));
+  if (f?.url !== S.shownUrl) {  // 同一张图不重新加载（连着几步共用一张画面时）
+    S.shownUrl = f?.url;
+    await stage.setFrame(f?.url, scale).catch(() => toast("画面加载失败", true));
+  }
   syncStage();
 }
 
@@ -184,12 +242,15 @@ function addStep(kind) {
     key: { action: "key", combo: "enter" },
     click: { action: "click", x: Math.round(width / 2), y: Math.round(height / 2) },
     scroll: { action: "scroll", dy: 3, x: Math.round(width / 2), y: Math.round(height / 2) },
+    hover: { action: "hover", x: Math.round(width / 2), y: Math.round(height / 2), seconds: 1, delay_after: 0 },
     drag: { action: "drag", x: Math.round(width / 2 - 80), y: Math.round(height / 2),
       x2: Math.round(width / 2 + 80), y2: Math.round(height / 2), duration: 0.5 },
     type: { action: "type", text: "", expected_page: lastPage(S.script.steps, at - 1) },
     wait_page: { action: "wait_page", page: lastPage(S.script.steps, at - 1) || Object.keys(S.detail?.pages || {})[0] || "",
       timeout: 10 },
   }[kind];
+  // 等待页面：窗口就是那个页面锚点所在的窗口，不用用户再选
+  if (kind === "wait_page") base.win = pageWindow(base.page);
   mutate((sc) => sc.steps.splice(at, 0, { id: nextId(sc.steps), ...base }));
   select(at);
 }
@@ -218,6 +279,14 @@ function moveStep(from, to) {
 function select(i) {
   S.selected = i;
   if (i >= 0) S.tab = "step";
+  const step = S.script?.steps[i];
+  // 画面跟着切到这一步所在的窗口；等待页面切到那个页面锚点所在的窗口；延迟不操作窗口，不切
+  if (step?.action === "wait_page") setWin(pageWindow(step.page, step.win), false);
+  else if (step && step.action !== "wait") setWin(step.win, false);
+  if (S.frame !== "shot") {
+    if (step && stepShot()) S.frame = "reference"; // 这一步有录制时的画面就显示它：一眼看出在哪操作的
+    showFrame();
+  }
   render();
   $(`#step-list li[data-i="${i}"]`)?.scrollIntoView({ block: "nearest" });
 }
@@ -294,6 +363,7 @@ function localProblems() {
 function render() {
   const has = !!S.script;
   if (S.id && S.dirty !== S.reportedDirty) reportCurrent();
+  renderWinSeg(); // 增删步骤后用到的窗口可能变了
   const busy = S.recording;
   $$("[data-add]").forEach((el) => (el.disabled = !has || busy));
   $("#btn-record").disabled = picking;
@@ -327,9 +397,7 @@ function render() {
 
 // 画面上显示的是哪个窗口：参考图是主窗口；最新截图记着自己是哪个窗口；运行截图跟着对应步骤
 function frameWin() {
-  if (S.frame === "latest") return S.detail?.frames.latest?.win || null;
-  if (S.frame === "shot") return S.shot?.win || null;
-  return null;
+  return S.frame === "shot" ? S.shot?.win || null : S.win;
 }
 
 function syncStage() {
@@ -372,6 +440,7 @@ function summary(s) {
       return `${modsText(s)}${BUTTON_TEXT[s.button] || ""}${how} (${s.x}, ${s.y})`;
     }
     case "drag": return `${modsText(s)}${BUTTON_TEXT[s.button] || ""}拖动 (${s.x}, ${s.y}) → (${s.x2}, ${s.y2})`;
+    case "hover": return `悬停 (${s.x}, ${s.y}) ${s.seconds} 秒`;
     case "type": return s.text ? `输入「${s.text}」` : "输入（还没填内容）";
     case "key": return `按 ${s.combo}${s.times > 1 ? ` × ${s.times}` : ""}`;
     case "scroll": {
@@ -597,6 +666,11 @@ function renderStepPane() {
       + field("按键", buttonSelect(s.button))
       + field("同时按住", modChips(s.modifiers), "比如按住 Ctrl 多选")
       + field("发送", toggle("sends", s.sends, "这一下就是「发送」"), "空跑时会跳过这一步；必须指定所在页面");
+  } else if (s.action === "hover") {
+    body += field("位置", `x ${num("x", s.x, 0.1)} y ${num("y", s.y, 0.1)}`, "鼠标停在哪里；也可以在画面上拖动标记")
+      + field("停多久", `${num("seconds", s.seconds, 0.1)}<span class="muted">秒</span>`,
+        "停在这里等资料卡、菜单这类悬停才出现的东西弹出来")
+      + locateField(s);
   } else if (s.action === "drag") {
     body += field("起点", `x ${num("x", s.x, 0.1)} y ${num("y", s.y, 0.1)}`, "画面上圆点是起点、方块是终点，都可以直接拖")
       + field("终点", `x ${num("x2", s.x2, 0.1)} y ${num("y2", s.y2, 0.1)}`)
@@ -630,7 +704,7 @@ function renderStepPane() {
         "比固定延迟靠谱：电脑卡的时候多等一会儿，页面出来了马上继续");
   }
   const wins = Object.keys(S.script.windows || {});
-  if (wins.length) {
+  if (wins.length && s.action !== "wait") {  // 延迟不操作窗口
     body += field("窗口", `<select class="input" data-f="win">${[null, ...wins].map((k) =>
       `<option value="${k || ""}" ${(s.win || null) === k ? "selected" : ""}>${escapeHtml(windowLabel(k))}</option>`).join("")}</select>`,
       "执行时会先切到这个窗口；上一步才打开的窗口会等它出现");
@@ -850,6 +924,9 @@ async function exportPack(platform) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   toast(`已导出 ${platform}.cwpack`);
+  if (res.headers.get("X-Pack-Screenshots") === "1") {
+    toast("包里含有录制时的窗口截图（可能有聊天内容），分享前请确认；不想带可以在设置 › 录制与执行里关掉");
+  }
 }
 
 async function importPack(file) {
@@ -977,6 +1054,8 @@ $("#pane-step").addEventListener("change", (e) => {
     } else {
       step[name] = v;
     }
+    // 等待页面换了页面：窗口跟着换成新页面锚点所在的窗口
+    if (name === "page" && step.action === "wait_page") step.win = pageWindow(v, step.win);
     // 文本里用到的变量自动声明，不用再去「宏设置」里填
     if (name === "text") {
       step.typed_with_ime = false; // 用户亲手改过了，不再是输入法的按键
@@ -1081,9 +1160,13 @@ $("#frame-seg").addEventListener("click", (e) => {
   S.frame = b.dataset.frame;
   showFrame();
 });
+$("#win-seg").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-win]");
+  if (b) setWin(b.dataset.win);
+});
 $("#btn-capture").addEventListener("click", async () => {
   if (!(await ensureSaved())) return;
-  const win = S.script.steps[S.selected]?.win;
+  const win = S.win;
   const d = await attempt(() => api("POST", `/api/scripts/${S.id}/capture${win ? `?win=${encodeURIComponent(win)}` : ""}`));
   if (d) {
     applyDetail(d);
@@ -1105,7 +1188,7 @@ function setAnchorMode(on, purpose = "anchor") {
     : "在画面上拖出一块这个页面独有、不会变化的区域（按钮、标题），别选头像和正文";
   $("#page-names").innerHTML = Object.keys(S.detail?.pages || {}).map((n) => `<option value="${escapeHtml(n)}">`).join("");
   if (on && S.frame === "shot") {
-    S.frame = S.detail?.frames.latest ? "latest" : "reference";
+    S.frame = frameOf("latest") ? "latest" : "reference";
     showFrame();
   }
 }
@@ -1117,7 +1200,7 @@ $("#anchor-ok").addEventListener("click", async () => {
   const page = $("#anchor-page").value.trim();
   if (!page) return toast("给页面起个名字", true);
   if (!(await ensureSaved())) return;
-  const d = await attempt(() => api("POST", `/api/scripts/${S.id}/anchors`, { page, ...stage.region, frame: S.frame }));
+  const d = await attempt(() => api("POST", `/api/scripts/${S.id}/anchors`, { page, ...stage.region, ...frameParams() }));
   if (d) {
     applyDetail(d);
     setAnchorMode(false);
@@ -1130,10 +1213,10 @@ $("#anchor-ok").addEventListener("click", async () => {
 // 「重新框选目标」框好了：直接存成这一步的目标图
 async function saveTarget(r) {
   const step = S.script.steps[S.selected];
-  if (!step || step.action !== "click") return setAnchorMode(false);
+  if (!step || (step.action !== "click" && step.action !== "hover")) return setAnchorMode(false);
   if (!(await ensureSaved())) return;
   const d = await attempt(() => api("POST", `/api/scripts/${S.id}/targets`,
-    { step_id: step.id, ...r, frame: S.frame === "reference" ? "reference" : "latest" }));
+    { ...frameParams(), step_id: step.id, shot_of: frameParams().step_id, ...r }));
   setAnchorMode(false);
   if (d) {
     const keep = S.selected;
@@ -1175,6 +1258,12 @@ function nextPageName() {
 // 页面的锚点截自哪些窗口（null = 主窗口）：页面只能用在同一个窗口的步骤上
 function pageWins(page) {
   return new Set((S.detail?.pages?.[page] || []).map((a) => a.win || null));
+}
+
+// 页面锚点所在的窗口；这个页面还没有锚点就用 fallback
+function pageWindow(page, fallback = null) {
+  const wins = [...pageWins(page)];
+  return wins.length ? wins[0] : fallback;
 }
 
 // 同一窗口里的输入 / 发送步骤还没指定页面的，自动填上 page 并保存。别的窗口的步骤不填：
@@ -1390,11 +1479,13 @@ async function handleRecordDone(d) {
   }
   if (d.auto_anchor) {
     done.push(`自动生成页面「${d.auto_anchor.page}」并用于 ${d.auto_anchor.steps.length} 步`);
-    S.frame = "latest";
+    S.win = d.last_win || null; // 录制结束时所在的窗口，自动选的锚点多半就在这里
+    S.frame = frameOf("latest") ? "latest" : "reference";
     await showFrame();
   } else {
     const pages = Object.keys(S.detail.pages || {});
     if (pages.length === 1) await autoAssignPage(pages[0]);
+    await showFrame(); // 参考图可能换成了这一遍录的
   }
   toast(done.join(" · "));
   const imeAt = S.script.steps.findIndex((s) => s.typed_with_ime);
@@ -1444,6 +1535,7 @@ $("#run-log").addEventListener("click", (e) => {
   const li = e.target.closest("li[data-url]");
   if (!li) return;
   S.shot = { url: li.dataset.url, win: S.script.steps.find((s) => s.id === li.dataset.step)?.win || null };
+  S.win = S.shot.win;
   S.frame = "shot";
   showFrame();
   const i = S.script.steps.findIndex((s) => s.id === li.dataset.step);
@@ -1617,7 +1709,7 @@ function startTour() {
     { el: "#steps-card", title: "步骤列表",
       body: "点一行编辑，拖动排序，勾选后批量删除；Ctrl/⌘+Z 撤销。黄色 ⚠ 表示这一步还缺东西，鼠标放上去能看到原因。" },
     { el: "#canvas-area", title: "画面：坐标和锚点",
-      body: "编号标记就是点击位置，可以直接拖。蓝色虚线框是页面锚点（录制时自动选的），程序靠它认出「现在在哪个页面」；选中一个点击步骤时，橙色框是它的目标图：执行时按图找到它再点，界面变了也不怕。",
+      body: "编号标记就是点击位置，可以直接拖。蓝色虚线框是页面锚点（录制时自动选的），程序靠它认出「现在在哪个页面」；选中一个点击步骤时，橙色框是它的目标图：执行时按图找到它再点，界面变了也不怕。宏用到好几个窗口（比如点开会话弹出的聊天窗口）时，每个窗口各有自己的参考图：选中哪一步就显示它所在的窗口，上方也能手动切换。",
       before: () => setTab("step") },
     { el: "#pane-step", title: "关键两项：所在页面、发送",
       body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错；框选锚点后会自动填上。录制时最后那一下点击或回车会被自动标成「发送」，不对可以在这里改。",

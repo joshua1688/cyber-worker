@@ -17,10 +17,14 @@ MAX_UPLOAD = 100 * 1024 * 1024
 
 @router.get("/packs/{platform}")
 def export_pack(platform: str, request: Request):
-    data = studio(request).export_pack(platform)
+    st = studio(request)
+    shots = st.app.config.studio.pack_screenshots  # 设置里可关
+    data = st.export_pack(platform, screenshots=shots)
     name = quote(platform + EXT)
+    # 界面靠这个提示「包里有截图，分享前看一眼」
     return Response(data, media_type="application/zip",
-                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{name}"})
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{name}",
+                             "X-Pack-Screenshots": "1" if shots else "0"})
 
 
 @router.post("/packs")

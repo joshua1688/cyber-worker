@@ -19,6 +19,7 @@ FIELDS = {
     "record_delays": ("studio", "record_delays"),
     "record_append": ("studio", "record_append"),
     "run_idle_sec": ("studio", "run_idle_sec"),
+    "pack_screenshots": ("studio", "pack_screenshots"),
     "pause_on_user_input": ("executor", "pause_on_user_input"),
     "resume_after_idle_sec": ("executor", "resume_after_idle_sec"),
 }
@@ -29,6 +30,7 @@ class SettingsPatch(BaseModel):
     record_delays: bool | None = None
     record_append: bool | None = None
     run_idle_sec: float | None = Field(None, ge=0, le=60)
+    pack_screenshots: bool | None = None
     pause_on_user_input: bool | None = None
     resume_after_idle_sec: float | None = Field(None, ge=0, le=3600)
 

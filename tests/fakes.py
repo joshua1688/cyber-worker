@@ -61,6 +61,14 @@ class FakeIO:
         self.calibrated.append(key)
         return WindowGeometry(*self.origins.get(key, self.origin), window.width, window.height, scale=1.0)
 
+    def locate_window(self, window: Window) -> WindowGeometry:
+        key = window.title or window.app
+        if self.missing.get(key, 0) > 0:
+            self.missing[key] -= 1
+            raise CalibrationError(f"找不到 {key}")
+        self.calls.append(("locate", key))
+        return WindowGeometry(*self.origins.get(key, self.origin), window.width, window.height, scale=1.0)
+
     def capture(self, geo: WindowGeometry) -> np.ndarray:
         return self.screen()
 

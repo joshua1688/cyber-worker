@@ -28,6 +28,7 @@ class StudioConfig(BaseModel):
     record_delays: bool = True  # 录制时把操作之间的间隔录成延迟行
     record_append: bool = False  # 录制时接在已有步骤后面；默认替换（重新录一遍就是要这一遍）
     run_idle_sec: float = 2.0  # 在 studio 里点空跑 / 执行后，等键鼠停下几秒才开始
+    pack_screenshots: bool = True  # 导出平台包时带上录制时的窗口截图（参考图、每一步的画面）
 
 
 class PathsConfig(BaseModel):

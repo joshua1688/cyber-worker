@@ -27,6 +27,7 @@ from cyber_worker.macro.schema import (
     MAIN,
     Click,
     Drag,
+    Hover,
     Key,
     Script,
     Scroll,
@@ -175,7 +176,7 @@ class Runner:
 
                 # 按图找：先找到目标再说（空跑也找，提前发现「找不到」）
                 where: Located | None = None
-                if isinstance(step, Click) and step.finds_target:
+                if isinstance(step, (Click, Hover)) and step.finds_target:
                     where, shot_path = self._find_target(step, geo, script, gate, targets)
                     if not where.found:
                         reason = (f"{step.id} 没找到要点的目标（等了 {step.target.timeout:g} 秒，"
@@ -217,11 +218,12 @@ class Runner:
         return RunResult(run_id, RunStatus.OK, done)
 
     def _calibrate(self, window, gate: Gate, *, wait: float) -> WindowGeometry:
-        """校准窗口；找不到时每 0.5 秒重试，最多等 wait 秒。"""
+        """校准窗口；找不到时每 0.5 秒重试，最多等 wait 秒。
+        悬停弹出的窗口（资料卡）只找位置：切前台、改尺寸都会让它消失。"""
         left = wait
         while True:
             try:
-                return self.io.calibrate(window)
+                return self.io.locate_window(window) if window.popup else self.io.calibrate(window)
             except CalibrationError:
                 if left <= 0:
                     raise
@@ -266,18 +268,25 @@ class Runner:
                     + (f"（等了 {waited:.1f} 秒还没出现）" if timeout else ""), path, m.score, waited)
         return True, "", path, m.score, round(waited, 1) if waited >= 0.05 else 0.0
 
-    def _find_target(self, step: Click, geo: WindowGeometry, script: Script, gate: Gate, cache: dict):
+    def _find_target(self, step: Click | Hover, geo: WindowGeometry, script: Script, gate: Gate, cache: dict):
         """在窗口里找这一步的目标图；返回 (定位结果, 截图路径)。找不到时截图留给审计。"""
         t = step.target
         if t.image not in cache:
             cache[t.image] = read_image(script.base_dir / t.image)
         ref = cache[t.image]
         last: dict = {}
+        hovered = False
 
         def attempt() -> bool:
+            nonlocal hovered
             last["shot"] = self.io.capture(geo)
-            last["loc"] = locate_click(step, ref, last["shot"], geo.scale)
-            return last["loc"].found
+            loc = last["loc"] = locate_click(step, ref, last["shot"], geo.scale)
+            if not loc.found and loc.near and not hovered:
+                # 目标图是录制时鼠标悬停在上面的样子（按钮带高亮底色），现在没悬停所以不像：
+                # 先把鼠标移到最像的那一处，等它亮起来再找。还不像就照样等、照样超时中止，不会点
+                hovered = True
+                mouse.move(self.io, geo.to_screen(loc.x, loc.y), self.rng, self.sleep, check=gate.check)
+            return loc.found
 
         self._poll(attempt, gate, t.timeout)
         path = None
@@ -291,6 +300,10 @@ class Runner:
             x, y = (where.x, where.y) if where else (step.x, step.y)
             mouse.click(self.io, geo.to_screen(x, y), step.button, self.rng, self.sleep,
                         check=gate.check, count=step.count, hold=step.hold, modifiers=step.modifiers)
+        elif isinstance(step, Hover):
+            x, y = (where.x, where.y) if where else (step.x, step.y)
+            mouse.move(self.io, geo.to_screen(x, y), self.rng, self.sleep, check=gate.check)
+            self.sleep(step.seconds)  # 停住，等资料卡、菜单出来
         elif isinstance(step, Drag):
             mouse.drag(self.io, geo.to_screen(step.x, step.y), geo.to_screen(step.x2, step.y2),
                        step.button, self.rng, self.sleep, duration=step.duration,

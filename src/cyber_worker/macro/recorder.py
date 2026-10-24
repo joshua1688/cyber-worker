@@ -15,6 +15,8 @@ RecordingBuilder 是纯逻辑（可测试）；listen() 用 pynput 监听真实�
 - 跨窗口：每次点击 / 滚动看鼠标下面实际是哪个窗口，每次按键看前台是哪个窗口（窗口会互相叠着，
   不能只看坐标落在哪个矩形里）。主窗口以外的窗口登记成 w2、w3…，坐标相对各自的窗口。
   studio 自己所在的浏览器窗口一律忽略。
+- 悬停：只在悬停之后画面真的变了（弹出资料卡这种新窗口、窗口内容变了）才记，判断交给录制方
+  （studio 在后台盯着鼠标停在哪，见 add_hover）；录完 finish() 把它插到发生的时间点上、重新编号。
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from dataclasses import dataclass
 
 from cyber_worker.macro.io.base import WindowGeometry, WindowInfo, stable_title
 from cyber_worker.macro.io.pynput_input import key_to_name, normalize_combo
-from cyber_worker.macro.schema import MAIN, Click, Drag, Key, Script, Scroll, TypeText, Wait, Window
+from cyber_worker.macro.schema import MAIN, Click, Drag, Hover, Key, Script, Scroll, TypeText, Wait, Window
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +41,7 @@ DOUBLE_CLICK_SLOP = 4.0  # 两下之间允许的位移（点）
 LONG_PRESS_SEC = 0.5  # 按住超过这么久算长按
 DRAG_SLOP = 6.0  # 按住移动超过这么多点算拖动
 KEY_REPEAT_SEC = 0.6  # 同一个键两次按下间隔不超过这么久，算连按
+HOVER_SLOP = 4.0  # 鼠标停着时手抖这么多点以内，还算停在原处
 SCROLL_MERGE_SEC = 1.0
 SCROLL_MERGE_DIST = 60.0
 # studio 所在浏览器窗口的标题里有这些（页面标题是「宏设计 · 赛博打工人」），录制时忽略；旧标题也认
@@ -72,6 +75,25 @@ class _Press:
     seq: int = 0
 
 
+@dataclass
+class Pointer:
+    """鼠标最后一次移动到的地方。x, y：点；raw：系统输入坐标（问「这里是哪个窗口」用）。"""
+    x: float
+    y: float
+    raw: tuple[float, float]
+    t: float  # 移到这里的时间
+    seq: int  # 每移动一次加一：判断「停住没动」
+
+
+@dataclass
+class _HoverMark:
+    t: float  # 鼠标停到那里的时间
+    win: str | None
+    x: float
+    y: float
+    seconds: float
+
+
 def _app(name: str) -> str:
     """QQ.exe / QQ / qq 算同一个程序。"""
     return re.sub(r"\.(exe|app)$", "", name.strip(), flags=re.I).lower()
@@ -94,9 +116,11 @@ class RecordingBuilder:
         windows: dict[str, Window] | None = None,
         ignore_combos: Iterable[str] = (),
         on_press: Callable[[int, str, WindowGeometry, float, float], None] | None = None,
+        on_step: Callable[[str, str, WindowGeometry], None] | None = None,
     ) -> None:
-        """on_press(序号, 窗口键, 窗口位置, x, y)：鼠标按下的那一刻回调，studio 拿去截目标图（按图找用）。
-        录完后 press_of[步骤编号] 告诉你这个点击步骤对应哪一次按下。"""
+        """on_press(序号, 窗口键, 窗口位置, x, y)：鼠标按下的那一刻回调，studio 拿去截目标图（按图找用）、
+        存这一步的画面。录完后 press_of[步骤编号] 告诉你这个点击 / 拖动步骤对应哪一次按下。
+        on_step(步骤编号, 窗口键, 窗口位置)：输入、按键、滚动开始一个新步骤时回调，studio 拿去截这一步的画面。"""
         self.geo = geo
         self.primary = primary
         # 录制 / 急停这些全局快捷键本身不能被录进宏
@@ -112,6 +136,13 @@ class RecordingBuilder:
         self.on_change = on_change  # 每次步骤变化后回调（studio 用来实时推送）
         self.steps: list = []
         self.on_press = on_press
+        self.on_step = on_step
+        self.pointer: Pointer | None = None
+        self.events = 0  # 每来一次点击 / 按键 / 滚动加一：悬停期间有别的操作就不算悬停
+        self.times: dict[str, tuple[float, float]] = {}  # 步骤编号 → (开始, 结束)，插悬停用
+        self.hovers: list[_HoverMark] = []
+        self.hover_marks: dict[str, _HoverMark] = {}  # finish() 之后：悬停步骤编号 → 它是怎么来的
+        self._lock = threading.Lock()  # _resolve 会登记新窗口：键鼠钩子线程和盯悬停的线程都会调
         self.press_of: dict[str, int] = {}
         self._press_seq = 0
         self._focused = True
@@ -126,6 +157,10 @@ class RecordingBuilder:
 
     def _resolve(self, where: Where) -> str | None:
         """事件发生在哪个窗口 → 窗口键；studio 自己的窗口返回 None（忽略）。"""
+        with self._lock:
+            return self._resolve_locked(where)
+
+    def _resolve_locked(self, where: Where) -> str | None:
         if where is None:
             return MAIN
         info, geo = where
@@ -149,6 +184,13 @@ class RecordingBuilder:
                 key = f"w{n}"
                 self.windows[key] = Window(app=info.app, title=title or None, width=round(geo.width),
                                            height=round(geo.height), scale=geo.scale)
+            else:
+                # 以前录过的窗口：尺寸按这次的实际尺寸记（新步骤的坐标是按这个尺寸录的）。
+                # 沿用旧尺寸的话，执行时会把窗口拉回旧尺寸，坐标、目标位置全对不上
+                w = self.windows[key]
+                size = {"width": round(geo.width), "height": round(geo.height), "scale": geo.scale}
+                if (w.width, w.height, w.scale) != tuple(size.values()):
+                    self.windows[key] = w.model_copy(update=size)
         self.geos[key] = geo
         return key
 
@@ -169,10 +211,16 @@ class RecordingBuilder:
         if self.record_delays and self.steps and self._last_at is not None:
             gap = round(min(60.0, start - self._last_at), 2)
             if gap >= 0.3:
-                self.steps.append(Wait(id=self._next_id(), seconds=gap))
+                wait = Wait(id=self._next_id(), seconds=gap)
+                self.times[wait.id] = (self._last_at, start)
+                self.steps.append(wait)
         self._last_at = start if end is None else end
         step.id = self._next_id()
+        self.times[step.id] = (start, self._last_at)
         self.steps.append(step)
+        if self.on_step and not isinstance(step, (Click, Drag)):  # 点击、拖动在按下时就截过了
+            key = step.win or MAIN
+            self.on_step(step.id, key, self.geos.get(key, self.geo))
         self._changed()
 
     def _touch(self, t: float) -> None:
@@ -184,6 +232,82 @@ class RecordingBuilder:
         if self.on_change:
             self.on_change(self.steps)
 
+    # ---- 悬停 ----
+
+    def on_move(self, x: float, y: float, raw: tuple[float, float] | None = None) -> None:
+        """鼠标移动：只记停在了哪里，频率很高，什么都不算（钩子回调里不能耽搁）。
+        离上次停下的地方不超过 HOVER_SLOP 点的小抖动不算移动：手放在鼠标上总会抖一两个像素。"""
+        p = self.pointer
+        if p is not None and math.hypot(x - p.x, y - p.y) <= HOVER_SLOP:
+            return
+        self.pointer = Pointer(x, y, raw or (x, y), self.now(), p.seq + 1 if p else 1)
+
+    def hover_window(self, where: Where, x: float, y: float) -> tuple[str, float, float, WindowGeometry] | None:
+        """鼠标停的地方是目标程序的哪个窗口：(窗口键, 窗口内 x, y, 窗口位置)；不是目标程序返回 None。"""
+        if where is None:
+            pos = self.geo.to_window(x, y)
+            return None if pos is None else (MAIN, *pos, self.geo)
+        key = self._resolve(where)
+        if key is None:
+            return None
+        geo = self.geos[key]
+        return key, x - geo.x, y - geo.y, geo
+
+    @property
+    def pressed(self) -> bool:
+        """鼠标键按着没放（拖动、长按中）：不算悬停。"""
+        return self._down is not None
+
+    def is_target_app(self, app: str) -> bool:
+        """是不是要录的程序（窗口列表里比「悬停后有没有弹出新窗口」用）。"""
+        return self.primary is None or _app(app) in self.apps
+
+    def add_hover(self, t: float, key: str, x: float, y: float, seconds: float) -> None:
+        """记一次「悬停后画面变了」：t 是鼠标停到那里的时间。录完 finish() 再插进步骤里。"""
+        self.hovers.append(_HoverMark(t, self._win(key), round(x, 1), round(y, 1), round(seconds, 2)))
+
+    def finish(self) -> dict[str, str]:
+        """把悬停按发生的时间插进步骤（落在延迟里就把延迟拆开），然后重新编号。返回 旧编号 → 新编号。"""
+        if not self.hovers:
+            return {}
+        hovers = sorted(self.hovers, key=lambda h: h.t)
+        self.hover_marks = {}
+        out: list = []
+
+        def hover_step(h: _HoverMark) -> Hover:
+            step = Hover(id=f"_h{len(self.hover_marks)}", win=h.win, x=h.x, y=h.y, seconds=h.seconds)
+            self.hover_marks[step.id] = h
+            return step
+
+        for step in self.steps:
+            start, end = self.times.get(step.id, (float("inf"), float("inf")))
+            if isinstance(step, Wait) and hovers and hovers[0].t < end:
+                while hovers and hovers[0].t < end:  # 悬停发生在这段延迟里：拆成 延迟 + 悬停 + 延迟
+                    h = hovers.pop(0)
+                    if h.t - start >= 0.3:
+                        out.append(Wait(id="", seconds=round(h.t - start, 2)))
+                    out.append(hover_step(h))
+                    start = h.t + h.seconds
+                if end - start >= 0.3:
+                    out.append(Wait(id=step.id, seconds=round(min(60.0, end - start), 2)))
+                continue
+            while hovers and hovers[0].t < start:
+                out.append(hover_step(hovers.pop(0)))
+            out.append(step)
+        out += [hover_step(h) for h in hovers]
+
+        renamed: dict[str, str] = {}
+        for i, step in enumerate(out):
+            new = f"s{i + self._first_id:02d}"
+            if step.id:
+                renamed[step.id] = new
+            step.id = new
+        self.steps = out
+        self.press_of = {renamed[k]: v for k, v in self.press_of.items() if k in renamed}
+        self.hover_marks = {renamed[k]: v for k, v in self.hover_marks.items()}
+        self.hovers = []
+        return renamed
+
     # ---- 鼠标 ----
 
     def on_mouse_down(self, x: float, y: float, button: str, modifiers: Iterable[str] = (),
@@ -194,6 +318,7 @@ class RecordingBuilder:
             key = self._resolve(where)
             pos = None if key is None else (x - self.geos[key].x, y - self.geos[key].y)
         self._focused = pos is not None
+        self.events += 1
         if pos is None:
             self._down = None
             return
@@ -219,6 +344,7 @@ class RecordingBuilder:
             self._push(Drag(id="", win=win, x=r(down.x), y=r(down.y), x2=r(x1), y2=r(y1), button=button,
                             duration=round(min(30.0, max(0.1, t - down.t)), 2),
                             modifiers=down.modifiers), down.t, t)
+            self.press_of[self.steps[-1].id] = down.seq
             self._last_click_down = None
             return
 
@@ -260,6 +386,7 @@ class RecordingBuilder:
             pos = None if key is None else (x - self.geos[key].x, y - self.geos[key].y)
         if pos is None or (not dx and not dy):
             return
+        self.events += 1
         win = self._win(key)
         t = self.now()
         if self._last_scroll_at is None or t - self._last_scroll_at > SCROLL_MERGE_SEC:
@@ -298,6 +425,7 @@ class RecordingBuilder:
 
     def on_char(self, ch: str, where: Where = None, ime: bool = False) -> None:
         """ime：此刻开着中文输入法——录到的是按键，不是最终文字。"""
+        self.events += 1
         key = self._key_window(where)
         if key is None:
             return
@@ -313,6 +441,7 @@ class RecordingBuilder:
     def on_combo(self, combo: str, where: Where = None) -> None:
         if normalize_combo(combo) in self.ignore_combos:
             return
+        self.events += 1
         key = self._key_window(where)
         if key is None:
             return
@@ -436,6 +565,10 @@ def listen(
             builder.on_mouse_up(px, py, name)
 
     @safe
+    def on_move(x, y, injected=False):
+        builder.on_move(*to_points(x, y), raw=(x, y))  # 只记位置：悬停判断在录制方的后台线程里做
+
+    @safe
     def on_scroll(x, y, dx, dy, injected=False):
         if dx or dy:
             builder.on_scroll(*to_points(x, y), -dy, dx, at(x, y))  # pynput：dy 正数向上
@@ -451,7 +584,7 @@ def listen(
 
     with (
         keyboard.Listener(on_press=kw(on_press, 1), on_release=kw(on_release, 1)),
-        mouse.Listener(on_click=kw(on_click, 4), on_scroll=kw(on_scroll, 4)),
+        mouse.Listener(on_move=kw(on_move, 2), on_click=kw(on_click, 4), on_scroll=kw(on_scroll, 4)),
     ):
         # 监听已经开着再问：之后松开修饰键一定能收到，不会一直当它按着
         if held is not None:

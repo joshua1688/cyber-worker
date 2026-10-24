@@ -9,11 +9,11 @@ from cyber_worker.macro.recorder import is_studio_title
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
-from cyber_worker.macro.anchors import add_anchor, remove_anchor, save_target
+from cyber_worker.macro.anchors import add_anchor, remove_anchor, save_reference, save_target
 from cyber_worker.macro.io.base import CalibrationError
-from cyber_worker.macro.schema import Click, Script, Window
+from cyber_worker.macro.schema import MAIN, Click, Hover, Script, Window
 from cyber_worker.macro.screenshot.storage import read_image, write_image
-from cyber_worker.studio.state import Frame, Studio, check_name, platform_slug, renamed, safe_stem, window_json
+from cyber_worker.studio.state import Studio, check_name, platform_slug, renamed, safe_stem, window_json
 
 router = APIRouter(prefix="/api")
 
@@ -37,7 +37,9 @@ class NewAnchor(BaseModel):
     y: float
     w: float
     h: float
-    frame: str = "latest"  # 从哪一帧截：reference / latest
+    frame: str = "latest"  # 从哪一帧截：reference / latest / step（某一步录制时的画面）
+    win: str | None = None  # 哪个窗口的画面（None = 主窗口）
+    step_id: str | None = None  # frame=step 时：哪一步的画面
 
 
 class NewTarget(BaseModel):
@@ -47,6 +49,8 @@ class NewTarget(BaseModel):
     w: float
     h: float
     frame: str = "latest"
+    win: str | None = None
+    shot_of: str | None = None  # frame=step 时：用哪一步的画面框（默认就是这一步）
 
 
 @router.get("/scripts")
@@ -162,31 +166,48 @@ def commit_script(script_id: str, request: Request):
 
 @router.post("/scripts/{script_id:path}/capture")
 def capture(script_id: str, request: Request, win: str | None = None):
-    """校准窗口并截取当前画面，用来对照坐标、框选锚点。win：宏里的哪个窗口（默认主窗口）。"""
+    """校准窗口并截取当前画面，用来对照坐标、框选锚点。win：宏里的哪个窗口（默认主窗口）。
+    这个窗口还没有参考图（比如以前录的宏，聊天窗口没存过）就顺便存成它的参考图。"""
     st = studio(request)
-    script = st.load(script_id)
+    path = st.script_path(script_id)
+    script = Script.load(path)
+    win = None if win in (None, MAIN) else win
     if st.app.executor.busy or st.recording:
         raise HTTPException(409, "正在执行或录制，稍后再试")
     try:
         geo = st.app.io.calibrate(script.window_for(win))
     except (CalibrationError, ValueError) as e:
         raise HTTPException(400, f"窗口校准失败：{e}") from e
-    out = st.user_data / "frames" / (script_id.replace("/", "__").removesuffix(".yaml") + ".png")
-    write_image(out, st.app.io.capture(geo))
-    st.latest[script_id] = Frame(out, geo.scale, None if win in (None, "main") else win)
+    img = st.app.io.capture(geo)
+    st.set_latest(script_id, win, img, geo.scale)
+    ref = script.reference_for(win)
+    if ref is None or not ref.exists():
+        save_reference(path, script, win, img)
+        script.dump(path)
     return st.describe(script_id)
 
 
-def _frame(st, script_id: str, script: Script, which: str):
-    """画面上显示的那一帧：(图, 缩放, 窗口键)。"""
+def _frame(st, script_id: str, script: Script, which: str, win: str | None, step_id: str | None = None):
+    """画面上显示的那一帧：(图, 缩放, 窗口键)。win：哪个窗口（None = 主窗口）；which=step 时用 step_id 那一步的画面。"""
+    if which == "step":
+        step = next((s for s in script.steps if s.id == step_id), None)
+        if step is None or not step.shot or not (script.base_dir / step.shot).exists():
+            raise HTTPException(400, "这一步没有录制时的画面")
+        return read_image(script.base_dir / step.shot), script.window_for(step.win).scale, step.win
+    win = None if win in (None, MAIN) else win
+    try:
+        window = script.window_for(win)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     if which == "reference":
-        if not script.reference_path or not script.reference_path.exists():
-            raise HTTPException(400, "这个宏没有参考图")
-        return read_image(script.reference_path), script.window.scale, None
-    frame = st.latest.get(script_id)
+        ref = script.reference_for(win)
+        if ref is None or not ref.exists():
+            raise HTTPException(400, "这个窗口还没有参考图：打开它后点「截取当前窗口」")
+        return read_image(ref), window.scale, win
+    frame = st.latest.get(script_id, {}).get(win or MAIN)
     if frame is None:
         raise HTTPException(400, "先「截取当前窗口」，再在画面上框选")
-    return read_image(frame.path), frame.scale, frame.win
+    return read_image(frame.path), frame.scale, win
 
 
 @router.post("/scripts/{script_id:path}/anchors")
@@ -194,7 +215,7 @@ def create_anchor(script_id: str, body: NewAnchor, request: Request):
     st = studio(request)
     path = st.script_path(script_id)
     script = Script.load(path)
-    img, scale, win = _frame(st, script_id, script, body.frame)
+    img, scale, win = _frame(st, script_id, script, body.frame, body.win, body.step_id)
     try:
         add_anchor(path, body.page, (body.x, body.y, body.w, body.h), img, scale, win)
     except ValueError as e:
@@ -204,14 +225,14 @@ def create_anchor(script_id: str, body: NewAnchor, request: Request):
 
 @router.post("/scripts/{script_id:path}/targets")
 def set_target(script_id: str, body: NewTarget, request: Request):
-    """在画面上框一块，作为这个点击步骤「按图找」的目标图（重新框选、或者给固定坐标的点击补一张）。"""
+    """在画面上框一块，作为这个点击 / 悬停步骤「按图找」的目标图（重新框选、或者给固定坐标的补一张）。"""
     st = studio(request)
     path = st.script_path(script_id)
     script = Script.load(path)
     step = next((s for s in script.steps if s.id == body.step_id), None)
-    if not isinstance(step, Click):
-        raise HTTPException(400, "只有点击步骤可以按图找")
-    img, scale, win = _frame(st, script_id, script, body.frame)
+    if not isinstance(step, (Click, Hover)):
+        raise HTTPException(400, "只有点击、悬停步骤可以按图找")
+    img, scale, win = _frame(st, script_id, script, body.frame, body.win, body.shot_of or body.step_id)
     if (win or None) != (step.win or None):
         raise HTTPException(400, "画面上不是这一步所在的窗口：先切到那个窗口截一张，再框选")
     try:

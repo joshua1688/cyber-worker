@@ -88,7 +88,7 @@ class Stage {
     const out = [];
     this.steps.forEach((s, i) => {
       if ((s.win || null) !== (this.win || null)) return;
-      if ((s.action === "click" || s.action === "scroll" || s.action === "drag") && s.x != null && s.y != null) {
+      if (MARKED.has(s.action) && s.x != null && s.y != null) {
         out.push({ i, x: s.x, y: s.y, step: s, which: "start" });
       }
       if (s.action === "drag") out.push({ i, x: s.x2, y: s.y2, step: s, which: "end" });
@@ -119,7 +119,7 @@ class Stage {
       return;
     }
     const sel = this.steps[this.selected];
-    if (sel && (sel.action === "click" || sel.action === "scroll" || sel.action === "drag")) {
+    if (sel && MARKED.has(sel.action)) {
       this.h.onPlace?.(round1(pt.x), round1(pt.y));
     }
   }
@@ -178,21 +178,33 @@ class Stage {
     ctx.lineWidth = 2 * k;
     ctx.setLineDash([6 * k, 4 * k]);
     ctx.font = `${12 * k}px sans-serif`;
+    // 选中「等待页面」时，它等的那个页面的锚点高亮（实线、加粗、淡淡填色）
+    const waiting = this.steps[this.selected]?.action === "wait_page" ? this.steps[this.selected].page : null;
     for (const [page, anchors] of Object.entries(this.pages)) {
       for (const a of anchors) {
         if ((a.win || null) !== (this.win || null)) continue;
-        ctx.strokeStyle = info;
+        const hot = page === waiting;
+        ctx.strokeStyle = hot ? accent : info;
+        ctx.lineWidth = (hot ? 3 : 2) * k;
+        ctx.setLineDash(hot ? [] : [6 * k, 4 * k]);
+        if (hot) {
+          ctx.save();
+          ctx.globalAlpha = 0.15;
+          ctx.fillStyle = accent;
+          ctx.fillRect(a.x * s, a.y * s, a.w * s, a.h * s);
+          ctx.restore();
+        }
         ctx.strokeRect(a.x * s, a.y * s, a.w * s, a.h * s);
         // 贴着顶边的锚点，标签画到框里面，免得被裁掉
         const ly = a.y * s - 4 * k >= 14 * k ? a.y * s - 4 * k : a.y * s + 16 * k;
-        label(ctx, page, a.x * s, ly, info, k);
+        label(ctx, page, a.x * s, ly, hot ? accent : info, k);
       }
     }
     ctx.restore();
 
     // 选中的点击步骤：按图找的目标框
     const sel = this.steps[this.selected];
-    if (sel?.action === "click" && sel.target && sel.use_target !== false && (sel.win || null) === (this.win || null)) {
+    if ((sel?.action === "click" || sel?.action === "hover") && sel.target && sel.use_target !== false && (sel.win || null) === (this.win || null)) {
       const t = sel.target;
       const orange = css.getPropertyValue("--orange").trim();
       ctx.save();
@@ -244,7 +256,9 @@ class Stage {
         ctx.arc(x, y, r, 0, Math.PI * 2);
       }
       ctx.fill();
+      if (m.step.action === "hover") ctx.setLineDash([3 * k, 2.5 * k]); // 悬停：虚线圈，只停不点
       ctx.stroke();
+      ctx.setLineDash([]);
       ctx.fillStyle = selected ? "#0b0b0b" : "#fff";
       ctx.font = `bold ${11 * k}px sans-serif`;
       ctx.textAlign = "center";
@@ -303,3 +317,5 @@ function label(ctx, text, x, y, color, k) {
 
 const round1 = (v) => Math.round(v * 10) / 10;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+// 在画面上有编号标记、可以拖动的步骤
+const MARKED = new Set(["click", "hover", "scroll", "drag"]);

@@ -14,11 +14,12 @@ from fastapi import HTTPException
 
 from cyber_worker.adapters import pack
 from cyber_worker.bootstrap import App
-from cyber_worker.macro.anchors import anchors_dir, default_pages_ref, targets_dir
+from cyber_worker.macro.anchors import anchors_dir, default_pages_ref, refs_dir, shots_dir, targets_dir
 from cyber_worker.macro.io.base import stable_title
 from cyber_worker.macro.recorder import RecordingBuilder
-from cyber_worker.macro.schema import Click, Script, Step, TypeText, WaitPage, needs_page_check
+from cyber_worker.macro.schema import MAIN, Click, Hover, Script, Step, TypeText, WaitPage, needs_page_check
 from cyber_worker.macro.vision.fingerprint import PageBook
+from cyber_worker.macro.screenshot.storage import write_image
 from cyber_worker.studio.ws import Hub
 
 _NAME = re.compile(r"^[\w\-]+$")
@@ -91,6 +92,12 @@ class Recording:
     # 每次鼠标按下时截的目标图：按下序号 → (缩放, 目标区域, 目标图)；认不出来的点击不在里面
     press_targets: dict = field(default_factory=dict)
     press_threads: list = field(default_factory=list)
+    # 每一步动作之前的窗口画面：点击 / 拖动按按下序号存，其他步骤按步骤编号存，值是 (窗口键, 缩放, 图)
+    press_frames: dict = field(default_factory=dict)
+    step_frames: dict = field(default_factory=dict)
+    # 悬停后画面变了的那几次：鼠标停到那里的时间 → (窗口键, 缩放, 悬停前的画面, 新弹出的窗口标题)
+    hover_info: dict = field(default_factory=dict)
+    hover_thread: threading.Thread | None = None
     append: bool = False  # 录到的步骤接在已有步骤后面（否则替换）
 
 
@@ -100,7 +107,7 @@ class Studio:
     hub: Hub = field(default_factory=Hub)
     # studio 里手动点「执行」后只需空闲这么久就开始（默认配置是 120 秒，面向无人值守）
     run_idle_sec: float = 2.0  # 设置里可改（[studio] run_idle_sec）
-    latest: dict[str, Frame] = field(default_factory=dict)
+    latest: dict[str, dict[str, Frame]] = field(default_factory=dict)  # 宏 → 窗口键 → 这个窗口最新的一帧
     recording: Recording | None = None
     current_id: str | None = None  # 界面上当前打开的宏：按录制 / 空跑快捷键时用的就是它
     current_vars: dict[str, str] = field(default_factory=dict)  # 界面上给它填的变量（空跑快捷键用）
@@ -190,16 +197,24 @@ class Studio:
     def load(self, script_id: str) -> Script:
         return Script.load(self.script_path(script_id))
 
+    def set_latest(self, script_id: str, key: str | None, img, scale: float) -> None:
+        """记下某个窗口的「最新截图」：每个窗口各一张，截别的窗口不会把它覆盖掉。"""
+        key = key or MAIN
+        name = script_id.replace("/", "__").removesuffix(".yaml") + ("" if key == MAIN else f"__{key}")
+        out = self.user_data / "frames" / f"{name}.png"
+        write_image(out, img)
+        self.latest.setdefault(script_id, {})[key] = Frame(out, scale, None if key == MAIN else key)
+
     # ---- 平台包 ----
 
-    def export_pack(self, platform: str) -> bytes:
+    def export_pack(self, platform: str, *, screenshots: bool = True) -> bytes:
         """宏库里的一个平台 → .cwpack（草稿不算）。"""
         path = (self.root / platform).resolve()
         if not path.is_relative_to(self.root.resolve()) or path == self.root.resolve():
             raise HTTPException(400, "非法的平台名")
         if not any(pack.is_macro(p.relative_to(path).as_posix()) for p in path.glob("templates/*.yaml")):
             raise HTTPException(404, f"平台 {platform} 里还没有保存的宏")
-        return pack.export_pack(path)
+        return pack.export_pack(path, screenshots=screenshots)
 
     def import_pack(self, data: bytes) -> dict:
         """导入 .cwpack：先解压到临时目录，再一个个宏搬进宏库，重名的自动加 -2，不问用户。"""
@@ -245,23 +260,30 @@ class Studio:
             ]
             for name, fp in book.pages.items()
         }
-        ref = script.reference_path
-        latest = self.latest.get(script_id)
+        # 画面：每个窗口各有参考图和最新截图，键是窗口键（主窗口 = "main"）
+        refs = {}
+        for key, win in [(MAIN, script.window), *script.windows.items()]:
+            ref = script.reference_for(key)
+            if ref is not None and ref.exists():
+                refs[key] = {"url": self.file_url(ref), "scale": win.scale}
+        latest = {key: {"url": self.file_url(f.path), "scale": f.scale}
+                  for key, f in self.latest.get(script_id, {}).items() if f.path.exists()}
         return {
             "id": script_id,
             "draft": script_id.startswith(DRAFT),
             "script": script.model_dump(mode="json"),
             "pages": pages,
-            "frames": {
-                "reference": ref and ref.exists() and {"url": self.file_url(ref), "scale": script.window.scale},
-                "latest": latest and {"url": self.file_url(latest.path), "scale": latest.scale,
-                                      "win": latest.win},
+            "frames": {"reference": refs, "latest": latest},
+            # 每一步录制时的画面：步骤编号 → 图（选中这一步时画布显示它）
+            "shots": {
+                s.id: {"url": self.file_url(script.base_dir / s.shot), "scale": script.window_for(s.win).scale}
+                for s in script.steps if s.shot and (script.base_dir / s.shot).exists()
             },
             "problems": problems(script, {name: {a.win for a in fp.anchors} for name, fp in book.pages.items()}),
             # 按图找的目标图：步骤编号 → 图片地址（步骤参数里显示缩略图）
             "targets": {
                 s.id: self.file_url(script.base_dir / s.target.image)
-                for s in script.steps if isinstance(s, Click) and s.target is not None
+                for s in script.steps if isinstance(s, (Click, Hover)) and s.target is not None
             },
         }
 
@@ -281,7 +303,7 @@ def _remove_macro_files(path: Path) -> None:
     for f in (ref, pages):
         if f is not None:
             f.unlink(missing_ok=True)
-    for d in (anchors, path.parent / targets_dir(path)):
+    for d in (anchors, path.parent / targets_dir(path), path.parent / refs_dir(path), path.parent / shots_dir(path)):
         if d is not None and d.exists():
             shutil.rmtree(d)
     path.unlink()
@@ -311,6 +333,18 @@ def relocate_macro(src: Path, dst_dir: Path, stem: str) -> Path:
         book.dump(dst_dir / default_pages_ref(dst))
         pages.unlink()
         script.pages = default_pages_ref(dst)
+    old_r, new_r = refs_dir(src), refs_dir(dst)
+    if (src.parent / old_r).exists():
+        shutil.move(src.parent / old_r, dst_dir / new_r)
+    for win in script.windows.values():
+        if win.reference and win.reference.startswith(old_r + "/"):
+            win.reference = new_r + win.reference[len(old_r):]
+    old_s, new_s = shots_dir(src), shots_dir(dst)
+    if (src.parent / old_s).exists():
+        shutil.move(src.parent / old_s, dst_dir / new_s)
+    for step in script.steps:
+        if step.shot and step.shot.startswith(old_s + "/"):
+            step.shot = new_s + step.shot[len(old_s):]
     old_t, new_t = targets_dir(src), targets_dir(dst)
     if (src.parent / old_t).exists():
         shutil.move(src.parent / old_t, dst_dir / new_t)

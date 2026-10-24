@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import numpy as np
@@ -18,6 +18,8 @@ class WindowGeometry:
     width: float
     height: float
     scale: float  # 当前屏幕缩放倍率：截图像素 = 点 × scale
+    # 系统的窗口句柄（Windows 的 HWND；0 = 不知道）：有它就能截窗口自己的内容，被别的窗口挡住也不怕
+    handle: int = field(default=0, compare=False)
 
     def to_screen(self, x: float, y: float) -> tuple[float, float]:
         return self.x + x, self.y + y
@@ -88,6 +90,10 @@ class ScreenIO(Protocol):
 
     def calibrate(self, window: Window) -> WindowGeometry:
         """激活窗口并调整到录制时的尺寸；做不到就抛 CalibrationError。"""
+        ...
+
+    def locate_window(self, window: Window) -> WindowGeometry:
+        """只找窗口现在在哪，不激活、不改尺寸（悬停弹出的资料卡：一抢焦点就消失）；找不到抛 CalibrationError。"""
         ...
 
     def capture(self, geo: WindowGeometry) -> np.ndarray:
