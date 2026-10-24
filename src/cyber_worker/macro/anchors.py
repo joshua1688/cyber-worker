@@ -99,10 +99,15 @@ def save_target(script_path: Path, step_id: str, frame: np.ndarray, box: tuple[f
 
 
 def save_target_crop(script_path: Path, step_id: str, crop: np.ndarray, box: tuple[float, float, float, float],
-                     scale: float) -> Target:
-    """已经截好的目标图（录制时在后台线程里截的）直接存。"""
+                     scale: float, *, keep_existing: bool = False) -> Target:
+    """已经截好的目标图（录制时在后台线程里截的）直接存。
+
+    keep_existing：同名的图已经有了就换个名字，不覆盖。重新录制替换旧步骤时编号会从 s01 再来，
+    旧步骤的图要留着，界面上撤销回去还能用；重新框同一步的目标图则直接覆盖。"""
     x, y, w, h = box
     s = scale
-    image = f"{targets_dir(script_path)}/{step_id}.png"
+    image, n = f"{targets_dir(script_path)}/{step_id}.png", 2
+    while keep_existing and (script_path.parent / image).exists():
+        image, n = f"{targets_dir(script_path)}/{step_id}-{n}.png", n + 1
     write_image(script_path.parent / image, crop)
     return Target(image=image, x=round(x, 1), y=round(y, 1), w=round(w, 1), h=round(h, 1), scale=s)

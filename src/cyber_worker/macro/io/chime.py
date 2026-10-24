@@ -14,7 +14,6 @@ from array import array
 from pathlib import Path
 
 RATE = 44100
-VERSION = 2  # 改了音色就加一，换个文件名，不会播到旧缓存
 
 # 放在 500–800 Hz：再高（1 kHz 以上，加上泛音到 3 kHz）正好落在人耳最敏感的频段，听着刺耳
 C5, G5 = 523.25, 783.99
@@ -50,9 +49,13 @@ def synthesize(kind: str) -> bytes:
     return out.getvalue()
 
 
+_fresh: set[str] = set()  # 这次运行里已经重新合成过的
+
+
 def chime_file(kind: str) -> Path:
-    """提示音文件（第一次用时合成，放在系统临时目录里缓存）。"""
-    path = Path(tempfile.gettempdir()) / f"cyber-worker-chime-{kind}-v{VERSION}.wav"
-    if not path.exists():
+    """提示音文件，放在系统临时目录里。每次运行第一次用时重新合成并覆盖：改了音色也不会播到旧文件。"""
+    path = Path(tempfile.gettempdir()) / f"cyber-worker-chime-{kind}.wav"
+    if kind not in _fresh or not path.exists():
         path.write_bytes(synthesize(kind))
+        _fresh.add(kind)
     return path

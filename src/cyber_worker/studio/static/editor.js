@@ -20,7 +20,7 @@ const S = {
   recSteps: [],
   running: false, // false | "waiting"（等用户松开键鼠）| "running"
   recHotkey: "", // 开始 / 停止录制的全局快捷键
-  lastRecId: 0, // 处理过的录制结果编号：按钮的响应和推送事件可能各来一次
+  seenRecIds: new Set(), // 处理过的录制结果：按钮的响应和推送事件可能各来一次
   runMarks: {}, // step_id → 最近一次运行的状态
   hotkey: "",
 };
@@ -1309,7 +1309,7 @@ async function startRecording() {
   // 先清空再发请求：录制线程推送的步骤可能比这个请求的响应先到
   S.recSteps = [];
   const ok = await attempt(() => api("POST", "/api/record/start",
-    { script_id: S.id, record_delays: $("#opt-delays").checked }));
+    { script_id: S.id, record_delays: $("#opt-delays").checked, record_append: $("#opt-append").checked }));
   // 推送的「开始录制」事件可能比响应先到，那边已经提示过了就不再重复
   if (ok && !S.recording) {
     S.recording = true;
@@ -1338,15 +1338,21 @@ async function stopRecording() {
 }
 
 async function handleRecordDone(d) {
-  if (d.rec_id && d.rec_id <= S.lastRecId) return; // 同一次录制的结果已经处理过
-  S.lastRecId = d.rec_id || S.lastRecId;
+  if (d.rec_id && S.seenRecIds.has(d.rec_id)) return; // 同一次录制的结果已经处理过
+  if (d.rec_id) S.seenRecIds.add(d.rec_id);
   S.recording = false;
   S.stopping = false;
   S.recSteps = [];
   if (d.id !== S.id) return render(); // 录的是别的宏（比如切走了）：不覆盖当前画面
+  // 替换掉了旧步骤：旧的放进撤销历史，Ctrl+Z 就回来
+  if (d.replaced && S.script) {
+    S.undo.push(JSON.stringify(S.script));
+    S.redo = [];
+  }
   applyDetail(d);
   // 告诉用户替他自动做了什么
   const done = [`录入 ${d.added} 步`];
+  if (d.replaced) done.push(`替换了原来的 ${d.replaced} 步（Ctrl+Z 恢复）`);
   if (d.auto_targets) done.push(`${d.auto_targets} 次点击会按图找`);
   if (d.auto_send) {
     const i = S.script.steps.findIndex((s) => s.id === d.auto_send);
@@ -1514,7 +1520,15 @@ connectEvents((ev) => {
       </li>`);
     renderSteps();
   }
-}, syncStatus);
+}, onReconnect);
+
+// 连上（包括 studio 重启后自动重连）：断线期间的事件都丢了，跟服务端对一次，屏幕上的宏以文件为准
+async function onReconnect() {
+  await syncStatus();
+  if (!S.id || S.dirty || S.recording) return;  // 有没保存的修改就不覆盖
+  const d = await api("GET", `/api/scripts/${S.id}/detail`).catch(() => null);
+  if (d && !S.dirty) applyDetail(d);
+}
 
 // 快捷键在设置里改了（这个页面或别的页面）：按钮、状态栏、引导里的提示跟着换
 function applyHotkeys(items) {
@@ -1525,9 +1539,13 @@ function applyHotkeys(items) {
 }
 document.addEventListener("hotkeys", (e) => applyHotkeys(e.detail.items));
 
-// 「录制延迟」：▾ 菜单里和设置里是同一个开关，改了记进配置
-document.addEventListener("settings", (e) => ($("#opt-delays").checked = e.detail.record_delays));
+// 「录制延迟」「追加到末尾」：▾ 菜单里和设置里是同一个开关，改了记进配置
+document.addEventListener("settings", (e) => {
+  $("#opt-delays").checked = e.detail.record_delays;
+  $("#opt-append").checked = !!e.detail.record_append;
+});
 $("#opt-delays").addEventListener("change", (e) => Settings.update({ record_delays: e.target.checked }));
+$("#opt-append").addEventListener("change", (e) => Settings.update({ record_append: e.target.checked }));
 
 // ---------------- 新手引导 ----------------
 

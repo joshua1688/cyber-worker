@@ -91,6 +91,7 @@ class Recording:
     # 每次鼠标按下时截的目标图：按下序号 → (缩放, 目标区域, 目标图)；认不出来的点击不在里面
     press_targets: dict = field(default_factory=dict)
     press_threads: list = field(default_factory=list)
+    append: bool = False  # 录到的步骤接在已有步骤后面（否则替换）
 
 
 @dataclass
@@ -103,7 +104,7 @@ class Studio:
     recording: Recording | None = None
     current_id: str | None = None  # 界面上当前打开的宏：按录制快捷键时录的就是它
     record_delays: bool = True  # 上次录制时「录制延迟」的选择，快捷键开始录制时沿用
-    record_seq: int = 0  # 每次录制的编号：界面靠它避免同一次录制的结果处理两遍
+    record_append: bool = False  # 录制时接在已有步骤后面，而不是替换（[studio] record_append）
     # 开始 / 停止录制互斥：停止要好几秒，期间再按快捷键不能又开一次录制
     record_lock: threading.Lock = field(default_factory=threading.Lock)
     stopping: bool = False  # 正在停止（保存录到的步骤）

@@ -34,9 +34,12 @@ def test_start_rises_stop_falls_and_is_soft():
         assert abs(pitch(late) - second) < 30
 
 
-def test_chime_file_is_cached(tmp_path, monkeypatch):
+def test_chime_file_is_rebuilt_once_per_run(tmp_path, monkeypatch):
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(chime, "_fresh", set())
+    stale = tmp_path / "cyber-worker-chime-start.wav"
+    stale.write_bytes(b"old sound")  # 上一个版本留下的
     p = chime.chime_file("start")
-    assert p.parent == tmp_path and p.read_bytes() == chime.synthesize("start")
+    assert p == stale and p.read_bytes() == chime.synthesize("start")  # 这次运行第一次用：重新合成
     p.write_bytes(b"cached")
-    assert chime.chime_file("start").read_bytes() == b"cached"  # 第二次不再合成
+    assert chime.chime_file("start").read_bytes() == b"cached"  # 之后直接用，不再合成

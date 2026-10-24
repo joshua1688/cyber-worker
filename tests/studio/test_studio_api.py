@@ -344,7 +344,7 @@ def test_record_hotkey_toggles_current_macro(client):
         while not events or events[-1]["type"] != "record_done":
             events.append(ws.receive_json())
     done = events[-1]
-    assert done["id"] == d["id"] and done["added"] >= 3 and done["rec_id"] == 1
+    assert done["id"] == d["id"] and done["added"] >= 3 and isinstance(done["rec_id"], str)
 
 
 
@@ -590,3 +590,42 @@ def test_pack_errors(client, tmp_path):
     assert r.status_code == 400 and "cwpack" in r.json()["detail"]
     assert client.post("/api/packs", content=b"").status_code == 400
     assert not list((tmp_path / "user_data").glob(".import-*"))
+
+
+def test_rerecording_replaces_old_steps_by_default(client, tmp_path):
+    """重新录一遍就是要这一遍：旧步骤不能留在前面，看着像录重复了。"""
+    def listen(builder, stop):
+        builder.on_click(100 + 70, 50 + 55, "left")  # 点在纹理上：有目标图
+        stop.wait()
+
+    st = client.app.state.studio
+    st.app.listen = listen
+    sid = new_script(client)["id"]
+    first = None
+    for _ in range(2):
+        client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+        r = client.post("/api/record/stop").json()
+        first = first or r
+    assert [s["id"] for s in r["script"]["steps"]] == ["s01"] and r["replaced"] == 1
+    assert r["rec_id"] != first["rec_id"]  # 每次都不一样：studio 重启后也不会和页面记着的撞上
+    # 旧步骤的目标图留着（界面上撤销回去还能用），新的换了个名字
+    assert first["script"]["steps"][0]["target"]["image"] == "comment.targets/s01.png"
+    assert r["script"]["steps"][0]["target"]["image"] == "comment.targets/s01-2.png"
+    tpl = tmp_path / "user_data/drafts/demo/templates"
+    assert (tpl / "comment.targets/s01.png").exists() and (tpl / "comment.targets/s01-2.png").exists()
+
+
+def test_record_append_setting_keeps_old_steps(client, tmp_path):
+    sid = new_script(client)["id"]
+    assert client.patch("/api/settings", json={"record_append": True}).json()["record_append"] is True
+    assert "record_append = true" in (tmp_path / "config.toml").read_text(encoding="utf-8")
+    for _ in range(2):
+        client.post("/api/record/start", json={"script_id": sid})
+        r = client.post("/api/record/stop").json()
+    assert r["replaced"] == 0 and len(r["script"]["steps"]) == 2 * r["added"]
+    ids = [s["id"] for s in r["script"]["steps"]]
+    assert len(set(ids)) == len(ids)  # 编号接着往后排
+    # 这一次单独要替换：请求里明确说不追加
+    client.post("/api/record/start", json={"script_id": sid, "record_append": False})
+    r = client.post("/api/record/stop").json()
+    assert len(r["script"]["steps"]) == r["added"]

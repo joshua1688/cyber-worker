@@ -109,6 +109,7 @@ uv run cyber-worker studio          # http://127.0.0.1:9999
 | 通用 | 外观：深色（默认）/ 浅色 / 跟随系统 | `[studio] theme` |
 | 快捷键 | 开始 / 停止录制、急停（见上面「快捷键」）；下面列出页面内快捷键 | `[studio] record_hotkey`、`[executor] panic_hotkey` |
 | 录制与执行 | 录制延迟（和录制按钮旁 ▾ 里是同一个开关） | `[studio] record_delays` |
+| 录制与执行 | 追加到末尾（关着时重新录制会替换旧步骤，Ctrl+Z 能恢复；和 ▾ 里是同一个开关） | `[studio] record_append` |
 | | 开始前等你停手：点空跑 / 执行后等键鼠停几秒才开始（默认 2 秒） | `[studio] run_idle_sec` |
 | | 你在用电脑时暂停、空闲多久后继续（无人值守执行用） | `[executor] pause_on_user_input`、`resume_after_idle_sec` |
 | 关于 | 版本、配置文件位置、数据目录、重新看新手引导 | — |
@@ -144,7 +145,7 @@ uv run cyber-worker studio          # http://127.0.0.1:9999
 | POST | `/api/scripts/{id}/capture` | 截取当前窗口 |
 | POST / DELETE | `/api/scripts/{id}/anchors[/{page}/{index}]` | 添加 / 删除页面锚点 |
 | POST | `/api/scripts/{id}/targets` | 在画面上框一块，作为某个点击步骤「按图找」的目标图 |
-| POST | `/api/record/start`、`/api/record/stop` | 录制（追加到宏末尾） |
+| POST | `/api/record/start`、`/api/record/stop` | 录制（默认替换已有步骤，`record_append` 为真时追加到末尾）；结果里 `replaced` 是被替换的步数，`rec_id` 每次唯一 |
 | POST | `/api/scripts/{id}/run` | 空跑 / 执行（进全局执行器排队） |
 | POST | `/api/panic` | 急停 |
 | GET / PUT | `/api/hotkeys` | 全局快捷键：实际生效的键、配置的键、默认键、自动避让说明 / 改键（有冲突返回 400；通过就写回 `config.toml` 并立即重新注册） |

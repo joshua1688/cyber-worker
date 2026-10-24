@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -35,6 +36,7 @@ RESTART_COOLDOWN = 1.5  # 秒
 class StartRecording(BaseModel):
     script_id: str
     record_delays: bool = True
+    record_append: bool | None = None  # 不给就用设置里的（默认替换已有步骤）
 
 
 def _grab(st, rec: Recording) -> None:
@@ -75,16 +77,17 @@ class RecordError(Exception):
         self.status = status
 
 
-def start_recording(st, script_id: str, record_delays: bool = True) -> None:
+def start_recording(st, script_id: str, record_delays: bool = True, append: bool | None = None) -> None:
+    """append：录到的步骤接在已有步骤后面；否则（默认）替换掉已有步骤，界面上 Ctrl+Z 能恢复。"""
     if not st.record_lock.acquire(blocking=False):
         raise RecordError(409, "正在开始或停止录制，请稍等")
     try:
-        _start(st, script_id, record_delays)
+        _start(st, script_id, record_delays, st.record_append if append is None else append)
     finally:
         st.record_lock.release()
 
 
-def _start(st, script_id: str, record_delays: bool) -> None:
+def _start(st, script_id: str, record_delays: bool, append: bool) -> None:
     if st.recording:
         raise RecordError(409, "已经在录制了")
     if st.app.executor.busy:
@@ -109,12 +112,12 @@ def _start(st, script_id: str, record_delays: bool) -> None:
         t.start()
 
     builder = RecordingBuilder(geo, on_change=on_change, record_delays=record_delays,
-                               first_id=next_step_number(script.steps),
+                               first_id=next_step_number(script.steps) if append else 1,
                                primary=script.window, windows=script.windows, ignore_combos=hotkeys,
                                on_press=on_press)
     stop = threading.Event()
     thread = threading.Thread(target=st.app.listen, args=(builder, stop), daemon=True, name="recorder")
-    rec = Recording(script_id, builder, stop, thread, geo=geo)
+    rec = Recording(script_id, builder, stop, thread, geo=geo, append=append)
     _grab(st, rec)  # 第一帧：录制开始时主窗口的样子
     rec.sampler = threading.Thread(target=_sample, args=(st, rec), daemon=True, name="frame-sampler")
     thread.start()
@@ -157,10 +160,13 @@ def _stop(st) -> dict:
     path = st.script_path(rec.script_id)
     script = Script.load(path)
     new = rec.builder.steps
+    # 默认替换：重新录一遍就是要这一遍，旧步骤不能留在前面看着像重复（界面上 Ctrl+Z 能恢复）
+    kept = script.steps if rec.append else []
+    replaced = len(script.steps) - len(kept)
 
     # 1. 猜「发送」：只在宏里还没有发送步骤时才猜，免得覆盖用户自己的标记
     send_id = None
-    if not any(getattr(s, "sends", False) for s in script.steps):
+    if not any(getattr(s, "sends", False) for s in kept):
         i = guess_send_step(new)
         if i is not None:
             new[i].sends = True
@@ -171,9 +177,9 @@ def _stop(st) -> dict:
         seq = rec.builder.press_of.get(s.id)
         if isinstance(s, Click) and s.target is None and seq in rec.press_targets:
             scale, box, crop = rec.press_targets[seq]
-            s.target = save_target_crop(path, s.id, crop, box, scale)
+            s.target = save_target_crop(path, s.id, crop, box, scale, keep_existing=bool(replaced))
             targets += 1
-    script.steps = [*script.steps, *new]
+    script.steps = [*kept, *new]
     script.windows = rec.builder.windows  # 录制中新出现的窗口（如双击会话弹出的聊天窗口）
     script.dump(path)
 
@@ -187,8 +193,10 @@ def _stop(st) -> dict:
         write_image(out, img)
         st.latest[rec.script_id] = Frame(out, scale, None if key == MAIN else key)
 
-    st.record_seq += 1
-    result = {"rec_id": st.record_seq, "added": len(new), "auto_send": send_id, "auto_anchor": auto,
+    # 每次录制唯一的编号：界面靠它去重（按钮的响应和推送事件各来一次）。不能用计数器：
+    # studio 重启后计数从头来，没刷新的页面会把新结果当成处理过的丢掉，屏幕上一直是旧步骤
+    result = {"rec_id": uuid.uuid4().hex, "added": len(new), "replaced": replaced,
+              "auto_send": send_id, "auto_anchor": auto,
               "auto_targets": targets,
               **st.describe(rec.script_id)}
     st.hub.publish({"type": "record_state", "recording": False, "script_id": rec.script_id})
@@ -207,7 +215,7 @@ def toggle_recording(st) -> None:
         if st.recording:
             stop_recording(st)
         elif st.current_id:
-            start_recording(st, st.current_id, st.record_delays)
+            start_recording(st, st.current_id, st.record_delays, st.record_append)
         else:
             st.hub.publish({"type": "toast", "error": True, "text": "先在 studio 里选一个宏，再按快捷键录制"})
     except RecordError as e:
@@ -219,7 +227,7 @@ def toggle_recording(st) -> None:
 @router.post("/start")
 def start(body: StartRecording, request: Request):
     try:
-        start_recording(studio(request), body.script_id, body.record_delays)
+        start_recording(studio(request), body.script_id, body.record_delays, body.record_append)
     except RecordError as e:
         raise HTTPException(e.status, str(e)) from e
     return {"recording": True}

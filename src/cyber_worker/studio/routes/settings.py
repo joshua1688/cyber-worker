@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api/settings")
 FIELDS = {
     "theme": ("studio", "theme"),
     "record_delays": ("studio", "record_delays"),
+    "record_append": ("studio", "record_append"),
     "run_idle_sec": ("studio", "run_idle_sec"),
     "pause_on_user_input": ("executor", "pause_on_user_input"),
     "resume_after_idle_sec": ("executor", "resume_after_idle_sec"),
@@ -26,6 +27,7 @@ FIELDS = {
 class SettingsPatch(BaseModel):
     theme: Literal["dark", "light", "system"] | None = None
     record_delays: bool | None = None
+    record_append: bool | None = None
     run_idle_sec: float | None = Field(None, ge=0, le=60)
     pause_on_user_input: bool | None = None
     resume_after_idle_sec: float | None = Field(None, ge=0, le=3600)
@@ -43,6 +45,7 @@ def payload(st) -> dict:
     data = {name: getattr(getattr(cfg, sec), key) for name, (sec, key) in FIELDS.items()}
     data["run_idle_sec"] = st.run_idle_sec
     data["record_delays"] = st.record_delays
+    data["record_append"] = st.record_append
     path = st.app.config_path
     data["config_path"] = str(path.resolve()) if path else None
     data["user_data"] = str(st.user_data)
@@ -67,6 +70,7 @@ def update(body: SettingsPatch, request: Request):
     # 立即生效：不用重启
     st.run_idle_sec = cfg.studio.run_idle_sec
     st.record_delays = cfg.studio.record_delays
+    st.record_append = cfg.studio.record_append
     st.app.executor.pause_on_user_input = cfg.executor.pause_on_user_input
     st.app.executor.resume_after_idle_sec = cfg.executor.resume_after_idle_sec
     data = payload(st)

@@ -406,7 +406,7 @@ cyber-worker/
 │       ├── ws.py                   # WebSocket: live steps while recording, live results while running
 │       ├── routes/                 # HTTP endpoints (display and submit only, no business logic)
 │       │   ├── edit.py             # Macro CRUD, capture current window, page anchors
-│       │   ├── record.py           # Recording control (start/stop, appends to the macro)
+│       │   ├── record.py           # Recording control (start/stop; replaces existing steps by default, optionally appends)
 │       │   ├── preview.py          # Image serving (reference, screenshots, anchors; user_data only)
 │       │   ├── run.py              # Dry run / run (queued on executor), panic, live status
 │       │   ├── hotkeys.py          # Settings · hotkeys (conflict check, save back to config.toml)

@@ -24,6 +24,7 @@ class StudioConfig(BaseModel):
     record_hotkey: str = "alt+r"
     theme: Literal["dark", "light", "system"] = "dark"
     record_delays: bool = True  # 录制时把操作之间的间隔录成延迟行
+    record_append: bool = False  # 录制时接在已有步骤后面；默认替换（重新录一遍就是要这一遍）
     run_idle_sec: float = 2.0  # 在 studio 里点空跑 / 执行后，等键鼠停下几秒才开始
 
 
