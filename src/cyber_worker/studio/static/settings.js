@@ -297,7 +297,7 @@ const Settings = (() => {
       <div class="set-group">
         <div class="set-group-head"><b>录制</b></div>
         ${row("录制延迟", "把操作之间的间隔录成单独的延迟行，回放节奏和你操作时一样。录制按钮旁的 ▾ 里也能切换", sw("record_delays"))}
-        ${row("追加到末尾", "重新录制时接在已有步骤后面。关着时会替换掉旧步骤，录完按 Ctrl+Z 能恢复。录制按钮旁的 ▾ 里也能切换", sw("record_append"))}
+        ${row("重新录制时接在后面", "新步骤接在已有步骤后面。关着时替换掉旧步骤，录完按 Ctrl+Z 能找回。录制按钮旁的 ▾ 里也能切换", sw("record_append"))}
       </div>
       <div class="set-group">
         <div class="set-group-head"><b>分享</b></div>

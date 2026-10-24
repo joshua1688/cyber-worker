@@ -1417,7 +1417,34 @@ async function quickStart() {
 // 录制
 $("#btn-record-menu").addEventListener("click", (e) => {
   e.stopPropagation();
-  $("#record-menu").hidden = !$("#record-menu").hidden;
+  const menu = $("#record-menu");
+  menu.hidden = !menu.hidden;
+  if (!menu.hidden) {
+    const hk = prettyKey(S.recHotkey);
+    $("#rec-menu-hotkey").innerHTML = hk ? `<kbd>${escapeHtml(hk)}</kbd> 在任何窗口开始 / 停止` : "";
+  }
+});
+$("#rec-menu-more").addEventListener("click", () => {
+  $("#record-menu").hidden = true;
+  Settings.open("run");
+});
+
+// 「重新录制时」二选一：替换旧步骤 / 接在后面
+let recordAppend = false;
+function setAppendMode(append) {
+  recordAppend = !!append;
+  $$("#opt-mode button").forEach((b) => {
+    const on = (b.dataset.v === "append") === recordAppend;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", on);
+  });
+  $("#opt-mode-hint").textContent = recordAppend ? "新步骤接在最后一步后面" : "旧步骤按 Ctrl+Z 能找回";
+}
+$("#opt-mode").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-v]");
+  if (!b || (b.dataset.v === "append") === recordAppend) return;
+  setAppendMode(b.dataset.v === "append");
+  Settings.update({ record_append: recordAppend });
 });
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#record-group")) $("#record-menu").hidden = true;
@@ -1428,7 +1455,7 @@ async function startRecording() {
   // 先清空再发请求：录制线程推送的步骤可能比这个请求的响应先到
   S.recSteps = [];
   const ok = await attempt(() => api("POST", "/api/record/start",
-    { script_id: S.id, record_delays: $("#opt-delays").checked, record_append: $("#opt-append").checked }));
+    { script_id: S.id, record_delays: $("#opt-delays").checked, record_append: recordAppend }));
   // 推送的「开始录制」事件可能比响应先到，那边已经提示过了就不再重复
   if (ok && !S.recording) {
     S.recording = true;
@@ -1687,13 +1714,12 @@ function applyHotkeys(items) {
 }
 document.addEventListener("hotkeys", (e) => applyHotkeys(e.detail.items));
 
-// 「录制延迟」「追加到末尾」：▾ 菜单里和设置里是同一个开关，改了记进配置
+// 「录制延迟」「重新录制时」：▾ 菜单里和设置里是同一个设置，改了记进配置
 document.addEventListener("settings", (e) => {
   $("#opt-delays").checked = e.detail.record_delays;
-  $("#opt-append").checked = !!e.detail.record_append;
+  setAppendMode(e.detail.record_append);
 });
 $("#opt-delays").addEventListener("change", (e) => Settings.update({ record_delays: e.target.checked }));
-$("#opt-append").addEventListener("change", (e) => Settings.update({ record_append: e.target.checked }));
 
 // ---------------- 新手引导 ----------------
 

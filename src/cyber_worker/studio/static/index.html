@@ -117,11 +117,27 @@
         <div class="split" id="record-group">
           <button class="btn" id="btn-record" title="录制你在目标窗口里的操作"><span class="rec-dot"></span><span>录制</span></button>
           <button class="btn" id="btn-record-menu" aria-label="录制选项"><i data-icon="chevron"></i></button>
-          <div class="menu" id="record-menu" hidden>
-            <label><input type="checkbox" id="opt-delays" checked>
-              <span>录制延迟<small>操作之间的间隔录成延迟行</small></span></label>
-            <label><input type="checkbox" id="opt-append">
-              <span>追加到末尾<small>接在已有步骤后面录；不勾就替换掉旧步骤（Ctrl+Z 能恢复）</small></span></label>
+          <div class="menu rec-menu" id="record-menu" hidden>
+            <div class="menu-title">录制选项</div>
+            <label class="menu-row">
+              <span class="menu-ico"><i data-icon="clock"></i></span>
+              <span class="menu-text"><b>录制延迟</b><small>把操作之间的停顿录成延迟行</small></span>
+              <span class="switch"><input type="checkbox" id="opt-delays" checked><span></span></span>
+            </label>
+            <div class="menu-sep"></div>
+            <div class="menu-field">
+              <b>重新录制时</b>
+              <div class="seg seg-full" id="opt-mode" role="radiogroup" aria-label="重新录制时">
+                <button type="button" data-v="replace" class="on">替换旧步骤</button>
+                <button type="button" data-v="append">接在后面</button>
+              </div>
+              <small id="opt-mode-hint">旧步骤按 Ctrl+Z 能找回</small>
+            </div>
+            <div class="menu-sep"></div>
+            <div class="menu-foot">
+              <span id="rec-menu-hotkey"></span>
+              <button type="button" class="menu-link" id="rec-menu-more">更多设置 ›</button>
+            </div>
           </div>
         </div>
         <span class="divider"></span>

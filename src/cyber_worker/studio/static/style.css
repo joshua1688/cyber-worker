@@ -532,9 +532,36 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   box-shadow: var(--shadow);
   z-index: 30;
 }
-.menu label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border-radius: 6px; cursor: pointer; }
-.menu label:hover { background: var(--hover); }
-.menu small { display: block; color: var(--text-3); font-size: 12px; }
+.menu small { display: block; color: var(--text-3); font-size: 12px; line-height: 1.5; }
+
+/* 录制选项（录制按钮旁的 ▾） */
+.rec-menu { width: 300px; padding: 6px; animation: menu-in .12s ease-out; }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .rec-menu { animation: none; } }
+.menu-title { padding: 6px 10px 4px; font-size: 12px; font-weight: 600; color: var(--text-3); letter-spacing: .02em; }
+.menu-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.menu-row:hover { background: var(--hover); }
+.menu-ico {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 28px; height: 28px; border-radius: 8px; background: var(--surface-2); color: var(--text-2);
+}
+.menu-text { flex: 1; min-width: 0; }
+.menu-text b, .menu-field b { display: block; font-size: 13px; font-weight: 600; color: var(--text); }
+.menu-sep { height: 1px; margin: 6px 4px; background: var(--border); }
+.menu-field { display: flex; flex-direction: column; gap: 8px; padding: 6px 10px 8px; }
+.seg-full { display: flex; }
+.seg-full button { flex: 1; }
+/* 菜单底色就是 --surface，选中格再用 --surface 会像个凹坑：改用主题色淡底，两种主题都一眼看得出选了哪个 */
+.rec-menu .seg button.on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.menu-foot { display: flex; align-items: center; gap: 8px; padding: 4px 10px 6px; font-size: 12px; color: var(--text-3); }
+.menu-foot > span { flex: 1; min-width: 0; }
+.menu-foot kbd { font-size: 11px; }
+.menu-link {
+  flex: none; padding: 2px 4px; border: none; border-radius: 4px; background: none;
+  color: var(--accent); font-size: 12px; cursor: pointer;
+}
+.menu-link:hover { text-decoration: underline; }
+.menu-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 #step-list { list-style: none; margin: 0; padding: 4px; flex: 1; }
 .step {
