@@ -51,15 +51,13 @@ def hotkey_dry_run(st) -> None:
         if st.app.executor.busy:
             return tell("正在执行，等这一次跑完再空跑")  # 连按两下也只跑一次
         if st.current_dirty and st.hub.clients:
-            # 页面上有没保存的修改：让那个页面自己跑，它会先写回、检查变量，和点「空跑」按钮一样
-            st.app.io.chime("start")
+            # 页面上有没保存的修改：让那个页面自己跑，它会先写回、检查变量，和点「空跑」按钮一样（响铃在它开跑时）
             return st.hub.publish({"type": "dry_run_request", "script_id": st.current_id,
                                    "page": st.current_page})
         script = st.load(st.current_id)
         missing = script.missing_variables(st.current_vars)
         if missing:
             return tell(f"先在 studio 里填变量：{', '.join(missing)}")
-        st.app.io.chime("start")
         start_run(st, st.current_id, dry_run=True, variables=st.current_vars)
     except HTTPException as e:
         tell(str(e.detail))
@@ -68,7 +66,8 @@ def hotkey_dry_run(st) -> None:
 
 
 def start_run(st, script_id: str, *, dry_run: bool, variables: dict[str, str]) -> None:
-    """交给执行器排队；进度、结果都通过 run_state / run_entry 事件推给界面。"""
+    """交给执行器排队；进度、结果都通过 run_state / run_entry 事件推给界面。
+    空跑、执行，按钮、快捷键都走这里：一律响一声，人在目标窗口里也知道开始了。"""
     body = RunRequest(dry_run=dry_run, variables=variables)
     script = st.load(script_id)
     pages = PageBook.load(script.pages_path) if script.pages_path else None
@@ -86,6 +85,7 @@ def start_run(st, script_id: str, *, dry_run: bool, variables: dict[str, str]) -
     # 先发「排队」再提交：避免任务立刻开始时「开始」比「排队」先到
     st.hub.publish({"type": "run_state", "script_id": script_id, "state": "queued",
                     "dry_run": body.dry_run, "idle_sec": st.run_idle_sec})
+    st.app.io.chime("start")
     fut = st.app.executor.submit(
         job, resume_after_idle_sec=st.run_idle_sec,
         # 等你停手期间推剩余秒数：界面显示倒计时，你一动就回到满值

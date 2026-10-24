@@ -186,6 +186,26 @@ function prettyKey(combo) {
   return parts.join(IS_MAC ? "" : "+");
 }
 
+// 第几步：延迟不算「步」（它不操作窗口），动作按顺序 1、2、3…；延迟返回 null。
+// 和步骤编号一致：动作 s01、s02…，延迟 d01、d02…（服务端 Script.renumber）
+function actionNo(steps, i) {
+  if (!steps[i] || steps[i].action === "wait") return null;
+  let n = 0;
+  for (let k = 0; k <= i; k++) if (steps[k].action !== "wait") n++;
+  return n;
+}
+
+// 输入、按键没有位置，打进当前有焦点的地方：就是它前面最近的那次点击（同一个窗口）点中的地方。
+// 返回那次点击的下标，找不到返回 -1。只用于显示，执行照旧是打进当前焦点
+function focusClick(steps, i) {
+  const win = steps[i]?.win || null;
+  for (let k = i - 1; k >= 0; k--) {
+    const s = steps[k];
+    if ((s.win || null) === win && s.action === "click" && s.x != null) return k;
+  }
+  return -1;
+}
+
 const STATUS_TEXT = {
   ok: "成功", aborted: "中止", failed: "失败", skipped: "空跑跳过", cancelled: "急停",
   dry_run_stopped: "空跑完成",

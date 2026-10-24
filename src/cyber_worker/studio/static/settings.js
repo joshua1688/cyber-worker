@@ -134,6 +134,8 @@ const Settings = (() => {
 
   const sw = (key) => `<label class="switch"><input type="checkbox" data-set="${key}" ${data[key] ? "checked" : ""}><span></span></label>`;
 
+  const days = (key, min, max) => `<span class="num-unit"><input type="number" class="input" data-set="${key}"
+    min="${min}" max="${max}" step="1" value="${data[key]}"><span class="muted">天</span></span>`;
   const secs = (key, min, max, step) => `<span class="num-unit"><input type="number" class="input" data-set="${key}"
     min="${min}" max="${max}" step="${step}" value="${data[key]}"><span class="muted">秒</span></span>`;
 
@@ -164,14 +166,16 @@ const Settings = (() => {
 
   const LOCAL_KEYS = [
     ["Ctrl / ⌘ + K", "打开宏选择器"],
-    ["Ctrl / ⌘ + S", "保存"],
+    ["Ctrl / ⌘ + Enter 按两次", "执行（会真的发送，所以要按两次）"],
+    ["Ctrl / ⌘ + S", "立刻保存（平时改完会自动保存）"],
     ["Ctrl / ⌘ + Z", "撤销"],
     ["Ctrl / ⌘ + Shift + Z", "重做"],
     ["Delete", "删除勾选（或选中）的步骤"],
-    ["↑ / ↓", "上下切换步骤"],
+    ["↑ / ↓", "宏设计页：上下切换步骤"],
     ["Esc", "退出框选 / 取消选中"],
-    ["J / K", "审计页：上下切换记录"],
-    ["1 / 2 / 0", "审计页：没问题 / 有问题 / 重置"],
+    ["↑ / ↓", "审计页：上下切换运行"],
+    ["← / →", "审计页：切换这次运行的步骤"],
+    ["1 / 2", "审计页：看过了 / 有问题，要修（再按一次撤销）"],
   ];
 
   function hotkeys() {
@@ -305,10 +309,16 @@ const Settings = (() => {
       </div>
       <div class="set-group">
         <div class="set-group-head"><b>执行</b></div>
+        ${row("显示操作效果", "执行和空跑时，在屏幕上画出每一下点击（双击两圈、右键橙色）、长按、拖动轨迹、滚动和按键 / 输入的内容，看得清它在做什么。只是画出来，点不到也截不进截图，不影响执行", sw("show_effects"))}
+        ${row("操作音效", "执行和空跑时给操作配上声音：单击、双击是鼠标按键声，滚轮「咔咔」，打字是青轴机械键盘声，Enter 是键盘回车大键。晚上无人值守时可以只关声音、保留画面效果", sw("play_sounds"))}
         ${row("开始前等你停手", "在 studio 里点空跑 / 执行后，等键盘鼠标停下这么久才开始，免得跟你抢鼠标", secs("run_idle_sec", 0, 60, 0.5))}
         ${row("你在用电脑时暂停", "无人值守执行时，检测到你在用键盘鼠标就先停下，等你离开再继续", sw("pause_on_user_input"))}
         ${row("空闲多久后继续", "暂停后，键盘鼠标停下这么久才继续执行", secs("resume_after_idle_sec", 0, 3600, 5),
           data.pause_on_user_input ? "" : "disabled")}
+      </div>
+      <div class="set-group">
+        <div class="set-group-head"><b>审计</b></div>
+        ${row("审计记录保留", "超过这么多天的审计记录和截图，下次启动 studio 时自动删掉。想马上删某一天，在审计页右上角点垃圾桶「清空这一天」", days("audit_keep_days", 1, 3650))}
       </div>`;
   }
 

@@ -12,12 +12,12 @@ import os
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from ctypes import wintypes
 
 import numpy as np
 
-from cyber_worker.macro.io.base import CalibrationError, WindowGeometry, WindowInfo
+from cyber_worker.macro.io.base import CalibrationError, WindowGeometry, WindowInfo, pick_window
 from cyber_worker.macro.io.pynput_input import PynputInput
 from cyber_worker.macro.schema import Window
 
@@ -128,10 +128,12 @@ def _exe_name(app: str) -> str:
     return app if app.endswith(".exe") else app + ".exe"
 
 
-def find_window(app: str, title: str | None = None) -> int | None:
-    """按进程名找最上层的可见主窗口，如 "WeChat"、"chrome.exe"；title 非空时还要求标题包含它。"""
+def find_window(app: str, title: str | None = None, *, size: tuple[float, float] | None = None,
+                avoid: Iterable[str] = ()) -> int | None:
+    """按进程名找可见主窗口，如 "WeChat"、"chrome.exe"；title 非空时要求标题包含它，取最上层的。
+    title 为空时同一个程序可能开着好几个窗口：避开 avoid 里的标题，挑尺寸最接近 size（点）的（pick_window）。"""
     target = _exe_name(app)
-    found: list[int] = []
+    found: list[tuple[int, str, float, float]] = []
 
     @WNDENUMPROC
     def cb(hwnd, _):
@@ -139,18 +141,37 @@ def find_window(app: str, title: str | None = None) -> int | None:
                 and not user32.GetWindow(hwnd, _GW_OWNER)):
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            if (_process_name(pid.value).lower() == target
-                    and (not title or title in _window_title(hwnd))):
-                found.append(hwnd)
-                return False
+            text = _window_title(hwnd)
+            if _process_name(pid.value).lower() == target and (not title or title in text):
+                found.append((hwnd, text, *_size_points(hwnd)))
+                if title:
+                    return False  # 认标题：最上层的那个就是
         return True
 
     user32.EnumWindows(cb, 0)
-    return found[0] if found else None
+    return pick_window(found, None if title else size, () if title else avoid)
+
+
+def _size_points(hwnd) -> tuple[float, float]:
+    """窗口尺寸（点）；最小化的按还原后的尺寸。"""
+    scale = user32.GetDpiForWindow(hwnd) / 96 or 1.0
+    if user32.IsIconic(hwnd):
+        wp = _WINDOWPLACEMENT(length=ctypes.sizeof(_WINDOWPLACEMENT))
+        user32.GetWindowPlacement(hwnd, ctypes.byref(wp))
+        r = wp.rcNormalPosition
+    else:
+        r = _frame(hwnd)
+    return (r.right - r.left) / scale, (r.bottom - r.top) / scale
 
 
 _DWMWA_CLOAKED = 14
 _MIN_W, _MIN_H = 200, 150  # 太小的一般是托盘、浮动工具条
+
+
+def _window_gone(hwnd) -> bool:
+    """窗口已经关了、最小化了、被隐藏了：截不到它，屏幕上那块区域也不是它。"""
+    return (not user32.IsWindow(hwnd) or user32.IsIconic(hwnd) or not user32.IsWindowVisible(hwnd)
+            or _cloaked(hwnd))
 
 
 def _cloaked(hwnd) -> bool:
@@ -414,8 +435,8 @@ class WinScreenIO(PynputInput):
     def chime(self, kind: str) -> None:
         chime(kind)
 
-    def locate_window(self, window: Window) -> WindowGeometry:
-        hwnd = find_window(window.app, window.title)
+    def locate_window(self, window: Window, avoid: Iterable[str] = ()) -> WindowGeometry:
+        hwnd = find_window(window.app, window.title, size=(window.width, window.height), avoid=avoid)
         if hwnd is None or user32.IsIconic(hwnd):
             raise CalibrationError(f"找不到 {window.title or window.app} 的窗口")
         scale = user32.GetDpiForWindow(hwnd) / 96 or 1.0
@@ -425,8 +446,8 @@ class WinScreenIO(PynputInput):
                               (frame.right - frame.left) / scale, (frame.bottom - frame.top) / scale, scale=scale,
                               handle=hwnd or 0)
 
-    def calibrate(self, window: Window) -> WindowGeometry:
-        hwnd = find_window(window.app, window.title)
+    def calibrate(self, window: Window, avoid: Iterable[str] = ()) -> WindowGeometry:
+        hwnd = find_window(window.app, window.title, size=(window.width, window.height), avoid=avoid)
         if hwnd is None:
             what = f"{window.app}（标题含「{window.title}」）" if window.title else window.app
             raise CalibrationError(f"找不到 {what} 的窗口，请先打开它")
@@ -464,8 +485,12 @@ class WinScreenIO(PynputInput):
                               window.width, window.height, scale=scale, handle=hwnd or 0)
 
     def capture(self, geo: WindowGeometry) -> np.ndarray:
-        """知道窗口句柄就截窗口自己的内容（被挡住也对）；不知道、或者这个程序不让截，就截屏幕上那块区域。"""
+        """知道窗口句柄就截窗口自己的内容（被挡住也对）；不知道、或者这个程序不让截，就截屏幕上那块区域。
+        窗口已经关了 / 最小化了就抛 CalibrationError：这时屏幕上那块是别的窗口，截下来是张乱图，
+        会被当成这个窗口的画面（参考图、步骤画面）。"""
         if geo.handle:
+            if _window_gone(geo.handle):
+                raise CalibrationError("窗口已经关了或最小化了，截不到它")
             img = _print_window(geo.handle)
             want = (round(geo.height * geo.scale), round(geo.width * geo.scale))
             if img is not None and abs(img.shape[0] - want[0]) <= 2 and abs(img.shape[1] - want[1]) <= 2:

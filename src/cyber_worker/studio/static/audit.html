@@ -23,7 +23,6 @@
       <a href="/audit" class="active"><i data-icon="audit"></i>审计</a>
     </nav>
     <span class="grow"></span>
-    <span class="muted" style="font-size:12px"><kbd>J</kbd> <kbd>K</kbd> 上下　<kbd>1</kbd> 没问题　<kbd>2</kbd> 有问题　<kbd>0</kbd> 重置</span>
     <button class="icon-btn" id="btn-settings" title="设置"><i data-icon="gear"></i></button>
     <button class="icon-btn" id="btn-tour" title="新手引导"><i data-icon="help"></i></button>
   </header>
@@ -34,12 +33,20 @@
       <div class="filters" id="filters">
         <select id="f-day" class="input" aria-label="日期"></select>
         <select id="f-script" class="input" aria-label="宏"><option value="">全部宏</option></select>
-        <label class="toggle-row"><input type="checkbox" id="f-unreviewed"> 只看未审</label>
+        <div class="seg" id="f-show" role="radiogroup" aria-label="显示哪些运行">
+          <button type="button" data-v="all" class="on">全部</button>
+          <button type="button" data-v="pending">待审</button>
+          <button type="button" data-v="bad">失败</button>
+          <button type="button" data-v="fix">要修</button>
+        </div>
         <span class="grow"></span>
-        <button class="icon-btn" id="btn-refresh" title="刷新"><i data-icon="refresh"></i></button>
+        <span class="day-tools">
+          <button class="icon-btn" id="btn-refresh" title="刷新"><i data-icon="refresh"></i></button>
+          <button class="icon-btn" id="btn-clear-day" title="清空这一天（记录和截图一起删）" aria-label="清空这一天"><i data-icon="trash"></i></button>
+        </span>
       </div>
       <div class="scroller" style="flex:1">
-        <ol class="audit-list" id="list"></ol>
+        <ol class="run-list" id="list"></ol>
         <div id="list-empty" class="empty" hidden>
           <div class="empty-ico"><i data-icon="audit" class="lg"></i></div>
           <h3>这一天还没有记录</h3>

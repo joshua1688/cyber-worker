@@ -52,98 +52,64 @@
           <input type="file" id="pack-file" accept=".cwpack" hidden>
         </div>
       </div>
-      <button class="btn" id="btn-new" title="新建一个宏"><i data-icon="plus"></i>新建</button>
-      <button class="btn primary" id="btn-save" title="保存（Ctrl / ⌘ + S）"><i data-icon="check"></i><span>保存</span></button>
-      <button class="btn danger-ghost" id="btn-delete-macro" title="删除这个宏"><i data-icon="trash"></i>删除</button>
     </div>
-    <div class="meta-chips" id="meta-chips"></div>
+    <span class="grow"></span>
+    <!-- 主操作：录制 → 空跑 → 执行，任何时候都看得到 -->
+    <div class="run-bar" id="run-bar">
+      <div class="split" id="record-group">
+        <button class="btn" id="btn-record" title="录制你在目标窗口里的操作"><span class="rec-dot"></span><span>录制</span></button>
+        <button class="btn" id="btn-record-menu" aria-label="录制选项"><i data-icon="chevron"></i></button>
+        <div class="menu rec-menu" id="record-menu" hidden>
+          <div class="menu-title">录制选项</div>
+          <label class="menu-row">
+            <span class="menu-ico"><i data-icon="clock"></i></span>
+            <span class="menu-text"><b>录制延迟</b><small>把操作之间的停顿录成延迟行</small></span>
+            <span class="switch"><input type="checkbox" id="opt-delays" checked><span></span></span>
+          </label>
+          <div class="menu-sep"></div>
+          <div class="menu-field">
+            <b>重新录制时</b>
+            <div class="seg seg-full" id="opt-mode" role="radiogroup" aria-label="重新录制时">
+              <button type="button" data-v="replace" class="on">替换旧步骤</button>
+              <button type="button" data-v="append">接在后面</button>
+            </div>
+            <small id="opt-mode-hint">旧步骤按 Ctrl+Z 能找回</small>
+          </div>
+          <div class="menu-sep"></div>
+          <div class="menu-foot">
+            <span id="rec-menu-hotkey"></span>
+            <button type="button" class="menu-link" id="rec-menu-more">更多设置 ›</button>
+          </div>
+        </div>
+      </div>
+      <button class="btn" id="btn-dry" title="完整走一遍，但跳过「发送」"><i data-icon="flask"></i><span>空跑</span></button>
+      <button class="btn primary" id="btn-run" title="真的执行，会发送"><i data-icon="play"></i>执行</button>
+    </div>
   </div>
 
   <main class="layout">
-    <!-- 左：添加 -->
-    <aside class="card palette" id="palette">
-      <div class="card-head"><span class="card-title">添加步骤</span></div>
-      <div class="scroller">
-        <button class="palette-item" data-add="click">
-          <span class="type-ico click"><i data-icon="pointer"></i></span>
-          <span><b>点击</b><small>点击窗口里的某个位置</small></span>
-        </button>
-        <button class="palette-item" data-add="type">
-          <span class="type-ico type"><i data-icon="type"></i></span>
-          <span><b>输入文本</b><small>输入文字，可以用变量</small></span>
-        </button>
-        <button class="palette-item" data-add="key">
-          <span class="type-ico key"><i data-icon="keyboard"></i></span>
-          <span><b>按键</b><small>回车、快捷键等组合键</small></span>
-        </button>
-        <button class="palette-item" data-add="scroll">
-          <span class="type-ico scroll"><i data-icon="scroll"></i></span>
-          <span><b>滚动</b><small>上下、左右滚动页面内容</small></span>
-        </button>
-        <button class="palette-item" data-add="hover">
-          <span class="type-ico hover"><i data-icon="mouse"></i></span>
-          <span><b>悬停</b><small>停在某处，等资料卡、菜单弹出</small></span>
-        </button>
-        <button class="palette-item" data-add="drag">
-          <span class="type-ico click"><i data-icon="move"></i></span>
-          <span><b>拖动</b><small>按住从一处拖到另一处</small></span>
-        </button>
-        <button class="palette-item" data-add="wait">
-          <span class="type-ico wait"><i data-icon="clock"></i></span>
-          <span><b>延迟</b><small>等待一段时间</small></span>
-        </button>
-        <button class="palette-item" data-add="wait_page">
-          <span class="type-ico wait_page"><i data-icon="page"></i></span>
-          <span><b>等待页面</b><small>等某个页面出来再往下走</small></span>
-        </button>
-        <div class="palette-group">即将支持</div>
-        <button class="palette-item" disabled>
-          <span class="type-ico"><i data-icon="layers"></i></span>
-          <span><b>嵌套宏</b><small>调用另一个宏</small></span>
-        </button>
-        <button class="palette-item" disabled>
-          <span class="type-ico"><i data-icon="loop"></i></span>
-          <span><b>循环</b><small>重复执行一组步骤</small></span>
-        </button>
-      </div>
-    </aside>
-
-    <!-- 中：步骤列表 -->
+    <!-- 左：步骤列表 -->
     <section class="card steps-card" id="steps-card">
       <div class="card-head">
         <input type="checkbox" id="select-all" title="全选" aria-label="全选">
-        <span class="total" id="total" title="预计耗时（延迟 + 每步操作后的等待）"><i data-icon="clock"></i>0.0s</span>
+        <span class="total" id="total"></span>
         <span class="grow"></span>
-        <div class="split" id="record-group">
-          <button class="btn" id="btn-record" title="录制你在目标窗口里的操作"><span class="rec-dot"></span><span>录制</span></button>
-          <button class="btn" id="btn-record-menu" aria-label="录制选项"><i data-icon="chevron"></i></button>
-          <div class="menu rec-menu" id="record-menu" hidden>
-            <div class="menu-title">录制选项</div>
-            <label class="menu-row">
-              <span class="menu-ico"><i data-icon="clock"></i></span>
-              <span class="menu-text"><b>录制延迟</b><small>把操作之间的停顿录成延迟行</small></span>
-              <span class="switch"><input type="checkbox" id="opt-delays" checked><span></span></span>
-            </label>
-            <div class="menu-sep"></div>
-            <div class="menu-field">
-              <b>重新录制时</b>
-              <div class="seg seg-full" id="opt-mode" role="radiogroup" aria-label="重新录制时">
-                <button type="button" data-v="replace" class="on">替换旧步骤</button>
-                <button type="button" data-v="append">接在后面</button>
-              </div>
-              <small id="opt-mode-hint">旧步骤按 Ctrl+Z 能找回</small>
-            </div>
-            <div class="menu-sep"></div>
-            <div class="menu-foot">
-              <span id="rec-menu-hotkey"></span>
-              <button type="button" class="menu-link" id="rec-menu-more">更多设置 ›</button>
-            </div>
+        <div class="add-group" id="add-group">
+          <button class="btn sm" id="btn-add" aria-haspopup="menu" aria-expanded="false" title="手动添加一步（插在选中的步骤后面）"><i data-icon="plus"></i><span class="add-text">添加</span></button>
+          <div class="menu add-menu" id="add-menu" role="menu" hidden>
+            <button class="add-item" data-add="click" role="menuitem"><span class="type-ico sm click"><i data-icon="pointer"></i></span><span><b>点击</b><small>点窗口里的某个位置</small></span></button>
+            <button class="add-item" data-add="type" role="menuitem"><span class="type-ico sm type"><i data-icon="type"></i></span><span><b>输入文本</b><small>可以用变量</small></span></button>
+            <button class="add-item" data-add="key" role="menuitem"><span class="type-ico sm key"><i data-icon="keyboard"></i></span><span><b>按键</b><small>回车、快捷键</small></span></button>
+            <button class="add-item" data-add="scroll" role="menuitem"><span class="type-ico sm scroll"><i data-icon="scroll"></i></span><span><b>滚动</b><small>上下、左右</small></span></button>
+            <button class="add-item" data-add="hover" role="menuitem"><span class="type-ico sm hover"><i data-icon="mouse"></i></span><span><b>悬停</b><small>等资料卡、菜单弹出</small></span></button>
+            <button class="add-item" data-add="drag" role="menuitem"><span class="type-ico sm drag"><i data-icon="move"></i></span><span><b>拖动</b><small>从一处拖到另一处</small></span></button>
+            <button class="add-item" data-add="wait" role="menuitem"><span class="type-ico sm wait"><i data-icon="clock"></i></span><span><b>延迟</b><small>等一段时间</small></span></button>
+            <button class="add-item" data-add="wait_page" role="menuitem"><span class="type-ico sm wait_page"><i data-icon="page"></i></span><span><b>等待页面</b><small>等某个页面出来</small></span></button>
           </div>
         </div>
-        <span class="divider"></span>
-        <button class="icon-btn" id="btn-undo" title="撤销 (Ctrl / ⌘ + Z)"><i data-icon="undo"></i></button>
-        <button class="icon-btn" id="btn-redo" title="重做 (Ctrl / ⌘ + Shift + Z)"><i data-icon="redo"></i></button>
-        <button class="icon-btn" id="btn-delete" title="删除勾选的步骤 (Delete)"><i data-icon="trash"></i></button>
+        <button class="icon-btn" id="btn-undo" title="撤销 (Ctrl / ⌘ + Z)" aria-label="撤销"><i data-icon="undo"></i></button>
+        <button class="icon-btn" id="btn-redo" title="重做 (Ctrl / ⌘ + Shift + Z)" aria-label="重做"><i data-icon="redo"></i></button>
+        <button class="icon-btn" id="btn-delete" title="删除勾选的步骤 (Delete)" aria-label="删除勾选的步骤"><i data-icon="trash"></i></button>
       </div>
       <div class="scroller" style="flex:1;display:flex;flex-direction:column">
         <ol id="step-list"></ol>
@@ -151,20 +117,20 @@
       </div>
     </section>
 
-    <!-- 右：画布 + 标签页 -->
-    <section class="card inspector" id="inspector">
+    <!-- 中：画面 -->
+    <section class="card stage-card" id="stage-card">
       <div class="card-head">
         <div class="seg" id="frame-seg" role="tablist" aria-label="画面">
-          <button data-frame="reference" class="on">参考图</button>
-          <button data-frame="latest">最新截图</button>
+          <button data-frame="reference" class="on" title="录制时的画面：选中一步就是那一步动作之前的样子">录制画面</button>
+          <button data-frame="latest" title="最近一次「截取当前窗口」的画面">当前画面</button>
           <button data-frame="shot" hidden>运行截图</button>
         </div>
         <div class="seg" id="win-seg" role="tablist" aria-label="窗口" title="画面上显示哪个窗口；选中步骤时自动切到它所在的窗口" hidden></div>
-        <span class="muted frame-note" id="frame-note"></span>
         <span class="grow"></span>
+        <span class="muted frame-note" id="frame-note"></span>
         <span class="coord" id="coord"></span>
-        <button class="btn sm" id="btn-capture" title="把目标窗口调到宏的尺寸，截取当前画面"><i data-icon="camera"></i>截取当前窗口</button>
-        <button class="btn sm" id="btn-anchor-mode" title="在画面上拖出一块区域，作为页面锚点"><i data-icon="scan"></i>框选锚点</button>
+        <button class="icon-btn" id="btn-capture" title="截取当前窗口（把目标窗口调到宏的尺寸再截）" aria-label="截取当前窗口"><i data-icon="camera"></i></button>
+        <button class="icon-btn" id="btn-anchor-mode" title="框选锚点：在画面上拖出一块这个页面独有的区域" aria-label="框选锚点"><i data-icon="scan"></i></button>
       </div>
       <div class="anchor-bar" id="anchor-bar" hidden>
         <i data-icon="scan"></i>
@@ -180,12 +146,15 @@
       <div class="canvas-wrap" id="canvas-area">
         <canvas id="canvas" width="10" height="10"></canvas>
         <div id="canvas-empty" class="canvas-empty" hidden>
-          还没有画面<br>点右上角「截取当前窗口」
+          还没有画面<br>点右上角的相机「截取当前窗口」
         </div>
       </div>
+    </section>
 
+    <!-- 右：参数面板 -->
+    <section class="card panel" id="panel">
       <div class="tabs" role="tablist">
-        <button data-tab="step" id="tab-step" class="on"><i data-icon="sliders"></i>步骤参数</button>
+        <button data-tab="step" id="tab-step" class="on"><i data-icon="sliders"></i>步骤</button>
         <button data-tab="macro" id="tab-macro"><i data-icon="page"></i>宏设置</button>
         <button data-tab="run" id="tab-run"><i data-icon="play"></i>运行</button>
       </div>
@@ -194,10 +163,6 @@
         <div class="tab-body" id="pane-macro" hidden></div>
         <div class="tab-body" id="pane-run" hidden>
           <div class="fields" id="run-vars"></div>
-          <div class="run-actions" id="run-idle">
-            <button class="btn" id="btn-dry" title="完整走一遍，但跳过「发送」"><i data-icon="flask"></i>空跑</button>
-            <button class="btn primary" id="btn-run" title="真的执行，会发送"><i data-icon="play"></i>执行</button>
-          </div>
           <div class="run-busy" id="run-busy" hidden>
             <span class="run-busy-ico"><i data-icon="clock"></i></span>
             <span class="grow"><b id="run-busy-title">准备开始…</b>
@@ -207,7 +172,7 @@
           </div>
           <div class="callout" id="run-hint">
             <i data-icon="info"></i>
-            <span>先空跑：会点开、核对页面、打字，但不点「发送」。确认截图都对，再点执行（需要点两次确认）。</span>
+            <span>先点上面的「空跑」：会点开、核对页面、打字，但不点「发送」。截图都对了再「执行」。</span>
           </div>
           <ol class="log" id="run-log"></ol>
         </div>

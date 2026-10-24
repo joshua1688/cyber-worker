@@ -22,6 +22,9 @@ FIELDS = {
     "pack_screenshots": ("studio", "pack_screenshots"),
     "pause_on_user_input": ("executor", "pause_on_user_input"),
     "resume_after_idle_sec": ("executor", "resume_after_idle_sec"),
+    "audit_keep_days": ("audit", "keep_days"),
+    "show_effects": ("executor", "show_effects"),
+    "play_sounds": ("executor", "play_sounds"),
 }
 
 
@@ -33,6 +36,9 @@ class SettingsPatch(BaseModel):
     pack_screenshots: bool | None = None
     pause_on_user_input: bool | None = None
     resume_after_idle_sec: float | None = Field(None, ge=0, le=3600)
+    audit_keep_days: int | None = Field(None, ge=1, le=3650)
+    show_effects: bool | None = None
+    play_sounds: bool | None = None
 
 
 def _version() -> str:
@@ -75,6 +81,9 @@ def update(body: SettingsPatch, request: Request):
     st.record_append = cfg.studio.record_append
     st.app.executor.pause_on_user_input = cfg.executor.pause_on_user_input
     st.app.executor.resume_after_idle_sec = cfg.executor.resume_after_idle_sec
+    if st.app.effects is not None:
+        st.app.effects.enabled = cfg.executor.show_effects
+        st.app.effects.sound_enabled = cfg.executor.play_sounds
     data = payload(st)
     st.hub.publish({"type": "settings", **data})  # 另一个标签页也跟着换
     return data

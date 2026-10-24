@@ -94,7 +94,9 @@ def test_runner_hovers_then_finds_popup_without_activating_it(tmp_path):
     assert io.calibrated == ["QQ"]  # 只校准了主窗口
     assert ("locate", "资料卡") in io.calls
     # 移到头像 (100+60, 50+600) 停了 1.5 秒
-    assert any(abs(x - 160) <= 1 and abs(y - 650) <= 1 for x, y in positions) and 1.5 in sleeps
+    assert any(abs(x - 160) <= 1 and abs(y - 650) <= 1 for x, y in positions)
+    ticks = [s for s in sleeps if abs(s - 0.1) < 1e-9]
+    assert len(ticks) == 15  # 停 1.5 秒：切成 15 段，段间能急停
     clicks = [c for c in io.calls if c[0] == "click"]
     assert len(clicks) == 1 and abs(clicks[0][1][0] - (430 + 250)) <= 1  # 点在资料卡上，没在悬停时点
 

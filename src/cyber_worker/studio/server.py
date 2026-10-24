@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
@@ -10,6 +11,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from cyber_worker.bootstrap import App
+from cyber_worker.studio.guard import LocalOnly
 from cyber_worker.studio.routes import (
     audit,
     edit,
@@ -42,6 +44,8 @@ def create_app(app: App, *, run_idle_sec: float | None = None) -> FastAPI:
     studio_cfg = app.config.studio
     api.state.studio = Studio(app, run_idle_sec=studio_cfg.run_idle_sec if run_idle_sec is None else run_idle_sec,
                               record_delays=studio_cfg.record_delays, record_append=studio_cfg.record_append)
+    app.prune_audit(date.today())  # 保留期以前的审计记录和截图
+    api.state.studio.collect_garbage()  # 宏目录里没人用的旧图（重新录制、换画面留下的，过了几天撤销也用不上了）
     hotkeys.bind(api.state.studio)  # 全局快捷键：配置的键被占用时自动换一个，界面上会提示
 
     for r in (edit.router, record.router, run.router, preview.router, audit.router, hotkeys.router,
@@ -74,4 +78,5 @@ def create_app(app: App, *, run_idle_sec: float | None = None) -> FastAPI:
         return response
 
     api.mount("/static", StaticFiles(directory=STATIC), name="static")
+    api.add_middleware(LocalOnly)  # 只接受本机 studio 页面发来的请求（防别的网页、DNS 重绑定）
     return api

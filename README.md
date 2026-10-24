@@ -366,6 +366,10 @@ cyber-worker/
 │   │       ├── base.py             # ScreenIO / ActivityMonitor interfaces (faked in tests)
 │   │       ├── pynput_input.py     # Mouse/keyboard output, real-input monitor, global hotkey (shared)
 │   │       ├── hotkeys.py          # Global hotkey manager: conflict checks, auto-fallback when taken, live rebinding
+│   │       ├── effects.py          # Run effects: clicks / double-clicks / long presses / drags / scrolls / keys drawn on screen
+│   │       ├── win_overlay.py      # Windows drawing for effects (click-through, capture-excluded topmost windows)
+│   │       ├── sounds.py           # Run sounds: mouse clicks, blue-switch typing (recordings in sound_assets/), Enter; a mixer so sounds overlap
+│   │       ├── win_sound.py        # Windows playback for sounds (waveOut streaming, closed when idle)
 │   │       ├── macos.py            # screencapture + osascript (window calibration, capture)
 │   │       └── windows.py          # Win32 + Pillow (window calibration, capture, IME-proof typing, system hotkeys)
 │   │
@@ -477,7 +481,7 @@ cyber-worker/
     │   │   └── new_moments.png     # Top of the content area
     │   └── douyin/
     │       └── new_message.png
-    ├── screenshots/                # Runtime screenshots (one per action, 30-day cleanup)
+    ├── screenshots/                # Runtime screenshots (one per action, kept 30 days by default; configurable in settings)
     │   └── 2026-10-22/             # Partitioned by date
     │       ├── 091203_s03_like.png          # Like: after action
     │       ├── 092015_s04_scroll.png        # Scroll: after action

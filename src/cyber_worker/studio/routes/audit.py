@@ -21,14 +21,17 @@ class Mark(BaseModel):
 
 @router.get("/days")
 def days(request: Request):
-    return studio(request).app.audit.days()
+    app = studio(request).app
+    return app.audit.days(limit=app.config.audit.keep_days + 1)  # 保留期内的每一天都能选
 
 
 @router.get("")
 def entries(request: Request, day: date | None = None, script: str | None = None,
             unreviewed: bool = False, spot_check: int = 5):
     st = studio(request)
-    rows = st.app.audit.entries(day=day, script=script, unreviewed_only=unreviewed)
+    # 按天看时不设上限：截断了的话概况（成功率、失败数）会算错，而且不会有任何提示
+    rows = st.app.audit.entries(day=day, script=script, unreviewed_only=unreviewed,
+                                limit=None if day is not None else 1000)
     for r in rows:
         r["screenshot_url"] = st.file_url(Path(r["screenshot"])) if r["screenshot"] else None
     ranked = rank(rows)
@@ -36,6 +39,15 @@ def entries(request: Request, day: date | None = None, script: str | None = None
     for r in ranked:
         r["spot_check"] = r["id"] in spot_ids
     return {"report": daily_report(rows), "entries": ranked}
+
+
+@router.delete("/days/{day}")
+def delete_day(day: date, request: Request):
+    """清空这一天：记录和截图一起删。"""
+    app = studio(request).app
+    n = app.audit.delete_day(day)
+    app.storage.remove_day(day)
+    return {"deleted": n}
 
 
 @router.post("/{entry_id}")

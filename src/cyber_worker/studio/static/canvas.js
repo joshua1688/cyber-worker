@@ -2,11 +2,14 @@
 // 坐标约定：脚本里存的是「点」，截图是像素，像素 = 点 × scale。
 "use strict";
 
+// 连线流动：系统设了「减少动态效果」就不动
+const FLOW = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 class Stage {
   constructor(canvas, handlers) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
-    this.h = handlers; // onMove(index, x, y) / onPlace(x, y) / onRegion(rect) / onHover(pt|null)
+    this.h = handlers; // onMove(index, x, y) / onSelect(index) / onRegion(rect) / onHover(pt|null)
     this.img = null;
     this.scale = 1;
     this.steps = [];
@@ -92,12 +95,51 @@ class Stage {
         out.push({ i, x: s.x, y: s.y, step: s, which: "start" });
       }
       if (s.action === "drag") out.push({ i, x: s.x2, y: s.y2, step: s, which: "end" });
+      // 输入 / 按键：标在它打进去的地方（前面那次点击），只显示，不能拖
+      if (s.action === "type" || s.action === "key") {
+        const k = focusClick(this.steps, i);
+        if (k >= 0) out.push({ i, x: this.steps[k].x, y: this.steps[k].y, step: s, which: "focus" });
+      }
     });
     return out;
   }
+  // 输入 / 按键的标记：方块（和点击的圆区分开），挨着它打进去的那次点击；选中时把那个位置圈出来
+  _drawFocus(ctx, m, s, k, selected) {
+    const css = getComputedStyle(document.documentElement);
+    const info = css.getPropertyValue("--info").trim();
+    const accent = css.getPropertyValue("--accent").trim();
+    const cx = m.x * s, cy = m.y * s, q = 10 * k;
+    const x = cx + 20 * k, y = cy - 20 * k;  // 往右上错开，不盖住点击的编号
+    ctx.save();
+    if (selected) {
+      ctx.lineWidth = 2 * k;
+      ctx.setLineDash([4 * k, 3 * k]);
+      ctx.strokeStyle = info;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 18 * k, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = `${12 * k}px sans-serif`;
+      label(ctx, m.step.action === "type" ? "输入到这里" : "按键发到这里", cx + 34 * k, cy + 4 * k, info, k);
+    }
+    ctx.lineWidth = 2 * k;
+    ctx.fillStyle = selected ? accent : "rgba(20,20,22,.85)";
+    ctx.strokeStyle = selected ? "#fff" : info;
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(x - q, y - q, q * 2, q * 2, 4 * k) : ctx.rect(x - q, y - q, q * 2, q * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = selected ? "#0b0b0b" : "#fff";
+    ctx.font = `bold ${11 * k}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(actionNo(this.steps, m.i)), x, y + 0.5 * k);
+    ctx.restore();
+  }
+
   _hit(pt) {
     const r = (12 * this._k()) / this.scale;
-    const ms = this._markers();
+    const ms = this._markers().filter((m) => m.which !== "focus");
     for (let j = ms.length - 1; j >= 0; j--) {
       const m = ms[j];
       if (Math.hypot(m.x - pt.x, m.y - pt.y) <= r) return m;
@@ -113,15 +155,9 @@ class Stage {
       this.drag = { kind: "rect", x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y };
       return;
     }
+    // 只有按住编号标记拖动才会改位置：点一下画面不改，看截图时随手一点不会把步骤挪走（改动会自动保存，挪了执行时就点空）
     const m = this._hit(pt);
-    if (m) {
-      this.drag = { kind: "marker", index: m.i, which: m.which, x: m.x, y: m.y, moved: false };
-      return;
-    }
-    const sel = this.steps[this.selected];
-    if (sel && MARKED.has(sel.action)) {
-      this.h.onPlace?.(round1(pt.x), round1(pt.y));
-    }
+    if (m) this.drag = { kind: "marker", index: m.i, which: m.which, x: m.x, y: m.y, moved: false };
   }
 
   _move(e) {
@@ -224,14 +260,24 @@ class Stage {
         ? { ...m, x: this.drag.x, y: this.drag.y } : m);
     const starts = ms.filter((m) => m.which === "start");
     if (starts.length > 1) {
+      // 流动虚线：主题色圆头短划线，沿步骤顺序慢慢往前走，一眼看出先后；底下一圈淡阴影，浅色、深色界面上都清楚
+      const dash = [7 * k, 6 * k];
       ctx.save();
-      ctx.strokeStyle = "rgba(255,255,255,.45)";
-      ctx.lineWidth = 2 * k;
-      ctx.setLineDash([4 * k, 4 * k]);
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
       ctx.beginPath();
       starts.forEach((m, j) => (j ? ctx.lineTo(m.x * s, m.y * s) : ctx.moveTo(m.x * s, m.y * s)));
+      ctx.shadowColor = "rgba(0,0,0,.4)";
+      ctx.shadowBlur = 3 * k;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2.6 * k;
+      ctx.setLineDash(dash);
+      ctx.lineDashOffset = FLOW ? -((performance.now() * 0.02 * k) % (dash[0] + dash[1])) : 0;
       ctx.stroke();
       ctx.restore();
+      if (FLOW && !this._flow) {  // 有连线才逐帧重画；标签页切到后台时浏览器会自动停掉
+        this._flow = requestAnimationFrame(() => { this._flow = 0; this.draw(); });
+      }
     }
     for (const m of ms.filter((m) => m.which === "end")) {
       const a = ms.find((x) => x.i === m.i && x.which === "start");
@@ -240,6 +286,10 @@ class Stage {
 
     // 标记
     for (const m of ms) {
+      if (m.which === "focus") {
+        this._drawFocus(ctx, m, s, k, m.i === this.selected);
+        continue;
+      }
       const x = m.x * s, y = m.y * s, r = 11 * k;
       const selected = m.i === this.selected;
       ctx.save();
@@ -265,7 +315,7 @@ class Stage {
       ctx.textBaseline = "middle";
       const text = m.which === "end" ? "" : m.step.action === "scroll"
         ? (m.step.dy > 0 ? "↓" : m.step.dy < 0 ? "↑" : m.step.dx > 0 ? "→" : "←")
-        : String(m.i + 1);
+        : String(actionNo(this.steps, m.i));
       ctx.fillText(text, x, y + 0.5 * k);
       ctx.restore();
     }

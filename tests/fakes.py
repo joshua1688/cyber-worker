@@ -22,6 +22,7 @@ class FakeIO:
         self.pos = (0.0, 0.0)
         self.fail_calibrate: str | None = None
         self.calibrations = 0
+        self.avoided: list[tuple[str, ...]] = []  # 每次校准时要避开的标题
         self.origins: dict[str, tuple] = {}  # 窗口标题 → 屏幕位置（多窗口测试用）
         self.missing: dict[str, int] = {}  # 窗口标题 → 还要「找不到」几次（模拟窗口还没打开）
         self.calibrated: list[str] = []
@@ -50,8 +51,9 @@ class FakeIO:
     def chime(self, kind):
         self.calls.append(("chime", kind))
 
-    def calibrate(self, window: Window) -> WindowGeometry:
+    def calibrate(self, window: Window, avoid=()) -> WindowGeometry:
         self.calibrations += 1
+        self.avoided.append(tuple(avoid))
         key = window.title or window.app
         if self.fail_calibrate:
             raise CalibrationError(self.fail_calibrate)
@@ -61,7 +63,7 @@ class FakeIO:
         self.calibrated.append(key)
         return WindowGeometry(*self.origins.get(key, self.origin), window.width, window.height, scale=1.0)
 
-    def locate_window(self, window: Window) -> WindowGeometry:
+    def locate_window(self, window: Window, avoid=()) -> WindowGeometry:
         key = window.title or window.app
         if self.missing.get(key, 0) > 0:
             self.missing[key] -= 1

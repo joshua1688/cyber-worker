@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -130,7 +131,7 @@ class MacScreenIO(PynputInput):
             subprocess.Popen(["afplay", str(chime_file(kind))],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def locate_window(self, window: Window) -> WindowGeometry:
+    def locate_window(self, window: Window, avoid: Iterable[str] = ()) -> WindowGeometry:
         if not _APP_NAME.match(window.app) or (window.title and not _TITLE.match(window.title)):
             raise CalibrationError(f"窗口名不合法：{window.app!r} / {window.title!r}")
         target = (f'(first window whose name contains "{window.title}")'
@@ -144,7 +145,8 @@ class MacScreenIO(PynputInput):
         shot = self.capture(WindowGeometry(x, y, w, h, scale=1.0))
         return WindowGeometry(x, y, w, h, scale=shot.shape[1] / w)
 
-    def calibrate(self, window: Window) -> WindowGeometry:
+    def calibrate(self, window: Window, avoid: Iterable[str] = ()) -> WindowGeometry:
+        # TODO(macOS)：没记标题、同一个程序开着好几个窗口时，照 pick_window 避开 avoid、挑尺寸最接近的
         if not _APP_NAME.match(window.app):
             raise CalibrationError(f"进程名不合法：{window.app!r}")
         if window.title and not _TITLE.match(window.title):

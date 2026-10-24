@@ -35,6 +35,9 @@ def fake_clicks():
     return lambda timeout: next(clicks, None)
 
 
+WS = "ws://127.0.0.1:9999/ws"  # studio 只接受本机地址发来的请求（见 studio/guard.py）
+
+
 @pytest.fixture
 def client(tmp_path):
     # 画面上 (50, 40) 处有一块纹理，可以作为锚点
@@ -51,7 +54,7 @@ def client(tmp_path):
         hotkeys=HotkeyManager(FakeHotkeys(taken={"ctrl+alt+f9"}), platform="win32"),
         config_path=tmp_path / "config.toml",  # 改快捷键写到这里，不碰仓库里的 config.toml
     )
-    with TestClient(create_app(app, run_idle_sec=0)) as c:
+    with TestClient(create_app(app, run_idle_sec=0), base_url="http://127.0.0.1:9999") as c:
         c.io = io
         c.activity = executor.activity
         c.hotkeys = app.hotkeys.backend
@@ -184,7 +187,7 @@ def test_capture_then_anchor(client):
 
 def test_record_appends_steps(client):
     d = new_script(client)
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         assert client.post("/api/record/start", json={"script_id": d["id"]}).status_code == 200
         assert ws.receive_json()["type"] in ("record", "record_state")
         r = client.post("/api/record/stop").json()
@@ -234,7 +237,7 @@ def test_dry_run_streams_progress_then_audit(client):
     ]
     assert client.put(f"/api/scripts/{sid}/detail", json=script).json()["problems"] == []
 
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         client.post(f"/api/scripts/{sid}/run", json={"dry_run": True, "variables": {"draft": "好看"}})
         events = []
         while not (events and events[-1].get("state") == "done"):
@@ -251,6 +254,13 @@ def test_dry_run_streams_progress_then_audit(client):
     assert client.post(f"/api/audit/{first['id']}", json={"reviewed": 1}).status_code == 200
     assert client.get("/api/audit", params={"unreviewed": True}).json()["entries"][0]["id"] != first["id"]
 
+    # 清空这一天：记录和截图一起删
+    day = first["at"][:10]
+    shots = client.app.state.studio.app.storage.root / day
+    assert shots.is_dir()
+    assert client.delete(f"/api/audit/days/{day}").json() == {"deleted": 3}
+    assert client.get("/api/audit").json()["entries"] == [] and not shots.exists()
+
 
 def test_pages_served(client):
     assert "<canvas" in client.get("/").text
@@ -264,7 +274,7 @@ def test_run_waits_while_user_is_moving_and_can_be_cancelled(client):
     d = new_script(client)
     client.app.state.studio.run_idle_sec = 2
     client.activity.idle = 0  # 用户正在动鼠标
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
         queued = ws.receive_json()
         assert queued["state"] == "queued" and queued["idle_sec"] == 2
@@ -277,12 +287,12 @@ def test_run_waits_while_user_is_moving_and_can_be_cancelled(client):
             done = ws.receive_json()
     assert done["state"] == "done" and done["status"] == "cancelled"
     assert client.get("/api/status").json()["busy"] is False
-    assert client.io.calls == []  # 一下都没动
+    assert [c for c in client.io.calls if c[0] != "chime"] == []  # 一下都没动（只响了一声「开始」）
 
 
 def test_run_reports_running_once_user_is_idle(client):
     d = new_script(client)
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
         states = []
         while not states or states[-1] != "done":
@@ -334,7 +344,7 @@ def test_record_hotkey_toggles_current_macro(client):
 
     st = client.app.state.studio
     assert client.get("/api/status").json()["record_hotkey"] == "alt+r"
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         toggle_recording(st)  # 还没选宏
         ev = ws.receive_json()
         assert ev["type"] == "toast" and ev["error"]
@@ -360,7 +370,7 @@ def test_record_hotkey_double_press_does_not_restart(client):
     st = client.app.state.studio
     d = new_script(client)
     client.post("/api/current", json={"script_id": d["id"]})
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         toggle_recording(st)  # 开始
         st.record_lock.acquire()  # 模拟「正在停止」：这时候按下的也不算
         toggle_recording(st)
@@ -450,7 +460,7 @@ def test_taken_hotkey_falls_back_and_tells_ui(tmp_path):
               storage=storage, audit=audit, runner=Runner(io, storage, audit), executor=executor,
               listen=fake_listen, wait_click=fake_clicks(),
               hotkeys=HotkeyManager(FakeHotkeys(taken={"alt+r"}), platform="win32"))
-    with TestClient(create_app(app)) as c:
+    with TestClient(create_app(app), base_url="http://127.0.0.1:9999") as c:
         s = c.get("/api/status").json()
         assert s["record_hotkey"] == "shift+alt+r"
         assert len(s["hotkey_notes"]) == 1 and "shift+alt+r" in s["hotkey_notes"][0]
@@ -463,7 +473,7 @@ def test_settings_apply_immediately_and_persist(client, tmp_path):
     assert s["theme"] == "dark" and s["record_delays"] is True and "language" not in s
     assert s["config_path"].endswith("config.toml") and s["version"]
 
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         r = client.patch("/api/settings", json={"theme": "light", "record_delays": False, "run_idle_sec": 5,
                                                 "pause_on_user_input": False, "resume_after_idle_sec": 30})
         assert r.status_code == 200
@@ -487,7 +497,7 @@ def test_run_countdown_restarts_when_user_moves(client):
     d = new_script(client)
     client.app.state.studio.run_idle_sec = 2
     client.activity.idle = 0
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
 
         def next_wait():
@@ -643,7 +653,7 @@ def test_dry_run_hotkey_runs_current_macro(client):
 
     st = client.app.state.studio
     assert client.get("/api/status").json()["dry_run_hotkey"] == "alt+t"
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         hotkey_dry_run(st)  # 还没选宏
         assert "先在 studio 里选一个宏" in ws.receive_json()["text"]
 
@@ -666,7 +676,18 @@ def test_dry_run_hotkey_runs_current_macro(client):
     assert states == ["queued", "running", "done"]
     assert all(e["dry_run"] for e in events if e["type"] == "run_state" and "dry_run" in e)
     assert any(e["type"] == "toast" and "正在执行" in e["text"] for e in events)
-    assert ("chime", "start") in client.io.calls
+    assert client.io.calls.count(("chime", "start")) == 1  # 连按的第二下没跑，也不响
+
+
+def test_every_run_chimes_once(client):
+    """点「空跑」「执行」按钮（Ctrl+Enter 也是点按钮）和按快捷键一样：开跑时响一声。"""
+    d = new_script(client)
+    for dry in (True, False):
+        with client.websocket_connect(WS) as ws:
+            client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": dry})
+            while ws.receive_json().get("state") != "done":
+                pass
+    assert client.io.calls.count(("chime", "start")) == 2
 
 
 def test_dry_run_hotkey_hands_unsaved_edits_to_the_page(client):
@@ -676,12 +697,13 @@ def test_dry_run_hotkey_hands_unsaved_edits_to_the_page(client):
 
     st = client.app.state.studio
     d = new_script(client)
-    with client.websocket_connect("/ws") as ws:
+    with client.websocket_connect(WS) as ws:
         client.post("/api/current", json={"script_id": d["id"], "dirty": True, "page": "tab-1"})
         hotkey_dry_run(st)
         ev = ws.receive_json()
         assert ev == {"type": "dry_run_request", "script_id": d["id"], "page": "tab-1"}
         assert not st.app.executor.busy  # 服务端自己没跑
+        assert ("chime", "start") not in client.io.calls  # 那个页面开跑时才响，不然要响两次
 
         # 保存后（或页面关掉时撤回）又直接跑文件
         client.post("/api/current", json={"script_id": d["id"], "dirty": False, "page": "tab-1"})
@@ -770,6 +792,8 @@ def test_capture_fills_missing_window_reference(client):
     sid = r["id"]
     sc = r["script"]
     sc["windows"]["w2"].pop("reference")
+    for step in sc["steps"]:  # 更早的宏：也没有步骤画面
+        step.pop("shot", None)
     client.put(f"/api/scripts/{sid}/detail", json=sc)
     assert "w2" not in client.get(f"/api/scripts/{sid}/detail").json()["frames"]["reference"]
 
@@ -780,6 +804,12 @@ def test_capture_fills_missing_window_reference(client):
     assert set(d["frames"]["latest"]) == {"main", "w2"}
     assert client.post(f"/api/scripts/{sid}/anchors", json={
         "page": "x", "x": 1, "y": 1, "w": 10, "h": 10, "frame": "reference", "win": "w9"}).status_code == 400
+
+    # 没有步骤画面时在「录制画面」上截：换的是窗口参考图，存成新文件
+    d = client.post(f"/api/scripts/{sid}/capture?replace=true").json()
+    assert d["replaced_steps"] == [] and d["script"]["reference"] == "comment.refs/main-2.png"
+    d = client.post(f"/api/scripts/{sid}/capture?win=w2&replace=true").json()
+    assert d["script"]["windows"]["w2"]["reference"] == "comment.refs/w2-2.png"
 
 
 def test_each_step_keeps_the_frame_it_was_recorded_on(client):
@@ -831,6 +861,17 @@ def test_each_step_keeps_the_frame_it_was_recorded_on(client):
     # 保存进宏库：画面目录跟着搬
     saved = client.post(f"/api/scripts/{d['id']}/commit").json()
     assert client.get(saved["shots"]["s01"]["url"]).status_code == 200
+
+    # 录制画面录错了：停在这一步的录制画面上截，换掉它和共用它的那几步；旧图留着给撤销
+    sid = saved["id"]
+    lib = client.app.state.studio.script_path(sid).parent
+    r = client.post(f"/api/scripts/{sid}/capture?replace=true&step_id=s02").json()
+    assert r["replaced_steps"] == ["s01", "s02"]
+    shots = {s["id"]: s.get("shot") for s in r["script"]["steps"]}
+    assert shots["s01"] == shots["s02"] == "comment.shots/s01-2.png"
+    assert shots["s03"] == "comment.shots/s03.png"
+    assert (lib / "comment.shots/s01.png").exists()
+    assert client.post(f"/api/scripts/{sid}/capture?replace=true&step_id=s09").status_code == 400
 
 
 def test_hover_recorded_only_when_something_pops_up(client):
@@ -974,3 +1015,178 @@ def test_rerecording_drops_unused_windows(client):
     r = client.post("/api/record/stop").json()
     assert set(r["script"]["windows"]) == {"w2"}
     assert r["script"]["windows"]["w2"]["width"] == 300
+
+
+def test_new_macro_remembers_fixed_window_titles():
+    """标题固定（「QQ」）就记下来，以后再开聊天窗口也认得出主窗口；带文件名的标题只在开着好几个时才用。"""
+    from cyber_worker.macro.io.base import WindowInfo
+    from cyber_worker.studio.state import window_json
+
+    assert window_json(WindowInfo("QQ", "QQ", 320, 740), set())["match_title"] == "QQ"
+    assert window_json(WindowInfo("QQ", "My Sky等2个会话", 680, 613), set())["match_title"] == "My Sky"
+    assert window_json(WindowInfo("Notepad", "a.txt - 记事本", 800, 600), set())["match_title"] is None
+    assert window_json(WindowInfo("Notepad", "a.txt - 记事本", 800, 600), {"notepad"})["match_title"] == "a.txt - 记事本"
+
+
+def test_window_reference_uses_its_first_step_frame(client, tmp_path):
+    """录制中点 ✕ 关掉聊天窗口：之后后台截到的不是它（以前退回截屏幕区域，拍到 studio 和主窗口）。
+    参考图用它第一步按下那一刻的画面。"""
+    import time as _time
+
+    import numpy as np
+
+    from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
+    from cyber_worker.macro.screenshot.storage import read_image
+
+    io = client.io
+    chat_img = screen_with(pattern(seed=7), size=(300, 200))
+    garbage = np.zeros((200, 300, 3), np.uint8)
+    state = {"closed": False}
+    io.capture = lambda geo: ((garbage if state["closed"] else chat_img).copy() if geo.width == 300
+                              else screen_with(pattern()))
+    chat = (WindowInfo("Demo", "My Sky", 300, 200), WindowGeometry(150, 80, 300, 200, 1.0))
+
+    def listen(builder):
+        builder.on_click(120, 80, "left")
+        _time.sleep(0.2)
+        builder.on_click(150 + 280, 80 + 10, "left", (), chat)  # 点 ✕
+        _time.sleep(0.2)
+        state["closed"] = True  # 窗口关了：之后后台截到的都是乱图
+        _time.sleep(1.2)
+
+    r = _record_with(client, listen)
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(client.get(r["frames"]["reference"]["w2"]["url"]).content)
+    assert np.array_equal(read_image(ref), chat_img)
+
+
+def test_window_shows_its_first_step_frame_over_a_stale_reference(client, tmp_path):
+    """旧版本录的宏，资料卡的参考图是它关掉后截到的乱图：画布上优先显示它第一步的画面。"""
+    r = _record_two_windows(client)
+    sc = r["script"]
+    lib = tmp_path / "user_data/drafts/demo/templates"
+    (lib / sc["windows"]["w2"]["reference"]).write_bytes(b"\x89PNG stale")  # 存下来的旧参考图（乱的）
+    d = client.get(f"/api/scripts/{r['id']}/detail").json()
+    first_w2 = next(s for s in sc["steps"] if s.get("win") == "w2")
+    assert d["frames"]["reference"]["w2"]["url"].split("&v=")[0] == d["shots"][first_w2["id"]]["url"].split("&v=")[0]
+    # 在这张画面上框锚点，截的也是它
+    a = client.post(f"/api/scripts/{r['id']}/anchors", json={
+        "page": "聊天", "x": 5, "y": 5, "w": 40, "h": 30, "frame": "reference", "win": "w2"})
+    assert a.status_code == 200, a.text
+
+
+def test_click_far_from_its_target_is_a_problem(client):
+    """按图找的点击，点击位置被挪到目标框外面（以前点一下画面就会挪）：执行时会点空，执行前就提示。"""
+    d = new_script(client)
+    sc = d["script"]
+    target = {"image": "t.png", "x": 686, "y": 609, "w": 48, "h": 40}
+    sc["steps"] = [
+        {"id": "s01", "action": "click", "x": 710, "y": 629, "target": target},    # 在目标上
+        {"id": "s02", "action": "click", "x": 192.5, "y": 539, "target": target},  # 挪到输入框里了
+        {"id": "s03", "action": "click", "x": 192.5, "y": 539, "target": target, "use_target": False},  # 固定坐标不管
+    ]
+    r = client.put(f"/api/scripts/{d['id']}/detail", json=sc).json()
+    bad = {p["step"] for p in r["problems"] if "不在目标图上" in p["message"]}
+    assert bad == {"s02"}
+
+
+def test_delays_are_not_steps(client, tmp_path):
+    """延迟不算「步」：动作编号 s01、s02…，延迟单独 d01、d02…；保存、录制、打开旧宏都统一成这样。"""
+    from cyber_worker.macro.schema import Script
+
+    d = new_script(client)
+    sc = d["script"]
+    sc["steps"] = [
+        {"id": "s01", "action": "click", "x": 1, "y": 1},
+        {"id": "s02", "action": "wait", "seconds": 1},
+        {"id": "s03", "action": "key", "combo": "enter"},
+        {"id": "s09", "action": "wait", "seconds": 2},
+        {"id": "s04", "action": "click", "x": 2, "y": 2},
+    ]
+    r = client.put(f"/api/scripts/{d['id']}/detail", json=sc).json()
+    assert [s["id"] for s in r["script"]["steps"]] == ["s01", "d01", "s02", "d02", "s03"]
+
+    # 以前的宏（延迟也占 s 号）：打开时统一改过来并存回去
+    path = tmp_path / "user_data/drafts/demo/templates/comment.yaml"
+    old = Script.load(path)
+    for i, s in enumerate(old.steps, 1):
+        s.id = f"s{i:02d}"
+    old.dump(path)
+    got = client.get(f"/api/scripts/{d['id']}/detail").json()
+    assert [s["id"] for s in got["script"]["steps"]] == ["s01", "d01", "s02", "d02", "s03"]
+    assert [s.id for s in Script.load(path).steps] == ["s01", "d01", "s02", "d02", "s03"]
+
+    # 录制（带延迟）：一样的编号
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": True})
+    rec = client.post("/api/record/stop").json()
+    ids = [s["id"] for s in rec["script"]["steps"]]
+    acts = [s["action"] for s in rec["script"]["steps"]]
+    assert [i for i, a in zip(ids, acts) if a == "wait"] == [f"d{k:02d}" for k in range(1, acts.count("wait") + 1)]
+    assert [i for i, a in zip(ids, acts) if a != "wait"] == [f"s{k:02d}" for k in range(1, len(acts) - acts.count("wait") + 1)]
+    if rec["auto_send"]:
+        assert rec["auto_send"] in ids
+
+
+def test_rerecording_reuses_matching_page_and_drops_unused_ones(client, tmp_path):
+    """重新录一遍（替换）：同一个窗口里「页面1」还对得上就沿用，不再多出一个几乎一样的「页面2」；
+    没有步骤再用的页面清出去（画面上不显示），锚点图留着：撤销回来的步骤用到它就放回来。"""
+    first = _record_two_windows(client)
+    assert first["auto_anchor"]["pages"] == ["页面1"]
+    sid = first["id"]
+    lib = tmp_path / "user_data/drafts/demo/templates"
+    # 再加一个谁都不用的页面
+    client.post(f"/api/scripts/{sid}/capture")
+    client.post(f"/api/scripts/{sid}/anchors", json={"page": "旧页面", "x": 50, "y": 40, "w": 40, "h": 30})
+    old_img = lib / "comment.anchors/旧页面_1.png"
+    assert old_img.exists()
+
+    client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+    again = client.post("/api/record/stop").json()
+    assert again["auto_anchor"]["reused"] == ["页面1"]
+    assert set(again["pages"]) == {"页面1"}
+    assert again["dropped_pages"] == ["旧页面"] and old_img.exists()
+    assert {s.get("expected_page") for s in again["script"]["steps"] if s["action"] == "type"} == {"页面1"}
+
+    # Ctrl+Z：界面写回的旧步骤用到「旧页面」，它自动回到页面列表
+    old = again["script"]
+    next(s for s in old["steps"] if s["action"] == "type")["expected_page"] = "旧页面"
+    back = client.put(f"/api/scripts/{sid}/detail", json=old).json()
+    assert "旧页面" in back["pages"] and not any("还没有锚点" in p["message"] for p in back["problems"])
+
+
+def test_old_unused_images_are_cleaned_up_after_a_few_days(client, tmp_path):
+    """没人引用、而且放了好几天的旧图（重新录制留下的 s01-2.png 之类、清出去很久的页面）启动时删掉；
+    还在用的、刚产生的（撤销还要用）不动。"""
+    import time as _time
+
+    from cyber_worker.studio.state import GARBAGE_AGE, collect_garbage
+
+    r = _record_two_windows(client)
+    sid = r["id"]
+    st = client.app.state.studio
+    path = st.script_path(sid)
+    stale = path.parent / "comment.shots/s01-9.png"
+    stale.write_bytes((path.parent / r["script"]["steps"][0]["shot"]).read_bytes())
+    assert collect_garbage(path) == 0  # 刚产生的：撤销可能还要用
+    later = _time.time() + GARBAGE_AGE + 60
+    assert collect_garbage(path, now=later) == 1 and not stale.exists()
+    d = client.get(f"/api/scripts/{sid}/detail").json()
+    assert all(client.get(s["url"]).status_code == 200 for s in d["shots"].values())  # 在用的都还在
+    assert client.get(d["frames"]["reference"]["main"]["url"]).status_code == 200
+
+
+def test_only_local_pages_can_talk_to_studio(client):
+    """别的网页（带别的 Origin）、DNS 重绑定（Host 是别的域名）都被拒绝；本机页面照常。"""
+    from starlette.websockets import WebSocketDisconnect
+
+    assert client.get("/api/status").status_code == 200
+    assert client.post("/api/panic", headers={"Origin": "http://127.0.0.1:9999"}).status_code == 200
+    assert client.post("/api/panic", headers={"Origin": "http://localhost:9999"}).status_code == 200
+    assert client.post("/api/panic", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert client.post("/api/panic", headers={"Origin": "null"}).status_code == 403
+    assert client.get("/api/scripts", headers={"Host": "evil.example:9999"}).status_code == 403
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(WS, headers={"Origin": "https://evil.example"}):
+            pass
+    with client.websocket_connect(WS, headers={"Origin": "http://127.0.0.1:9999"}):
+        pass

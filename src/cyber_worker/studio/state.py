@@ -43,6 +43,10 @@ def safe_stem(name: str) -> str:
     return stem[:60] or "macro"
 
 
+# 「文档名 - 程序名」这类标题：前半截跟着打开的文件、网页变，按它认窗口以后会对不上
+_CHANGING_TITLE = re.compile(r" [-–—|] ")
+
+
 def window_json(w, shared_apps: set[str]) -> dict:
     """窗口 → 前端需要的一切，包括替用户想好的宏名和用来认窗口的标题。"""
     title = stable_title(w.title)
@@ -52,8 +56,9 @@ def window_json(w, shared_apps: set[str]) -> dict:
         "minimized": getattr(w, "minimized", False),
         "platform": platform_slug(w.app),
         "shared": shared,
-        # 同一程序开着多个窗口时才需要按标题认
-        "match_title": title if shared and title else None,
+        # 按标题认窗口：标题固定（「QQ」「AIGC研究社」）就记下来，以后同一个程序再开别的窗口也认得出主窗口。
+        # 带文件名、网页名这种会变的标题（「a.txt - 记事本」）只在同时开着好几个窗口时才不得不用
+        "match_title": title if title and (shared or not _CHANGING_TITLE.search(title)) else None,
         "suggested_name": title if title and title.lower() != w.app.lower() else w.app,
     }
 
@@ -197,6 +202,18 @@ class Studio:
     def load(self, script_id: str) -> Script:
         return Script.load(self.script_path(script_id))
 
+    def collect_garbage(self, now: float | None = None) -> int:
+        """所有宏（含草稿）各清一遍没人用的旧图，返回删了几个文件。studio 启动时调用。"""
+        removed = 0
+        for root in (self.drafts, self.root):
+            for p in root.glob("*/templates/*.yaml"):
+                if not p.name.endswith(".pages.yaml"):
+                    try:
+                        removed += collect_garbage(p, now=now)
+                    except Exception:  # noqa: BLE001 —— 一个宏读不出来不影响启动和别的宏
+                        continue
+        return removed
+
     def set_latest(self, script_id: str, key: str | None, img, scale: float) -> None:
         """记下某个窗口的「最新截图」：每个窗口各一张，截别的窗口不会把它覆盖掉。"""
         key = key or MAIN
@@ -246,12 +263,17 @@ class Studio:
     def file_url(self, path: Path | None) -> str | None:
         if path is None or not path.exists():
             return None
-        rel = path.resolve().relative_to(self.user_data).as_posix()
+        try:
+            rel = path.resolve().relative_to(self.user_data).as_posix()
+        except ValueError:  # 不在 user_data 里（数据目录搬过家）：这一张不显示，别让整个页面报错
+            return None
         return f"/api/file?path={quote(rel)}&v={path.stat().st_mtime_ns}"
 
     def describe(self, script_id: str) -> dict:
         """前端需要的一切：脚本、页面锚点、参考图、问题列表。"""
         script = self.load(script_id)
+        if script.renumber():  # 以前的宏延迟也占「步」号：打开时统一改成 动作 s01…、延迟 d01…
+            script.dump(self.script_path(script_id))
         book = PageBook.load(script.pages_path) if script.pages_path else PageBook()
         pages = {
             name: [
@@ -263,7 +285,7 @@ class Studio:
         # 画面：每个窗口各有参考图和最新截图，键是窗口键（主窗口 = "main"）
         refs = {}
         for key, win in [(MAIN, script.window), *script.windows.items()]:
-            ref = script.reference_for(key)
+            ref = script.shown_reference(key)
             if ref is not None and ref.exists():
                 refs[key] = {"url": self.file_url(ref), "scale": win.scale}
         latest = {key: {"url": self.file_url(f.path), "scale": f.scale}
@@ -297,10 +319,48 @@ def _own_files(path: Path, script: Script) -> tuple[Path | None, Path | None, Pa
     return ref, pages, anchors
 
 
+GARBAGE_AGE = 3 * 24 * 3600  # 秒：没人用的旧图过了这么久才删（期间 Ctrl+Z 还能用上）
+
+
+def collect_garbage(path: Path, *, now: float | None = None, min_age: float = GARBAGE_AGE) -> int:
+    """删掉这个宏目录里没有任何地方引用、而且很久没动过的图片：重新录制、替换录制画面时为了能撤销留下的旧图
+    （s01-2.png、main-3.png…），以及录制清出去很久的页面和它们的锚点图。刚产生的不删，撤销还要用。返回删了几个文件。"""
+    import time
+
+    now = time.time() if now is None else now
+    script = Script.load(path)
+    base = path.parent
+    refs = {script.reference, *(w.reference for w in script.windows.values()), *(s.shot for s in script.steps)}
+    refs |= {s.target.image for s in script.steps if isinstance(s, (Click, Hover)) and s.target is not None}
+    _, pages, anchors = _own_files(path, script)
+    dirs = [base / targets_dir(path), base / refs_dir(path), base / shots_dir(path)]
+    if pages is not None and pages.exists():
+        book = PageBook.load(pages)
+        old = [n for n, t in book.retired_at.items() if now - t >= min_age]
+        old += [n for n in book.retired if n not in book.retired_at]
+        for name in old:
+            book.retired.pop(name, None)
+            book.retired_at.pop(name, None)
+        if old:
+            book.dump(pages)
+        refs |= {a.image for fp in [*book.pages.values(), *book.retired.values()] for a in fp.anchors}
+        dirs.append(anchors)
+    keep = {(base / r).resolve() for r in refs if r}
+    files = [f for d in dirs if d.is_dir() for f in d.glob("*.png")]
+    files += [path.with_suffix(".png")] if path.with_suffix(".png").exists() else []
+    removed = 0
+    for f in files:
+        if f.resolve() not in keep and now - f.stat().st_mtime >= min_age:
+            f.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
 def _remove_macro_files(path: Path) -> None:
     script = Script.load(path)
     ref, pages, anchors = _own_files(path, script)
-    for f in (ref, pages):
+    # <宏名>.png 也删：参考图换过（存到 .refs/ 里）以后，它就不再是 script.reference 了
+    for f in (ref, pages, path.with_suffix(".png")):
         if f is not None:
             f.unlink(missing_ok=True)
     for d in (anchors, path.parent / targets_dir(path), path.parent / refs_dir(path), path.parent / shots_dir(path)):
@@ -326,7 +386,7 @@ def relocate_macro(src: Path, dst_dir: Path, stem: str) -> Path:
         old_dir, new_dir = anchors_dir(src), anchors_dir(dst)
         if anchors is not None and anchors.exists():
             shutil.move(anchors, dst_dir / new_dir)
-        for fp in book.pages.values():
+        for fp in [*book.pages.values(), *book.retired.values()]:
             for a in fp.anchors:
                 if a.image.startswith(old_dir + "/"):
                     a.image = new_dir + a.image[len(old_dir):]
@@ -364,6 +424,17 @@ def _display_name(path: Path) -> str:
         return path.stem
 
 
+OFF_TARGET_MARGIN = 24  # 点，差不多半个按钮
+
+
+def off_target(step: Step) -> bool:
+    """按图找的点击 / 悬停：点击位置离目标框太远。执行时找到目标后按录制时的相对位置点，会点到目标外面。"""
+    if not isinstance(step, (Click, Hover)) or not step.finds_target:
+        return False
+    t, m = step.target, OFF_TARGET_MARGIN
+    return not (t.x - m <= step.x <= t.x + t.w + m and t.y - m <= step.y <= t.y + t.h + m)
+
+
 def problems(script: Script, pages: dict[str, set[str | None]]) -> list[dict]:
     """执行前就能发现的问题；runner 遇到这些也会拒绝执行。pages：页面名 → 它的锚点截自哪些窗口（None = 主窗口）。"""
     out = []
@@ -381,6 +452,8 @@ def problems(script: Script, pages: dict[str, set[str | None]]) -> list[dict]:
             add(f"页面 {step.expected_page} 还没有锚点")
         elif step.expected_page and step.win not in pages[step.expected_page]:
             add(f"页面 {step.expected_page} 的锚点截自别的窗口，在这一步的窗口里永远对不上：换一个页面，或在这个窗口里框一个锚点")
+        if off_target(step):
+            add("点击位置不在目标图上，执行时会点到目标外面：把编号标记拖回目标框里")
         if isinstance(step, TypeText) and step.typed_with_ime:
             add(f"录制时开着中文输入法，录到的只是按键「{step.text}」：请改成实际要输入的文字")
         if isinstance(step, TypeText):

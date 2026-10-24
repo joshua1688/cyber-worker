@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 import time
 import uuid
@@ -39,6 +40,7 @@ from cyber_worker.macro.schema import (
 from cyber_worker.macro.screenshot.storage import ScreenshotStorage, read_image
 from cyber_worker.macro.vision.fingerprint import PageBook, match_page
 
+TICK = 0.1  # 长时间等待（延迟、悬停）切成这么长一段，每段之间检查急停
 WINDOW_WAIT = 6.0  # 换到别的窗口时，最多等它出现这么久（秒）
 PAGE_WAIT = 5.0  # 输入 / 发送前页面还没出现时，最多等这么久（秒）
 POLL = 0.3  # 等页面、等目标时多久重新截一次图
@@ -61,6 +63,9 @@ class Gate:
 
     def check(self) -> None:
         """动作内部频繁调用：急停抛 Cancelled，你开始用电脑抛 UserInterrupted。"""
+
+    def check_cancel(self) -> None:
+        """只查急停（延迟期间用：你动一下鼠标不该让整次运行中止，下一步之前自然会暂停等你）。"""
 
 
 class RunStatus(str, Enum):
@@ -128,7 +133,7 @@ class Runner:
             return RunResult(run_id, RunStatus.FAILED, 0, reason)
 
         try:
-            geo = self.io.calibrate(script.window)
+            geo = self.io.calibrate(script.window, avoid=script.other_titles(MAIN))
         except CalibrationError as e:
             log("-", "calibrate", StepStatus.FAILED, detail=str(e))
             return RunResult(run_id, RunStatus.FAILED, 0, f"窗口校准失败：{e}")
@@ -143,7 +148,8 @@ class Runner:
                 if not isinstance(step, Wait) and (key != current or paused):
                     # 换窗口（或者你刚用过电脑，窗口可能被挪了）：把这一步的窗口调到前台、校准尺寸。
                     # 主窗口以外的窗口常常是上一步才打开的（比如双击会话弹出的聊天窗口），给它一点时间出现
-                    geo = self._calibrate(script.window_for(key), gate, wait=0 if key == MAIN else WINDOW_WAIT)
+                    geo = self._calibrate(script.window_for(key), gate, wait=0 if key == MAIN else WINDOW_WAIT,
+                                          avoid=script.other_titles(key))
                     current = key
 
                 if isinstance(step, TypeText) and step.typed_with_ime:
@@ -198,9 +204,8 @@ class Runner:
                     log(step.id, step.action, StepStatus.OK)
                 else:
                     self.sleep(step.delay_after)
-                    shot = self.storage.save(self.io.capture(geo), at=self.now(),
-                                             step_id=step.id, action=step.action)
-                    log(step.id, step.action, StepStatus.OK, screenshot=str(shot),
+                    shot = self._after_shot(geo, step)
+                    log(step.id, step.action, StepStatus.OK, screenshot=shot,
                         expected_page=step.expected_page, page_score=page_score,
                         detail=_found_text(where) if where else "")
                 done += 1
@@ -217,13 +222,22 @@ class Runner:
 
         return RunResult(run_id, RunStatus.OK, done)
 
-    def _calibrate(self, window, gate: Gate, *, wait: float) -> WindowGeometry:
+    def _after_shot(self, geo: WindowGeometry, step) -> str | None:
+        """操作后截图留证。这一步本身就可能把窗口关掉（点 ✕、最小化），截不到不算失败。"""
+        try:
+            return str(self.storage.save(self.io.capture(geo), at=self.now(), step_id=step.id, action=step.action))
+        except CalibrationError:
+            return None
+
+    def _calibrate(self, window, gate: Gate, *, wait: float, avoid=()) -> WindowGeometry:
         """校准窗口；找不到时每 0.5 秒重试，最多等 wait 秒。
         悬停弹出的窗口（资料卡）只找位置：切前台、改尺寸都会让它消失。"""
         left = wait
         while True:
             try:
-                return self.io.locate_window(window) if window.popup else self.io.calibrate(window)
+                if window.popup:
+                    return self.io.locate_window(window, avoid=avoid)
+                return self.io.calibrate(window, avoid=avoid)
             except CalibrationError:
                 if left <= 0:
                     raise
@@ -303,7 +317,10 @@ class Runner:
         elif isinstance(step, Hover):
             x, y = (where.x, where.y) if where else (step.x, step.y)
             mouse.move(self.io, geo.to_screen(x, y), self.rng, self.sleep, check=gate.check)
-            self.sleep(step.seconds)  # 停住，等资料卡、菜单出来
+            effect = getattr(self.io, "effect", None)  # 执行特效（EffectsIO）：悬停没有键鼠事件，单独告诉它
+            if effect is not None:
+                effect("hover", seconds=step.seconds)
+            self._pause(step.seconds, gate.check)  # 停住，等资料卡、菜单出来；这时你一动鼠标它就没了，只能中止
         elif isinstance(step, Drag):
             mouse.drag(self.io, geo.to_screen(step.x, step.y), geo.to_screen(step.x2, step.y2),
                        step.button, self.rng, self.sleep, duration=step.duration,
@@ -326,9 +343,17 @@ class Runner:
                 mouse.move(self.io, geo.to_screen(step.x, step.y), self.rng, self.sleep, check=gate.check)
             scroll_act.scroll(self.io, step.dy, self.rng, self.sleep, dx=step.dx, check=gate.check)
         elif isinstance(step, Wait):
-            self.sleep(step.seconds)
+            self._pause(step.seconds, gate.check_cancel)
         else:  # pragma: no cover
             raise TypeError(f"未知步骤：{step!r}")
+
+
+    def _pause(self, seconds: float, check: Callable[[], None]) -> None:
+        """等 seconds 秒，切成 TICK 一段，每段之前 check()：延迟设得再长，按急停也是马上停。"""
+        n = max(1, math.ceil(seconds / TICK - 1e-9))
+        for _ in range(n if seconds > 0 else 0):
+            check()
+            self.sleep(seconds / n)
 
 
 def _found_text(where: Located) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -30,6 +31,22 @@ class WindowGeometry:
         if 0 <= wx < self.width and 0 <= wy < self.height:
             return wx, wy
         return None
+
+
+def pick_window(cands: list[tuple[object, str, float, float]], size: tuple[float, float] | None,
+                avoid: Iterable[str] = ()) -> object | None:
+    """同一个程序开着好几个窗口、宏里又没记标题时，挑出要的那个。cands：(句柄, 标题, 宽, 高)，最上层的在前。
+
+    先去掉标题是宏里其他窗口的（主窗口不是「AIGC研究社」那个聊天窗口），剩下的挑尺寸最接近录制时的；
+    只拿最上层的那个会拿错：聊天窗口在最上层时，主窗口就被当成了聊天窗口，校准时还要把它缩到主窗口的尺寸。"""
+    if not cands:
+        return None
+    avoid = [a for a in avoid if a]
+    rest = [c for c in cands if not any(a in c[1] for a in avoid)] or cands
+    if size is None or len(rest) == 1:
+        return rest[0][0]
+    w, h = size
+    return min(rest, key=lambda c: abs(c[2] - w) + abs(c[3] - h))[0]  # 一样接近时 min 取前面的（更上层的）
 
 
 class CalibrationError(RuntimeError):
@@ -88,11 +105,12 @@ class ScreenIO(Protocol):
         """提示音，不阻塞。kind：start（开始录制）/ stop（停止录制）。人在目标窗口里也能知道快捷键生效了。"""
         ...
 
-    def calibrate(self, window: Window) -> WindowGeometry:
-        """激活窗口并调整到录制时的尺寸；做不到就抛 CalibrationError。"""
+    def calibrate(self, window: Window, avoid: Iterable[str] = ()) -> WindowGeometry:
+        """激活窗口并调整到录制时的尺寸；做不到就抛 CalibrationError。
+        avoid：宏里其他窗口的标题。window 没记标题、同一个程序又开着好几个窗口时，不要拿到它们（见 pick_window）。"""
         ...
 
-    def locate_window(self, window: Window) -> WindowGeometry:
+    def locate_window(self, window: Window, avoid: Iterable[str] = ()) -> WindowGeometry:
         """只找窗口现在在哪，不激活、不改尺寸（悬停弹出的资料卡：一抢焦点就消失）；找不到抛 CalibrationError。"""
         ...
 

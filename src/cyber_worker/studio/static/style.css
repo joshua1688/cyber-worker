@@ -151,6 +151,7 @@ button, select, input, textarea { font: inherit; color: inherit; }
 }
 .icon-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .icon-btn.on { background: var(--accent-soft); color: var(--accent); }
+.icon-btn.armed, .icon-btn.armed:hover:not(:disabled) { width: auto; padding: 0 10px; background: var(--danger); color: #fff; font-size: 12px; white-space: nowrap; }
 
 .split { display: inline-flex; position: relative; }
 .split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
@@ -424,7 +425,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   font-weight: 600;
   box-shadow: var(--shadow);
 }
-.meta-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip {
   display: inline-flex;
   align-items: center;
@@ -438,21 +438,25 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   white-space: nowrap;
 }
 
+/* 三栏：步骤列表 | 画面（最宽） | 参数面板 */
 .layout {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 228px minmax(340px, 440px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(300px, 360px);
   gap: 12px;
   padding: 12px 16px 16px;
 }
-@media (max-width: 1100px) {
-  .layout { grid-template-columns: 200px minmax(300px, 1fr); }
-  .inspector { grid-column: 1 / -1; min-height: 70vh; }
+@media (max-width: 1180px) {
+  .layout { grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); grid-auto-rows: minmax(420px, 1fr); overflow: auto; }
+  .panel { grid-column: 1 / -1; }
 }
-@media (max-width: 720px) {
+@media (max-width: 760px) {
   .layout { grid-template-columns: 1fr; }
 }
+
+/* 顶部右侧：录制 / 空跑 / 执行 */
+.run-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -475,25 +479,17 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .divider { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
 .scroller { overflow: auto; min-height: 0; }
 
-/* 左：添加 */
-.palette .scroller { padding: 6px; flex: 1; }
-.palette-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px;
-  border: none;
-  border-radius: var(--radius);
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
+/* 步骤列表顶上的「＋ 添加」下拉 */
+.add-group { position: relative; }
+.add-menu { width: 260px; padding: 6px; animation: menu-in .12s ease-out; }
+.add-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 7px 8px; border: none; border-radius: 8px;
+  background: transparent; color: var(--text); text-align: left; cursor: pointer;
 }
-.palette-item:hover:not(:disabled) { background: var(--hover); }
-.palette-item:disabled { opacity: .45; cursor: not-allowed; }
-.palette-item b { display: block; font-weight: 500; font-size: 13.5px; }
-.palette-item small { display: block; color: var(--text-3); font-size: 12px; line-height: 1.35; }
-.palette-group { padding: 12px 8px 4px; font-size: 12px; color: var(--text-3); font-weight: 500; }
+.add-item:hover, .add-item:focus-visible { background: var(--hover); outline: none; }
+.add-item b { display: block; font-size: 13px; font-weight: 500; }
+.add-item small { display: block; font-size: 12px; color: var(--text-3); }
 
 .type-ico {
   width: 30px;
@@ -659,8 +655,12 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   color: var(--text);
 }
 
-/* 右：画布 + 标签页 */
-.inspector .card-head { justify-content: space-between; }
+/* 中：画面，撑满整栏 */
+.stage-card .card-head { flex-wrap: nowrap; }
+.stage-card .card-head > .seg { flex: none; }
+.stage-card .canvas-wrap { flex: 1; min-height: 0; align-items: center; padding: 16px; background: var(--canvas-bg); border-bottom: none; }
+.stage-card #canvas { max-height: 100%; }
+.stage-card .canvas-empty { margin: auto; }
 .canvas-wrap {
   flex: none;
   padding: 12px;
@@ -680,7 +680,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   cursor: crosshair;
 }
 .canvas-empty { padding: 36px 16px; color: var(--text-3); text-align: center; font-size: 13px; }
-.coord { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text-3); min-width: 110px; text-align: right; }
+.coord { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text-3); white-space: nowrap; }
 .frame-note { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .anchor-bar {
   display: flex;
@@ -726,6 +726,27 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .fields > label { color: var(--text-2); font-size: 13px; }
 .fields .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
 .help { grid-column: 2; margin-top: -6px; font-size: 12px; color: var(--text-3); }
+/* 参数说明收进 ⓘ：鼠标停上去看 */
+.fields > label .hint { display: inline-flex; vertical-align: -2px; margin-left: 2px; color: var(--text-3); cursor: help; }
+.fields > label .hint .icon { width: 13px; height: 13px; }
+/* 不常用的参数折叠在「更多」里 */
+details.more { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--border); }
+details.more > summary {
+  display: flex; align-items: center; gap: 6px; padding: 4px 0; list-style: none;
+  font-size: 13px; color: var(--text-2); cursor: pointer;
+}
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary .icon { width: 14px; height: 14px; transform: rotate(-90deg); transition: transform .12s; }
+details.more[open] > summary .icon { transform: none; }
+details.more > summary:hover { color: var(--text); }
+details.more > .fields { margin-top: 10px; }
+/* 宏设置最下面：删除这个宏 */
+.danger-zone {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 24px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius);
+}
+.danger-zone b { display: block; font-size: 13px; }
+.danger-zone small { display: block; font-size: 12px; color: var(--text-3); }
 .section-title { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 .section-title + .section-title { margin-top: 20px; }
 .problem {
@@ -1053,12 +1074,15 @@ code.path {
 }
 .var-chips button:hover { border-style: solid; border-color: var(--info); background: var(--info-soft); }
 
+/* 提示从顶部正中间弹出：右上角是「录制 / 空跑 / 执行」，弹在那里会把按钮盖住 */
 .toasts {
   position: fixed;
   top: 64px;
-  right: 16px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 8px;
   z-index: 200;
   pointer-events: none;
@@ -1067,7 +1091,7 @@ code.path {
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  max-width: min(380px, calc(100vw - 32px));
+  max-width: min(460px, calc(100vw - 32px));
   padding: 10px 14px;
   border-radius: var(--radius);
   background: var(--surface);
@@ -1137,30 +1161,95 @@ code.path {
 .stat .k { font-size: 12px; color: var(--text-3); }
 .stat.alert { background: var(--warn-soft); }
 .stat.alert .v { color: var(--warn); }
+/* 「确认清空」比图标宽：浮在原位往左盖住刷新，不把这一行挤到下一行 */
+.day-tools { position: relative; display: inline-flex; gap: 4px; width: 68px; flex: none; }
+.day-tools .icon-btn.armed { position: absolute; right: 0; top: 0; }
 .filters { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.audit-list { list-style: none; margin: 0; padding: 4px; }
-.audit-row {
-  display: grid;
-  grid-template-columns: 6px 74px minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-size: 13px;
-}
-.audit-row:hover { background: var(--hover); }
-.audit-row.selected { background: var(--accent-soft); }
-.audit-row.done { opacity: .55; }
-.audit-row .bar { width: 6px; height: 28px; border-radius: 3px; background: var(--border); }
-.audit-row .bar.mid { background: var(--warn); }
-.audit-row .bar.high { background: var(--danger); }
-.audit-row .what { min-width: 0; }
-.audit-row .what span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.audit-row .what small { color: var(--text-3); }
 .viewer-shot { padding: 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); display: flex; justify-content: center; }
 .viewer-shot img { max-width: 100%; max-height: 52vh; border-radius: 6px; box-shadow: var(--shadow-sm); }
 .dl { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px 14px; font-size: 13px; }
 .dl dt { color: var(--text-3); }
 .dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.review-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 14px 16px; border-top: 1px solid var(--border); }
+.review-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 14px 16px; border-top: 1px solid var(--border); }
+
+/* 审计：一次运行一行（两行字），红色只用在小圆点上 */
+.dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.dot.ok { background: var(--accent); }
+.dot.bad { background: var(--danger); }
+.dot.warn { background: var(--warn); }
+.stat.bad .v { color: var(--danger); }
+.run-list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.run-row {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%;
+  padding: 10px 12px; border: none; border-radius: var(--radius);
+  background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer;
+}
+.run-row .dot { margin-top: 6px; }
+.run-row:hover { background: var(--hover); }
+.run-row.on { background: var(--accent-soft); }
+.run-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.run-line { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.run-line b { font-weight: 600; }
+.run-line .muted, .run-line .time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.run-line .times { padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); font-size: 11px; line-height: 18px; }
+.run-sum { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 审计右边：标题 → 步骤时间线 → 原因 → 截图 */
+.viewer-head { gap: 10px; flex-wrap: nowrap; }
+.viewer-head b { font-size: 14px; white-space: nowrap; }
+.viewer-head .muted { font-size: 12px; white-space: nowrap; }
+.viewer-head .twins { overflow: hidden; text-overflow: ellipsis; }
+.pill { flex: none; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--surface-2); color: var(--text-2); }
+.pill.bad { background: var(--danger-soft); color: var(--danger); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.ok { background: var(--accent-soft); color: var(--accent); }
+button.link { padding: 0 2px; border: none; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+button.link:hover { text-decoration: underline; }
+.timeline { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.tl {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
+  color: var(--text-2); font: 12px/1 inherit; cursor: pointer; white-space: nowrap;
+}
+.tl:hover { color: var(--text); border-color: var(--border-strong); }
+.tl.on { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.tl .rv { display: inline-flex; }
+.tl .rv .icon { width: 12px; height: 12px; }
+.tl .rv.ok { color: var(--accent); }
+.tl .rv.bad { color: var(--danger); }
+.viewer-body { flex: 1; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.reason { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--radius); background: var(--surface-2); }
+.reason b { font-size: 13px; }
+.reason span { font-size: 14px; }
+.reason small { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+.reason.bad b { color: var(--danger); }
+.reason.warn b { color: var(--warn); }
+.viewer-body .viewer-shot { padding: 0; background: none; border: none; justify-content: flex-start; }
+.no-shot { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--text-3); }
+
+/* 三栏布局的细节 */
+.steps-card { overflow: visible; }  /* 「＋ 添加」菜单要能伸出卡片 */
+.add-menu { left: 0; right: auto; }
+.step .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.step .tags .badge { height: 20px; font-size: 11px; }
+.panel .fields { grid-template-columns: 72px minmax(0, 1fr); }
+.panel .fields input[type="number"] { width: 76px; }
+
+/* 审计：复核标记 */
+.run-row.seen .run-line b, .run-row.seen .run-sum { color: var(--text-3); }
+.fix-tag { padding: 0 7px; border-radius: 999px; background: var(--danger-soft); color: var(--danger); font-size: 11px; line-height: 18px; font-weight: 600; }
+.seen-tag { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 11px; }
+.seen-tag .icon { width: 12px; height: 12px; }
+.review-actions a.btn { text-decoration: none; }
+
+/* 延迟不是「步」：不编号，窄一点、淡一点，夹在两个动作之间 */
+.step.idle { padding-top: 3px; padding-bottom: 3px; color: var(--text-3); font-size: 12.5px; }
+.step.idle .type-ico { width: 22px; height: 22px; background: none; }
+.step.idle.selected { color: var(--text); }
+
+/* 窄窗口：步骤栏变窄，「＋ 添加」只留「＋」，把位置让给「N 步 · X 秒」 */
+@media (max-width: 1180px) { #btn-add .add-text { display: none; } #btn-add { padding: 0 7px; } }
+
+/* 输入 / 按键打进哪里 */
+.focus-note { display: flex; align-items: center; gap: 6px; margin: -4px 0 12px; font-size: 12px; color: var(--info); }
+.focus-note .icon { width: 13px; height: 13px; }

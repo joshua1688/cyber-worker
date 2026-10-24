@@ -24,6 +24,7 @@ def win(monkeypatch):
     import PIL
     monkeypatch.setitem(sys.modules, "PIL.ImageGrab", FakeGrab)
     monkeypatch.setattr(PIL, "ImageGrab", FakeGrab, raising=False)
+    monkeypatch.setattr(W, "_window_gone", lambda hwnd: False)  # 假句柄当作窗口还开着
     return W, grabbed
 
 
@@ -50,3 +51,14 @@ def test_falls_back_to_screen_when_print_fails_or_size_differs(win, monkeypatch)
     assert len(grabbed) == 2
     io.capture(WindowGeometry(10, 20, 400, 300, 1.0))  # 不知道句柄
     assert len(grabbed) == 3
+
+
+def test_closed_window_is_not_captured_as_a_screen_region(win, monkeypatch):
+    """窗口已经关了：屏幕上那块是别的窗口，不能退回去截它（截下来就是一张乱图）。"""
+    W, grabbed = win
+    from cyber_worker.macro.io.base import CalibrationError, WindowGeometry
+
+    monkeypatch.setattr(W, "_window_gone", lambda hwnd: True)
+    with pytest.raises(CalibrationError):
+        W.WinScreenIO().capture(WindowGeometry(10, 20, 400, 300, 1.0, handle=123))
+    assert not grabbed

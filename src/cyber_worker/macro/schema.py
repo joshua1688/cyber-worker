@@ -181,6 +181,26 @@ class Script(BaseModel):
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
 
+    def renumber(self) -> dict[str, str]:
+        """按顺序重新编号：动作是 s01、s02…，延迟单独是 d01、d02…（延迟不算「步」）。
+        这样界面、运行日志、审计里的「第 N 步」都是同一个数。返回 旧编号 → 新编号（没变的不在里面）。"""
+        counts = {"s": 0, "d": 0}
+        new_ids = []
+        for step in self.steps:
+            kind = "d" if isinstance(step, Wait) else "s"
+            counts[kind] += 1
+            new_ids.append(f"{kind}{counts[kind]:02d}")
+        renamed = {s.id: n for s, n in zip(self.steps, new_ids) if s.id != n}
+        for step, new in zip(self.steps, new_ids):
+            step.id = new
+        return renamed
+
+    def other_titles(self, key: str | None) -> tuple[str, ...]:
+        """宏里除了 key 以外的窗口的标题：找 key 这个窗口时要避开它们。"""
+        key = None if key in (None, MAIN) else key
+        wins = [(None, self.window), *self.windows.items()]
+        return tuple(w.title for k, w in wins if k != key and w.title)
+
     def window_for(self, key: str | None) -> Window:
         if key in (None, MAIN):
             return self.window
@@ -199,6 +219,15 @@ class Script(BaseModel):
     @property
     def reference_path(self) -> Path | None:
         return None if self.reference is None else self.base_dir / self.reference
+
+    def shown_reference(self, key: str | None) -> Path | None:
+        """画布上这个窗口的「录制画面」：优先用它第一步的画面（按下鼠标那一刻截的，窗口一定在），
+        没有才用存下来的参考图。旧版本录的宏，参考图可能是窗口关掉后截到的乱图（资料卡点完就没了）。"""
+        key = None if key in (None, MAIN) else key
+        for s in self.steps:
+            if s.win == key and s.shot and (self.base_dir / s.shot).exists():
+                return self.base_dir / s.shot
+        return self.reference_for(key)
 
     def reference_for(self, key: str | None) -> Path | None:
         """某个窗口的参考截图（None / MAIN = 主窗口）。"""

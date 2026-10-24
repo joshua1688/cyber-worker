@@ -192,7 +192,8 @@ def _check_file(name: str, content: bytes) -> None:
             refs += [s.shot for s in script.steps]
             refs += [s.target.image for s in script.steps if isinstance(s, Click) and s.target]
         elif name.endswith(".pages.yaml"):
-            refs = [a.image for fp in PageBook.model_validate(raw or {}).pages.values() for a in fp.anchors]
+            book = PageBook.model_validate(raw or {})
+            refs = [a.image for fp in [*book.pages.values(), *book.retired.values()] for a in fp.anchors]
         else:
             return
     except ValidationError:

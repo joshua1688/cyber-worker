@@ -50,7 +50,7 @@ class SqliteAuditStore:
         day: date | None = None,
         script: str | None = None,
         unreviewed_only: bool = False,
-        limit: int = 1000,
+        limit: int | None = 1000,
     ) -> list[dict]:
         sql, args = "SELECT * FROM audit_log WHERE 1=1", []
         if day is not None:
@@ -61,8 +61,10 @@ class SqliteAuditStore:
             args.append(script)
         if unreviewed_only:
             sql += " AND reviewed = 0"
-        sql += " ORDER BY id DESC LIMIT ?"
-        args.append(limit)
+        sql += " ORDER BY id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            args.append(limit)
         with self._lock:
             return [dict(r) for r in self._conn.execute(sql, args).fetchall()]
 
@@ -73,6 +75,18 @@ class SqliteAuditStore:
                 (limit,),
             ).fetchall()
         return [r["d"] for r in rows]
+
+    def delete_day(self, day: date) -> int:
+        """删掉这一天的全部记录，返回删了几条。截图由调用方删（ScreenshotStorage.remove_day）。"""
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM audit_log WHERE substr(at, 1, 10) = ?", (day.isoformat(),))
+        return cur.rowcount
+
+    def delete_before(self, day: date) -> int:
+        """删掉早于这一天的记录（保留期过了），返回删了几条。"""
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM audit_log WHERE substr(at, 1, 10) < ?", (day.isoformat(),))
+        return cur.rowcount
 
     def mark(self, entry_id: int, reviewed: int) -> bool:
         if reviewed not in (UNREVIEWED, LOOKS_RIGHT, HAS_PROBLEM):

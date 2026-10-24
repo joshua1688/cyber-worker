@@ -35,6 +35,11 @@ class PageFingerprint(BaseModel):
 
 class PageBook(BaseModel):
     pages: dict[str, PageFingerprint] = {}
+    # 没有步骤再用的页面：重新录制时从 pages 里清出来（画面上不再显示、核对时不用），锚点图还留着——
+    # 撤销录制回来的步骤用到它时放回 pages（anchors.restore_pages）。retired_at：清出来的时间（秒），
+    # studio 启动时过了很久的才真正删掉（state.collect_garbage）
+    retired: dict[str, PageFingerprint] = {}
+    retired_at: dict[str, float] = {}
 
     _base: Path = PrivateAttr(default_factory=Path.cwd)
     _cache: dict[str, np.ndarray] = PrivateAttr(default_factory=dict)

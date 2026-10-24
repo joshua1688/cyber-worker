@@ -155,6 +155,27 @@ def test_panic_is_audited_and_propagates(env):
     assert audit.entries[-1].status is StepStatus.CANCELLED
 
 
+def test_panic_stops_a_long_delay_right_away(tmp_path):
+    """延迟 30 秒：中途按急停马上停，不用等完；你动一下鼠标不会让延迟中止（下一步之前自然会暂停等你）。"""
+    io = FakeIO(lambda: screen_with(pattern()))
+    slept = []
+    runner = Runner(io, ScreenshotStorage(tmp_path / "shots"), MemoryAudit(), rng=random.Random(0),
+                    sleep=slept.append)
+    s = script(variables=[], steps=[{"id": "d01", "action": "wait", "seconds": 30}])
+
+    class PanicAfter(Gate):
+        def check(self):
+            raise UserInterrupted()  # 延迟期间不看这个
+
+        def check_cancel(self):
+            if sum(slept) >= 1.0:
+                raise Cancelled()
+
+    with pytest.raises(Cancelled):
+        runner.run(s, gate=PanicAfter())
+    assert 1.0 <= sum(slept) < 1.2
+
+
 def test_user_input_mid_step_aborts_without_sending(env):
     io, audit, runner, book = env
     calls = {"n": 0}

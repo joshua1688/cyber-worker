@@ -54,6 +54,8 @@ def add_anchor(
     script = ensure_pages(script_path)
     pages_path = script.pages_path
     book = PageBook.load(pages_path)
+    book.retired.pop(page, None)  # 同名的旧页面（录制时清出去的）就此作废，免得撤销时把它放回来顶掉这个
+    book.retired_at.pop(page, None)
     fp = book.pages.setdefault(page, PageFingerprint(anchors=[]))
     folder = anchors_dir(script_path) if script.pages == default_pages_ref(script_path) else "anchors"
     n = len(fp.anchors) + 1
@@ -100,6 +102,58 @@ def save_reference(script_path: Path, script: Script, key: str | None, img: np.n
 def shots_dir(script_path: Path) -> str:
     """每一步录制时的窗口画面，放在宏文件旁边的 <宏名>.shots/<步骤编号>.png。"""
     return f"{script_path.stem}.shots"
+
+
+def replace_frame(script_path: Path, script: Script, key: str | None, img: np.ndarray,
+                  step_id: str | None = None) -> list[str]:
+    """把画布上的「录制画面」换成 img（调用方负责 dump）：给了 step_id 换这一步的画面，否则换这个窗口显示的那张
+    （Script.shown_reference：它第一步的画面，没有就是参考图）。和它共用同一张图的步骤一起换。
+    存成新文件、旧图不删，界面上撤销能换回来。返回换了画面的步骤编号（换的是参考图就是空列表）。"""
+    key = None if key in (None, MAIN) else key
+    if step_id is not None:
+        step = next((s for s in script.steps if s.id == step_id), None)
+        if step is None or not step.shot:
+            raise ValueError("这一步没有录制时的画面")
+        old = step.shot
+    else:
+        shown = script.shown_reference(key)
+        old = shown.relative_to(script.base_dir).as_posix() if shown is not None else None
+    sharing = [s for s in script.steps if old and s.shot == old]
+    if sharing:
+        stem = re.sub(r"-\d+$", "", Path(old).stem)  # s01-2 → s01
+        base = f"{shots_dir(script_path)}/{stem}"
+    elif old is None or not (script.base_dir / old).exists():
+        save_reference(script_path, script, key, img)  # 还没有参考图：直接存成参考图
+        return []
+    else:
+        base = f"{refs_dir(script_path)}/{key or MAIN}"
+    rel, n = f"{base}-2.png", 3
+    while (script_path.parent / rel).exists():
+        rel, n = f"{base}-{n}.png", n + 1
+    write_image(script_path.parent / rel, img)
+    for s in sharing:
+        s.shot = rel
+    if not sharing:
+        if key is None:
+            script.reference = rel
+        else:
+            script.window_for(key).reference = rel
+    return [s.id for s in sharing]
+
+
+def restore_pages(script: Script) -> list[str]:
+    """步骤用到的页面要是被录制清出去了（retired），放回来：撤销重新录制后旧步骤还能核对页面。返回放回的页面名。"""
+    if script.pages_path is None or not script.pages_path.exists():
+        return []
+    used = {s.expected_page for s in script.steps} | {getattr(s, "page", None) for s in script.steps}
+    book = PageBook.load(script.pages_path)
+    back = [name for name in book.retired if name in used and name not in book.pages]
+    for name in back:
+        book.pages[name] = book.retired.pop(name)
+        book.retired_at.pop(name, None)
+    if back:
+        book.dump(script.pages_path)
+    return back
 
 
 def save_shot(script_path: Path, step_id: str, img: np.ndarray, *, keep_existing: bool = False) -> str:

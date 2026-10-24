@@ -17,6 +17,8 @@ class ExecutorConfig(BaseModel):
     # Windows 上 cmd 是 Win 键，带 Win 的组合常被系统占用，换一组
     panic_hotkey: str = "ctrl+alt+cmd+." if sys.platform == "darwin" else "ctrl+alt+shift+."
     dry_run: bool = False
+    show_effects: bool = True  # 执行时在屏幕上画出点击、双击、拖动、滚动、按键等操作（目前只有 Windows）
+    play_sounds: bool = True  # 执行时给操作配上音效：鼠标点击声、青轴打字声、回车（目前只有 Windows）
 
 
 class StudioConfig(BaseModel):
@@ -31,6 +33,10 @@ class StudioConfig(BaseModel):
     pack_screenshots: bool = True  # 导出平台包时带上录制时的窗口截图（参考图、每一步的画面）
 
 
+class AuditConfig(BaseModel):
+    keep_days: int = 30  # 审计记录和截图保留多少天，更早的在启动时自动删掉
+
+
 class PathsConfig(BaseModel):
     user_data: Path = Path("user_data")
 
@@ -38,6 +44,7 @@ class PathsConfig(BaseModel):
 class Config(BaseModel, extra="allow"):
     executor: ExecutorConfig = ExecutorConfig()
     studio: StudioConfig = StudioConfig()
+    audit: AuditConfig = AuditConfig()
     paths: PathsConfig = PathsConfig()
 
     @classmethod

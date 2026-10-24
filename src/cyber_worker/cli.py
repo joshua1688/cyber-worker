@@ -85,7 +85,7 @@ def cmd_anchor(args) -> int:
 
     script = Script.load(args.script)
     app = build(args.config)
-    geo = app.io.calibrate(script.window)
+    geo = app.io.calibrate(script.window, avoid=script.other_titles(None))
     anchor = add_anchor(Path(args.script), args.page, args.region, app.io.capture(geo), geo.scale)
     print(f"已为页面 {args.page} 添加锚点 {anchor.image}")
     return 0
@@ -103,7 +103,7 @@ def cmd_run(args) -> int:
 
     app = build(args.config)
     dry_run = args.dry_run or app.config.executor.dry_run
-    app.storage.cleanup(today=date.today())
+    app.prune_audit(date.today())
     app.hotkeys.apply({"panic": app.config.executor.panic_hotkey},
                       {"panic": lambda: print(f"\n急停：取消了 {app.executor.panic()} 个排队任务")})
     hotkey = app.hotkeys.effective("panic")

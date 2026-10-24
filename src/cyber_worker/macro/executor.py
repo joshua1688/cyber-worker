@@ -31,6 +31,9 @@ class _JobGate(Gate):
         if self._ex._generation != self._gen:
             raise Cancelled()
 
+    def check_cancel(self) -> None:
+        self._check_cancel()
+
     def check(self) -> None:
         self._check_cancel()
         if self._ex._user_active(self._idle_sec):

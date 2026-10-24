@@ -4,16 +4,29 @@ from __future__ import annotations
 
 import time
 
-from cyber_worker.macro.recorder import is_studio_title
-
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
-from cyber_worker.macro.anchors import add_anchor, remove_anchor, save_reference, save_target
+from cyber_worker.macro.anchors import (
+    add_anchor,
+    remove_anchor,
+    replace_frame,
+    restore_pages,
+    save_reference,
+    save_target,
+)
 from cyber_worker.macro.io.base import CalibrationError
+from cyber_worker.macro.recorder import is_studio_title
 from cyber_worker.macro.schema import MAIN, Click, Hover, Script, Window
 from cyber_worker.macro.screenshot.storage import read_image, write_image
-from cyber_worker.studio.state import Studio, check_name, platform_slug, renamed, safe_stem, window_json
+from cyber_worker.studio.state import (
+    Studio,
+    check_name,
+    platform_slug,
+    renamed,
+    safe_stem,
+    window_json,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -142,7 +155,9 @@ async def save_script(script_id: str, request: Request):
         script = Script.model_validate(await request.json())
     except ValidationError as e:
         raise HTTPException(422, [{"loc": err["loc"], "msg": err["msg"]} for err in e.errors()]) from e
+    script.renumber()  # 增删、挪动步骤后编号跟着位置走：界面、日志、审计里的「第 N 步」一致
     script.dump(path)
+    restore_pages(Script.load(path))  # 撤销重新录制：旧步骤用到的页面被清出去了，放回来
     return st.describe(script_id)
 
 
@@ -165,9 +180,11 @@ def commit_script(script_id: str, request: Request):
 
 
 @router.post("/scripts/{script_id:path}/capture")
-def capture(script_id: str, request: Request, win: str | None = None):
+def capture(script_id: str, request: Request, win: str | None = None, replace: bool = False,
+            step_id: str | None = None):
     """校准窗口并截取当前画面，用来对照坐标、框选锚点。win：宏里的哪个窗口（默认主窗口）。
-    这个窗口还没有参考图（比如以前录的宏，聊天窗口没存过）就顺便存成它的参考图。"""
+    这个窗口还没有参考图（比如以前录的宏，聊天窗口没存过）就顺便存成它的参考图。
+    replace：用这一张换掉画布上的「录制画面」（录错了的时候）：给了 step_id 换那一步的，否则换这个窗口显示的那张。"""
     st = studio(request)
     path = st.script_path(script_id)
     script = Script.load(path)
@@ -175,16 +192,27 @@ def capture(script_id: str, request: Request, win: str | None = None):
     if st.app.executor.busy or st.recording:
         raise HTTPException(409, "正在执行或录制，稍后再试")
     try:
-        geo = st.app.io.calibrate(script.window_for(win))
+        geo = st.app.io.calibrate(script.window_for(win), avoid=script.other_titles(win))
     except (CalibrationError, ValueError) as e:
         raise HTTPException(400, f"窗口校准失败：{e}") from e
     img = st.app.io.capture(geo)
     st.set_latest(script_id, win, img, geo.scale)
-    ref = script.reference_for(win)
-    if ref is None or not ref.exists():
-        save_reference(path, script, win, img)
+    replaced = None
+    if replace:
+        try:
+            replaced = replace_frame(path, script, win, img, step_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
         script.dump(path)
-    return st.describe(script_id)
+    else:
+        ref = script.reference_for(win)
+        if ref is None or not ref.exists():
+            save_reference(path, script, win, img)
+            script.dump(path)
+    out = st.describe(script_id)
+    if replaced is not None:
+        out["replaced_steps"] = replaced
+    return out
 
 
 def _frame(st, script_id: str, script: Script, which: str, win: str | None, step_id: str | None = None):
@@ -200,7 +228,7 @@ def _frame(st, script_id: str, script: Script, which: str, win: str | None, step
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     if which == "reference":
-        ref = script.reference_for(win)
+        ref = script.shown_reference(win)
         if ref is None or not ref.exists():
             raise HTTPException(400, "这个窗口还没有参考图：打开它后点「截取当前窗口」")
         return read_image(ref), window.scale, win

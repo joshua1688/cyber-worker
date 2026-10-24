@@ -366,6 +366,10 @@ cyber-worker/
 │   │       ├── base.py             # ScreenIO / ActivityMonitor 接口（测试用假实现）
 │   │       ├── pynput_input.py     # 键鼠操作、真实输入监听、全局热键（两个系统共用）
 │   │       ├── hotkeys.py          # 全局快捷键管理：冲突检查、被占用时自动换备选、改键立即生效
+│   │       ├── effects.py          # 执行特效：点击 / 双击 / 长按 / 拖动 / 滚动 / 按键在屏幕上画出来
+│   │       ├── win_overlay.py      # 特效的 Windows 画法（点不到、截不到的透明置顶小窗口）
+│   │       ├── sounds.py           # 执行音效：鼠标点击、青轴打字（录音素材在 sound_assets/）、回车，混音（几个声音能叠着响）
+│   │       ├── win_sound.py        # 音效的 Windows 播放（waveOut 流式送声卡，安静了就关）
 │   │       ├── macos.py            # screencapture + osascript（窗口校准、截图）
 │   │       └── windows.py          # Win32 + Pillow（窗口校准、截图、绕过输入法打字、系统热键注册）
 │   │
@@ -477,7 +481,7 @@ cyber-worker/
     │   │   └── new_moments.png     # 内容区顶部
     │   └── douyin/
     │       └── new_message.png
-    ├── screenshots/                # 运行时截图（每步操作后一张，30 天清理）
+    ├── screenshots/                # 运行时截图（每步操作后一张，默认保留 30 天，可在设置里改）
     │   └── 2026-10-22/             # 按日期分层
     │       ├── 091203_s03_like.png          # 点赞：操作后
     │       ├── 092015_s04_scroll.png        # 滚动：操作后

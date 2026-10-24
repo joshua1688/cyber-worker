@@ -47,7 +47,6 @@ const TYPE = {
 const stage = new Stage($("#canvas"), {
   onMove: (i, x, y, which) =>
     mutate((sc) => Object.assign(sc.steps[i], which === "end" ? { x2: x, y2: y } : { x, y })),
-  onPlace: (x, y) => mutate((sc) => Object.assign(sc.steps[S.selected], { x, y })),
   onSelect: (i) => select(i),
   onRegion: (r) => {
     if (S.regionFor === "target") return saveTarget(r);
@@ -82,7 +81,13 @@ async function loadList(selectId) {
 }
 
 async function open(id) {
-  const d = await api("GET", `/api/scripts/${id}/detail`);
+  let d = await api("GET", `/api/scripts/${id}/detail`);
+  if (d.draft) {
+    // 不再有「未保存」的草稿：新建的宏一打开就存进宏库，之后的修改自动保存
+    d = await api("POST", `/api/scripts/${id}/commit`);
+    id = d.id;
+    S.list = await api("GET", "/api/scripts");
+  }
   S.id = id;
   S.undo = [];
   S.redo = [];
@@ -175,12 +180,17 @@ async function showFrame() {
   });
   renderWinSeg();
   $("#canvas-empty").innerHTML = idle ? `延迟：等 ${escapeHtml(String(sel.seconds))} 秒，不操作窗口，没有画面`
-    : S.win ? `「${escapeHtml(windowLabel(S.win))}」还没有画面<br>打开这个窗口，再点右上角「截取当前窗口」`
-    : "还没有画面<br>点右上角「截取当前窗口」";
+    : S.win ? `「${escapeHtml(windowLabel(S.win))}」还没有画面<br>打开这个窗口，再点右上角的相机「截取当前窗口」`
+    : "还没有画面<br>点右上角的相机「截取当前窗口」";
   const shot = S.frame === "reference" && f && f === stepShot();
-  $("#frame-note").textContent = shot ? `第 ${S.selected + 1} 步录制时的画面`
+  $("#frame-note").textContent = shot ? `第 ${actionNo(S.script.steps, S.selected)} 步录制时的画面`
     : sel?.action === "wait_page" && f ? `等待页面「${sel.page}」：高亮的是它的锚点`
-    : S.frame === "reference" && f ? `${windowLabel(S.win)}的参考图` : "";
+    : S.frame === "reference" && f ? `${windowLabel(S.win)}录制时的画面` : "";
+  const cap = S.frame === "reference" && f
+    ? (shot ? "用现在的窗口换掉这一步的录制画面（录错了时用；可撤销）" : "用现在的窗口换掉这张录制画面（录错了时用；可撤销）")
+    : "截取当前窗口（把目标窗口调到宏的尺寸再截）";
+  $("#btn-capture").title = cap;
+  $("#btn-capture").setAttribute("aria-label", cap);
   $("#canvas-empty").hidden = !!f;
   $("#canvas").hidden = !f;
   if (f?.url !== S.shownUrl) {  // 同一张图不重新加载（连着几步共用一张画面时）
@@ -200,6 +210,7 @@ function mutate(fn) {
   fn(S.script);
   S.dirty = true;
   render();
+  scheduleSave();
 }
 
 function undo() {
@@ -221,6 +232,7 @@ function afterHistory() {
   S.checked.clear();
   if (S.selected >= S.script.steps.length) S.selected = S.script.steps.length - 1;
   render();
+  scheduleSave();
 }
 
 function nextId(steps) {
@@ -283,10 +295,8 @@ function select(i) {
   // 画面跟着切到这一步所在的窗口；等待页面切到那个页面锚点所在的窗口；延迟不操作窗口，不切
   if (step?.action === "wait_page") setWin(pageWindow(step.page, step.win), false);
   else if (step && step.action !== "wait") setWin(step.win, false);
-  if (S.frame !== "shot") {
-    if (step && stepShot()) S.frame = "reference"; // 这一步有录制时的画面就显示它：一眼看出在哪操作的
-    showFrame();
-  }
+  // 画面类型（录制画面 / 当前画面）保持用户选的：在「当前画面」上逐步对照现在的窗口时不会被切走
+  if (S.frame !== "shot") showFrame();
   render();
   $(`#step-list li[data-i="${i}"]`)?.scrollIntoView({ block: "nearest" });
 }
@@ -296,36 +306,34 @@ function setTab(tab) {
   renderTabs();
 }
 
-// 把页面上的修改写回（草稿还是草稿）
+// 自动保存：改完停一下就写回，没有「保存」按钮。撤销 / 重做照样在页面里
+let saveTimer = null;
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => ensureSaved(), 600);
+}
+
+// 把页面上的修改写回。写的这段时间里又改了：页面上的留着，稍后再存一次
 async function writeBack() {
+  const sent = JSON.stringify(S.script);
   const d = await attempt(() => api("PUT", `/api/scripts/${S.id}/detail`, S.script));
-  if (d) {
+  if (!d) return d;
+  if (JSON.stringify(S.script) === sent) {
     const keep = S.selected;
     applyDetail(d);
     S.selected = keep < d.script.steps.length ? keep : -1;
-    render();
+    showFrame(); // 撤销换回了原来的录制画面时，画布跟着换（同一张图不会重新加载）
+  } else {
+    S.detail = { ...d, script: S.detail.script };
+    scheduleSave();
   }
+  render();
   return d;
 }
 
-// 「保存」按钮：写回修改；如果是新建的草稿，再正式存进宏库
-async function save() {
-  if (!S.script) return;
-  if (S.dirty && !(await writeBack())) return;
-  if (!S.detail?.draft) {
-    toast("已保存");
-    return S.detail;
-  }
-  const d = await attempt(() => api("POST", `/api/scripts/${S.id}/commit`));
-  if (!d) return;
-  try { localStorage.setItem("cw.script", d.id); } catch {}
-  await loadList(d.id);
-  toast(`已保存「${d.script.name}」`);
-  return d;
-}
-
-// 需要服务端读脚本的操作（录制、截图、锚点、执行）之前，先把修改写回（不会把草稿存进宏库）
+// 需要服务端读脚本的操作（录制、截图、锚点、执行、切换宏）之前，先把还没写回的修改写回
 async function ensureSaved() {
+  clearTimeout(saveTimer);
   if (!S.dirty) return true;
   return !!(await writeBack());
 }
@@ -349,6 +357,7 @@ function localProblems() {
     if (s.action === "wait_page" && !s.page) add("选一个要等的页面");
     else if (s.action === "wait_page" && !pages.has(s.page)) add(`页面「${s.page}」还没有锚点`);
     else if (s.action === "wait_page" && !pageWins(s.page).has(s.win || null)) add(otherWin(s.page));
+    if (offTarget(s)) add(OFF_TARGET);
     if (s.action === "type") {
       for (const v of varsIn(s.text)) {
         if (!S.script.variables.includes(v)) add(`{${v}} 没有声明为变量，会按原文输入`);
@@ -358,6 +367,15 @@ function localProblems() {
   return out;
 }
 
+// 按图找的点击 / 悬停：点击位置离目标框太远，执行时会点到目标外面（规则同服务端 state.off_target）
+const OFF_TARGET = "点击位置不在目标图上，执行时会点到目标外面：把编号标记拖回目标框里";
+function offTarget(s) {
+  const t = s.target;
+  if (!t || s.use_target === false || (s.action !== "click" && s.action !== "hover")) return false;
+  const m = 24;  // 差不多半个按钮
+  return s.x < t.x - m || s.x > t.x + t.w + m || s.y < t.y - m || s.y > t.y + t.h + m;
+}
+
 // ---------------- 渲染 ----------------
 
 function render() {
@@ -365,26 +383,17 @@ function render() {
   if (S.id && S.dirty !== S.reportedDirty) reportCurrent();
   renderWinSeg(); // 增删步骤后用到的窗口可能变了
   const busy = S.recording;
-  $$("[data-add]").forEach((el) => (el.disabled = !has || busy));
+  $("#btn-add").disabled = !has || busy;
   $("#btn-record").disabled = picking;
   $("#btn-record-menu").disabled = !has || busy;
-  $("#btn-save").disabled = !has || busy;
   $("#btn-capture").disabled = $("#btn-anchor-mode").disabled = !has || busy;
   $("#btn-undo").disabled = !S.undo.length || busy;
   $("#btn-redo").disabled = !S.redo.length || busy;
   $("#btn-delete").disabled = !has || (!S.checked.size && S.selected < 0) || busy;
   $("#btn-dry").disabled = $("#btn-run").disabled = !has || busy || !!S.running;
   renderRunBusy();
-  const unsaved = S.dirty || !!S.detail?.draft;
-  $("#btn-save span").textContent = unsaved ? "保存 •" : "保存";
-  $("#btn-save").classList.toggle("primary", unsaved && has);
-  $("#btn-save").title = S.detail?.draft ? "这个宏还没保存，点这里存进宏库（Ctrl / ⌘ + S）" : "保存（Ctrl / ⌘ + S）";
-  const del = $("#btn-delete-macro");
-  del.disabled = !has || S.recording;
-  if (!del.dataset.armed) del.title = S.detail?.draft ? "丢弃这个还没保存的宏" : "删除这个宏";
   $("#steps-card").classList.toggle("has-checked", S.checked.size > 0);
   renderPickerTrigger();
-  renderMeta();
   renderSteps();
   renderTotal();
   renderTabs();
@@ -405,28 +414,21 @@ function syncStage() {
   stage.setData([...S.script.steps, ...S.recSteps], S.detail?.pages, S.selected, frameWin());
 }
 
+// [1, 2, 3, 5] → "1–3、5"
+function numRanges(nums) {
+  const out = [];
+  for (const n of nums) {
+    const last = out[out.length - 1];
+    if (last && n === last[1] + 1) last[1] = n;
+    else out.push([n, n]);
+  }
+  return out.map(([a, b]) => (a === b ? `${a}` : b === a + 1 ? `${a}、${b}` : `${a}–${b}`)).join("、");
+}
+
 function windowLabel(key) {
   if (!key) return "主窗口";
   const w = S.script?.windows?.[key];
   return w ? (w.title || w.app) : key;
-}
-
-function renderMeta() {
-  const box = $("#meta-chips");
-  if (!S.script) {
-    box.innerHTML = "";
-    return;
-  }
-  const w = S.script.window;
-  const pages = Object.keys(S.detail?.pages || {}).length;
-  box.innerHTML = [
-    `<span class="chip" title="窗口尺寸（点）">${w.width} × ${w.height}${w.scale !== 1 ? ` @${w.scale}x` : ""}</span>`,
-    ...(Object.keys(S.script.windows || {}).length
-      ? [`<span class="chip" title="${escapeHtml(Object.values(S.script.windows).map((w) => w.title || w.app).join("、"))}">${icon("window")}${Object.keys(S.script.windows).length + 1} 个窗口</span>`]
-      : []),
-    `<span class="chip" title="变量">${icon("braces")}${S.script.variables.length} 个变量</span>`,
-    `<span class="chip" title="有锚点的页面">${icon("scan")}${pages} 个页面</span>`,
-  ].join("");
 }
 
 const BUTTON_TEXT = { right: "右键", middle: "中键" };
@@ -455,28 +457,43 @@ function summary(s) {
   return s.action;
 }
 
+// 运行日志里的步骤和原因写成人话：「第 2 步」，去掉「CalibrationError: 」这类程序异常名
+// 「第 N 步 · 点击」；延迟（d01…）不算步，只写「延迟」
+const stepLabel = (id, action) => { const m = /^s(\d+)$/.exec(id); const name = TYPE[action]?.name || action; return m ? `第 ${+m[1]} 步 · ${name}` : name; };
+const cleanDetail = (t) => (t || "").replace(/^[A-Za-z_][\w.]*(Error|Exception|Interrupted|Cancelled)?:\s*/, "");
+
+// 步骤的标签（窗口、按图、发送、页面）放在摘要下面一行，不跟摘要抢宽度
+function tags(s) {
+  const t = [
+    s.win ? `<span class="badge" title="在这个窗口里操作">${icon("window")}${escapeHtml(windowLabel(s.win))}</span>` : "",
+    s.target && s.use_target !== false ? `<span class="badge find" title="按图找：界面变了也能找到它再点">${icon("image")}按图</span>` : "",
+    s.sends ? `<span class="badge send">${icon("send")}发送</span>` : "",
+    s.expected_page ? `<span class="badge page" title="执行前核对页面">${icon("scan")}${escapeHtml(s.expected_page)}</span>` : "",
+  ].join("");
+  return t ? `<span class="tags">${t}</span>` : "";
+}
+
 function renderSteps() {
   const list = $("#step-list");
   const empty = $("#steps-empty");
   const steps = S.script?.steps || [];
   const problems = localProblems();
   const marks = { ok: ["check", "ok"], skipped: ["skip", "skip"], aborted: ["x", "bad"], failed: ["x", "bad"], cancelled: ["stop", "skip"] };
+  const all = [...steps, ...S.recSteps];
   const row = (s, i, rec) => {
     const probs = problems[s.id] || [];
     const mark = marks[S.runMarks[s.id]];
     const t = TYPE[s.action] || { icon: "info", name: s.action };
-    return `<li class="step ${i === S.selected ? "selected" : ""} ${rec ? "recording" : ""}" data-i="${i}" draggable="${!rec}">
-      ${rec ? `<span style="width:15px"></span>` : `<input type="checkbox" class="check" data-check="${i}" ${S.checked.has(i) ? "checked" : ""} aria-label="勾选第 ${i + 1} 步">`}
-      <span class="num">${i + 1}</span>
+    const n = actionNo(all, i);  // 延迟不编号
+    return `<li class="step ${i === S.selected ? "selected" : ""} ${rec ? "recording" : ""} ${n ? "" : "idle"}" data-i="${i}" draggable="${!rec}">
+      ${rec ? `<span style="width:15px"></span>` : `<input type="checkbox" class="check" data-check="${i}" ${S.checked.has(i) ? "checked" : ""} aria-label="${n ? `勾选第 ${n} 步` : "勾选这个延迟"}">`}
+      <span class="num">${n ?? ""}</span>
       <span class="type-ico sm ${s.action}" title="${t.name}">${icon(t.icon)}</span>
       <span class="body">
         <span class="summary">${escapeHtml(summary(s))}</span>
         ${s.note ? `<span class="sub">${escapeHtml(s.note)}</span>` : ""}
+        ${tags(s)}
       </span>
-      ${s.win ? `<span class="badge" title="在这个窗口里操作">${icon("window")}${escapeHtml(windowLabel(s.win))}</span>` : ""}
-      ${s.target && s.use_target !== false ? `<span class="badge find" title="按图找：界面变了也能找到它再点">${icon("image")}按图</span>` : ""}
-      ${s.sends ? `<span class="badge send">${icon("send")}发送</span>` : ""}
-      ${s.expected_page ? `<span class="badge page" title="执行前核对页面">${icon("scan")}${escapeHtml(s.expected_page)}</span>` : ""}
       ${probs.length ? `<span class="badge warn" title="${escapeHtml(probs.join("\n"))}">${icon("alert")}${probs.length}</span>` : ""}
       ${mark ? `<span class="run-mark ${mark[1]}" title="${STATUS_TEXT[S.runMarks[s.id]]}">${icon(mark[0])}</span>` : ""}
       ${rec ? "" : `<span class="grip" title="拖动排序">${icon("grip")}</span>`}
@@ -500,7 +517,7 @@ function renderSteps() {
       <ol class="steps-guide">
         <li><b>1</b><span>点「开始录制」或按 ${recKbd()}，到目标窗口里像平时一样操作一遍</span></li>
         <li><b>2</b><span>再按一下 ${recKbd()} 停止：「发送」那一步和页面校验会自动设好</span></li>
-        <li><b>3</b><span>到「运行」里空跑，看每一步截图对不对</span></li>
+        <li><b>3</b><span>点上面的「空跑」，看每一步截图对不对</span></li>
         <li><b>4</b><span>没问题再执行</span></li>
       </ol>` : `
       <div class="empty-ico">${icon("layers", "lg")}</div>
@@ -518,7 +535,9 @@ function renderSteps() {
 function renderTotal() {
   const steps = S.script?.steps || [];
   const t = steps.reduce((sum, s) => sum + (s.action === "wait" ? s.seconds : s.delay_after ?? 0.5), 0);
-  $("#total").innerHTML = `${icon("clock")}${t.toFixed(1)}s · ${steps.length} 步`;
+  const n = steps.filter((s) => s.action !== "wait").length;  // 延迟不算步，时长照算
+  $("#total").textContent = `${n} 步 · ${t.toFixed(1)} 秒`;
+  $("#total").title = `${n} 个动作（延迟不算步），预计用时 ${t.toFixed(1)} 秒（含延迟和每步操作后的等待）`;
 }
 
 function renderStatus() {
@@ -534,6 +553,7 @@ function renderStatus() {
   btn.innerHTML = `<span class="rec-dot"></span><span>${S.stopping ? "保存中…" : S.recording ? "停止" : "录制"}</span>`
     + (hk ? `<kbd class="kbd-in">${escapeHtml(hk)}</kbd>` : "");
   const dk = prettyKey(S.dryHotkey);
+  $("#btn-dry").innerHTML = `${icon("flask")}<span>空跑</span>${dk ? `<kbd class="kbd-in">${escapeHtml(dk)}</kbd>` : ""}`;
   $("#btn-dry").title = `完整走一遍，但跳过「发送」${dk ? `（在任何窗口里按 ${dk} 也行）` : ""}`;
   $("#btn-run").title = "真的执行，会发送（Ctrl / ⌘ + Enter 按两次也行）";
   btn.title = S.recording
@@ -543,7 +563,6 @@ function renderStatus() {
 
 // 执行期间，按钮区换成「在等什么 / 在干什么」+ 取消，不让用户对着灰按钮猜
 function renderRunBusy() {
-  $("#run-idle").hidden = !!S.running;
   const box = $("#run-busy");
   box.hidden = !S.running;
   box.classList.toggle("running", S.running === "running");
@@ -618,8 +637,10 @@ function pageOptions(current) {
     `<option ${n === current ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
 }
 
+// 说明收进 ⓘ（鼠标停上去看），不占地方
 function field(label, html, help) {
-  return `<label>${label}</label><div class="row">${html}</div>${help ? `<span class="help">${help}</span>` : ""}`;
+  const hint = help ? ` <span class="hint" title="${escapeHtml(help)}" aria-label="${escapeHtml(help)}" role="img">${icon("info")}</span>` : "";
+  return `<label>${label}${hint}</label><div class="row">${html}</div>`;
 }
 
 function buttonSelect(button) {
@@ -653,9 +674,11 @@ function renderStepPane() {
   const t = TYPE[s.action];
   const probs = localProblems()[s.id] || [];
   let body = "";
+  const more = []; // 不常用的：收进「更多」
+
   if (s.action === "click") {
     const mode = s.hold > 0 ? "hold" : s.count === 2 ? "2" : "1";
-    body += field("位置", `x ${num("x", s.x, 0.1)} y ${num("y", s.y, 0.1)}`, "窗口内坐标（点）；也可以在画面上拖动标记，或点一下画面放到那里")
+    body += field("位置", `x ${num("x", s.x, 0.1)} y ${num("y", s.y, 0.1)}`, "窗口内坐标（点）；也可以在画面上按住编号标记拖动")
       + field("方式", `<div class="seg" data-seg="mode">
           <button type="button" data-v="1" class="${mode === "1" ? "on" : ""}">单击</button>
           <button type="button" data-v="2" class="${mode === "2" ? "on" : ""}">双击</button>
@@ -663,9 +686,8 @@ function renderStepPane() {
         ${mode === "hold" ? `${num("hold", s.hold, 0.1)}<span class="muted">秒</span>` : ""}`,
         mode === "hold" ? "按住不放的时长，比如按住说话" : "打开聊天、打开文件这类操作通常要双击")
       + locateField(s)
-      + field("按键", buttonSelect(s.button))
-      + field("同时按住", modChips(s.modifiers), "比如按住 Ctrl 多选")
       + field("发送", toggle("sends", s.sends, "这一下就是「发送」"), "空跑时会跳过这一步；必须指定所在页面");
+    more.push(["按键", buttonSelect(s.button)], ["同时按住", modChips(s.modifiers), "比如按住 Ctrl 多选"]);
   } else if (s.action === "hover") {
     body += field("位置", `x ${num("x", s.x, 0.1)} y ${num("y", s.y, 0.1)}`, "鼠标停在哪里；也可以在画面上拖动标记")
       + field("停多久", `${num("seconds", s.seconds, 0.1)}<span class="muted">秒</span>`,
@@ -674,9 +696,8 @@ function renderStepPane() {
   } else if (s.action === "drag") {
     body += field("起点", `x ${num("x", s.x, 0.1)} y ${num("y", s.y, 0.1)}`, "画面上圆点是起点、方块是终点，都可以直接拖")
       + field("终点", `x ${num("x2", s.x2, 0.1)} y ${num("y2", s.y2, 0.1)}`)
-      + field("用时", `${num("duration", s.duration, 0.1)}<span class="muted">秒</span>`)
-      + field("按键", buttonSelect(s.button))
-      + field("同时按住", modChips(s.modifiers));
+      + field("用时", `${num("duration", s.duration, 0.1)}<span class="muted">秒</span>`);
+    more.push(["按键", buttonSelect(s.button)], ["同时按住", modChips(s.modifiers)]);
   } else if (s.action === "type") {
     const vars = S.script.variables.length ? S.script.variables : ["评论内容"];
     body += field("内容", `<textarea class="input" data-f="text" rows="3" placeholder="直接写要输入的文字，或点下面插入变量">${escapeHtml(s.text)}</textarea>`)
@@ -710,15 +731,35 @@ function renderStepPane() {
       "执行时会先切到这个窗口；上一步才打开的窗口会等它出现");
   }
   if (s.action !== "wait" && s.action !== "wait_page") {
-    body += field("所在页面", `<select class="input" data-f="expected_page">${pageOptions(s.expected_page)}</select>`,
-      NEEDS_PAGE(s) ? "输入和发送必须指定：执行前核对锚点，对不上就中止" : "可选：指定后执行前会核对")
-      + field("等待", `${num("delay_after", s.delay_after ?? 0.5, 0.1)}<span class="muted">秒后截图</span>`)
-      + field("备注", `<input type="text" class="input" data-f="note" value="${escapeHtml(s.note || "")}" placeholder="可选" style="flex:1">`);
+    const page = [`<select class="input" data-f="expected_page">${pageOptions(s.expected_page)}</select>`,
+      NEEDS_PAGE(s) ? "输入和发送必须指定：执行前核对锚点，对不上就中止" : "可选：指定后执行前会核对"];
+    // 输入、发送必须核对页面，放在外面；其他步骤可选，收进「更多」
+    if (NEEDS_PAGE(s) || s.expected_page) body += field("所在页面", ...page);
+    else more.push(["所在页面", ...page]);
+    more.push(["截图等待", `${num("delay_after", s.delay_after ?? 0.5, 0.1)}<span class="muted">秒后截图</span>`,
+      "动作做完等多久再截图留证"],
+      ["备注", `<input type="text" class="input" data-f="note" value="${escapeHtml(s.note || "")}" placeholder="可选" style="flex:1">`]);
   }
   pane.innerHTML = `
-    <div class="section-title"><span class="type-ico sm ${s.action}">${icon(t.icon)}</span>第 ${S.selected + 1} 步 · ${t.name}</div>
+    <div class="section-title"><span class="type-ico sm ${s.action}">${icon(t.icon)}</span>${
+      actionNo(S.script.steps, S.selected) ? `第 ${actionNo(S.script.steps, S.selected)} 步 · ` : ""}${t.name}</div>
     ${probs.map((p) => `<div class="problem">${icon("alert")}<span>${escapeHtml(p)}</span></div>`).join("")}
-    <div class="fields">${body}</div>`;
+    ${focusNote(s, S.selected)}
+    <div class="fields">${body}</div>
+    ${more.length ? `<details class="more" ${S.moreOpen ? "open" : ""}>
+      <summary>${icon("chevron")}更多：${more.map((m) => m[0]).join("、")}</summary>
+      <div class="fields">${more.map((m) => field(...m)).join("")}</div>
+    </details>` : ""}`;
+}
+
+// 输入、按键打进哪里（画布上也标在那里）
+function focusNote(s, i) {
+  if (s.action !== "type" && s.action !== "key") return "";
+  const k = focusClick(S.script.steps, i);
+  const what = s.action === "type" ? "打进" : "发到";
+  return `<p class="focus-note">${icon("pointer")}${k >= 0
+    ? `${what}第 ${actionNo(S.script.steps, k)} 步点中的地方（画面上圈出来了）`
+    : `${what}当前有焦点的地方：前面没有点击`}</p>`;
 }
 
 function renderMacroPane() {
@@ -747,7 +788,11 @@ function renderMacroPane() {
     </div>
     <div class="section-title" style="margin-top:22px">${icon("scan")}页面锚点</div>
     ${anchors ? `<div class="anchors">${anchors}</div>`
-      : `<div class="callout">${icon("info")}<span>还没有锚点。让目标窗口停在要校验的页面，点「截取当前窗口」，再点「框选锚点」。</span></div>`}`;
+      : `<div class="callout">${icon("info")}<span>还没有锚点。让目标窗口停在要校验的页面，点画面右上角的相机截一张，再点旁边的「框选锚点」。</span></div>`}
+    <div class="danger-zone">
+      <span><b>删除这个宏</b><small>连同它的锚点、目标图和截图一起删除，不能恢复</small></span>
+      <button type="button" class="btn danger-ghost sm" id="btn-delete-macro">${icon("trash")}删除</button>
+    </div>`;
 }
 
 function renderVars() {
@@ -797,7 +842,7 @@ function renderPickerTrigger() {
     av.textContent = "+";
     av.style.removeProperty("--h");
     $("#mp-name").textContent = S.list.length ? "选择一个宏" : "还没有宏";
-    $("#mp-sub").textContent = S.list.length ? "" : "点「新建」开始";
+    $("#mp-sub").textContent = S.list.length ? "" : "点这里新建";
     $("#mp-badge").innerHTML = "";
     return;
   }
@@ -806,8 +851,9 @@ function renderPickerTrigger() {
   av.textContent = (cur.platform[0] || "?").toUpperCase();
   $("#mp-name").textContent = S.script?.name || cur.name;
   const w = S.script?.window;
-  $("#mp-sub").textContent = w ? `${cur.platform} · ${w.app}${w.title ? " · " + w.title : ""}` : cur.platform;
-  $("#mp-badge").innerHTML = cur.draft ? `<span class="badge warn">未保存</span>` : "";
+  $("#mp-sub").textContent = `${cur.platform} · ${S.dirty ? "正在保存…" : "已自动保存"}`;
+  $("#mp-sub").title = w ? `${w.app}${w.title ? " · " + w.title : ""} · ${w.width} × ${w.height}` : "";
+  $("#mp-badge").innerHTML = "";
 }
 
 function renderPickerList() {
@@ -980,11 +1026,25 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-$$("[data-add]").forEach((b) => b.addEventListener("click", () => addStep(b.dataset.add)));
+// 「＋ 添加」下拉：选一种就插在选中的步骤后面
+function setAddMenu(open) {
+  $("#add-menu").hidden = !open;
+  $("#btn-add").setAttribute("aria-expanded", open);
+}
+$("#btn-add").addEventListener("click", (e) => {
+  e.stopPropagation();
+  setAddMenu($("#add-menu").hidden);
+});
+$$("[data-add]").forEach((b) => b.addEventListener("click", () => {
+  setAddMenu(false);
+  addStep(b.dataset.add);
+}));
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#add-group")) setAddMenu(false);
+});
 $("#btn-undo").addEventListener("click", undo);
 $("#btn-redo").addEventListener("click", redo);
 $("#btn-delete").addEventListener("click", deleteSteps);
-$("#btn-save").addEventListener("click", save);
 $$(".tabs button").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
 
 $("#select-all").addEventListener("change", (e) => {
@@ -1063,6 +1123,9 @@ $("#pane-step").addEventListener("change", (e) => {
     }
   });
 });
+$("#pane-step").addEventListener("toggle", (e) => {
+  if (e.target.matches("details.more")) S.moreOpen = e.target.open;
+}, true);
 // 点按钮时输入框会先失焦，所以失焦前记下光标位置
 $("#pane-step").addEventListener("focusout", (e) => {
   if (e.target.dataset.f !== "text") return;
@@ -1131,17 +1194,19 @@ $("#pane-macro").addEventListener("click", async (e) => {
   }
 });
 
-// 删除和新建、保存放在一起；点两次确认
-$("#btn-delete-macro").addEventListener("click", (e) => {
-  const draft = !!S.detail?.draft;
-  confirmClick(e.currentTarget, draft ? "再点一次，丢弃" : "再点一次，确认删除", async () => {
+// 删除宏（在「宏设置」最下面）：点两次确认
+$("#pane-macro").addEventListener("click", (e) => {
+  const btn = e.target.closest("#btn-delete-macro");
+  if (!btn) return;
+  confirmClick(btn, "再点一次，确认删除", async () => {
     await attempt(async () => {
+      clearTimeout(saveTimer);
       await api("DELETE", `/api/scripts/${S.id}/detail`);
       S.id = null;
       S.dirty = false;
       try { localStorage.removeItem("cw.script"); } catch {}
       await loadList();
-      toast(draft ? "已丢弃" : "已删除");
+      toast("已删除");
     });
   });
 });
@@ -1166,21 +1231,38 @@ $("#win-seg").addEventListener("click", (e) => {
 });
 $("#btn-capture").addEventListener("click", async () => {
   if (!(await ensureSaved())) return;
-  const win = S.win;
-  const d = await attempt(() => api("POST", `/api/scripts/${S.id}/capture${win ? `?win=${encodeURIComponent(win)}` : ""}`));
-  if (d) {
-    applyDetail(d);
-    S.frame = "latest";
-    await showFrame();
-    toast("已截取当前窗口");
+  // 停在「录制画面」上截：用现在的窗口换掉画布上那张录制画面（录错了的时候）；停在别的画面上截就只更新「当前画面」
+  const replace = S.frame === "reference" && !!frameOf("reference");
+  const params = new URLSearchParams();
+  if (S.win) params.set("win", S.win);
+  if (replace) {
+    params.set("replace", "true");
+    if (stepShot()) params.set("step_id", S.script.steps[S.selected].id);
   }
+  const before = JSON.stringify(S.script);
+  const d = await attempt(() => api("POST", `/api/scripts/${S.id}/capture?${params}`));
+  if (!d) return;
+  if (replace) {  // 换的只是图片路径，撤销就换回原来那张
+    S.undo.push(before);
+    S.redo = [];
+  }
+  const keep = S.selected;
+  applyDetail(d);
+  S.selected = keep < S.script.steps.length ? keep : -1;
+  if (!replace) S.frame = "latest";
+  await showFrame();
+  render();
+  const ids = d.replaced_steps || [];
+  toast(!replace ? "已截取当前窗口"
+    : ids.length ? `已更新第 ${numRanges(ids.map((id) => actionNo(S.script.steps, S.script.steps.findIndex((s) => s.id === id))))} 步的录制画面（Ctrl+Z 换回原来的）`
+    : `已更新${windowLabel(S.win)}的录制画面（Ctrl+Z 换回原来的）`);
 });
 $("#btn-anchor-mode").addEventListener("click", () => setAnchorMode(!S.anchorMode || S.regionFor !== "anchor"));
 function setAnchorMode(on, purpose = "anchor") {
   S.anchorMode = on;
   S.regionFor = on ? purpose : "anchor";
   stage.setAnchorMode(on);
-  $("#btn-anchor-mode").classList.toggle("primary", on && purpose === "anchor");
+  $("#btn-anchor-mode").classList.toggle("on", on && purpose === "anchor");
   $("#anchor-bar").hidden = !on;
   $("#anchor-form").hidden = true;
   $("#anchor-hint").textContent = purpose === "target"
@@ -1223,7 +1305,7 @@ async function saveTarget(r) {
     applyDetail(d);
     S.selected = keep;
     render();
-    toast(`第 ${keep + 1} 步改成按这块图找`);
+    toast(`第 ${actionNo(S.script.steps, keep)} 步改成按这块图找`);
   }
 }
 
@@ -1275,7 +1357,7 @@ async function autoAssignPage(page) {
     .filter((i) => i >= 0);
   if (!idx.length) return;
   mutate((sc) => idx.forEach((i) => (sc.steps[i].expected_page = page)));
-  if (await save()) toast(`已把「${page}」设为第 ${idx.map((i) => i + 1).join("、")} 步的所在页面`);
+  if (await ensureSaved()) toast(`已把「${page}」设为第 ${idx.map((i) => actionNo(S.script.steps, i)).join("、")} 步的所在页面`);
 }
 
 // 新建：点一下目标窗口（或从列表点一个）就直接创建，名字、标题、尺寸全部自动
@@ -1339,7 +1421,7 @@ async function createFromWindow(w, { record = false } = {}) {
   if (record) {
     await startRecording();
   } else {
-    toast(`已新建「${body.name}」（还没保存），点「录制」开始`);
+    toast(`已新建「${body.name}」，点「录制」开始`);
   }
   return true;
 }
@@ -1369,7 +1451,6 @@ function setPickCard(waiting) {
     : "点这里，然后切过去点一下那个窗口（比如聊天窗口）";
 }
 
-$("#btn-new").addEventListener("click", openNewDialog);
 $("#win-refresh").addEventListener("click", loadWindows);
 $("#nf-advanced").addEventListener("toggle", syncCreateButton);
 $("#win-pick").addEventListener("click", async () => {
@@ -1502,29 +1583,30 @@ async function handleRecordDone(d) {
   if (d.auto_targets) done.push(`${d.auto_targets} 次点击会按图找`);
   if (d.auto_send) {
     const i = S.script.steps.findIndex((s) => s.id === d.auto_send);
-    done.push(`第 ${i + 1} 步标为「发送」`);
+    done.push(`第 ${actionNo(S.script.steps, i)} 步标为「发送」`);
   }
   if (d.auto_anchor) {
-    done.push(`自动生成页面「${d.auto_anchor.page}」并用于 ${d.auto_anchor.steps.length} 步`);
+    const fresh = d.auto_anchor.pages.filter((p) => !(d.auto_anchor.reused || []).includes(p));
+    if (d.auto_anchor.reused?.length) done.push(`沿用页面「${d.auto_anchor.reused.join("、")}」`);
+    if (fresh.length) done.push(`自动生成页面「${fresh.join("、")}」`);
+    done.push(`${d.auto_anchor.steps.length} 步会先核对页面`);
     S.win = d.last_win || null; // 录制结束时所在的窗口，自动选的锚点多半就在这里
-    S.frame = frameOf("latest") ? "latest" : "reference";
+    S.frame = "reference"; // 录完看录制画面：点哪一步就显示那一步录制时的样子（没有就退回当前画面）
     await showFrame();
   } else {
     const pages = Object.keys(S.detail.pages || {});
     if (pages.length === 1) await autoAssignPage(pages[0]);
     await showFrame(); // 参考图可能换成了这一遍录的
   }
+  if (d.dropped_pages?.length) done.push(`收起了没有步骤再用的页面「${d.dropped_pages.join("、")}」`);
   toast(done.join(" · "));
   const imeAt = S.script.steps.findIndex((s) => s.typed_with_ime);
   if (imeAt >= 0) {
     select(imeAt);
-    toast(`第 ${imeAt + 1} 步是用中文输入法打的，只录到了按键，请在右边填上实际要输入的文字`, true);
+    toast(`第 ${actionNo(S.script.steps, imeAt)} 步是用中文输入法打的，只录到了按键，请在右边填上实际要输入的文字`, true);
     setTimeout(() => $("#pane-step [data-f=text]")?.select(), 50);
   }
-  if (S.detail.draft) toast("录好了。空跑看看没问题，再点「保存」存进宏库");
-  if (!localProblems() || !Object.keys(localProblems()).length) {
-    toast("可以去「运行」里先空跑一遍看看");
-  }
+  if (!Object.keys(localProblems()).length) toast("录好了，已自动保存。点上面的「空跑」先跑一遍看看");
 }
 
 $("#btn-record").addEventListener("click", () =>
@@ -1578,14 +1660,16 @@ document.addEventListener("keydown", (e) => {
   if (Tour.els) return;
   const typing = e.target.matches("input, textarea, select");
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); save(); return; }
+  if (mod && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    if (S.script) ensureSaved().then((ok) => ok && toast("已保存"));
+    return;
+  }
   if (mod && e.key === "Enter") {
-    // 执行会真的发送：和点按钮一样，第一下只是准备，4 秒内再按一下才执行。没有全局快捷键
+    // 执行会真的发送：和点按钮一样，第一下只是准备（按钮变红写着「确认执行」），4 秒内再按一下才执行。没有全局快捷键
     e.preventDefault();
     const b = $("#btn-run");
-    if (b.disabled) return;
-    b.click();
-    if (b.dataset.armed) toast(`再按一次 ${IS_MAC ? "⌘" : "Ctrl"}+Enter 确认执行（会真的发送）`);
+    if (!b.disabled) b.click();
     return;
   }
   if (typing || $("#new-dialog").open) return;
@@ -1689,7 +1773,7 @@ connectEvents((ev) => {
       `<li ${en.screenshot_url ? `data-url="${en.screenshot_url}"` : ""} data-step="${escapeHtml(en.step_id)}" title="${en.screenshot_url ? "点击查看截图" : ""}">
         <span class="st ${en.status}">${icon(ico)}</span>
         <span class="st ${en.status}">${STATUS_TEXT[en.status] || en.status}</span>
-        <span class="detail">${escapeHtml(en.step_id)} · ${escapeHtml(en.action)}${en.detail ? " · " + escapeHtml(en.detail) : ""}</span>
+        <span class="detail" title="${escapeHtml(cleanDetail(en.detail))}">${escapeHtml(stepLabel(en.step_id, en.action))}${en.detail ? " · " + escapeHtml(cleanDetail(en.detail)) : ""}</span>
         <span class="muted">${en.page_score != null ? `页面 ${en.page_score.toFixed(2)}` : ""}</span>
       </li>`);
     renderSteps();
@@ -1726,29 +1810,24 @@ $("#opt-delays").addEventListener("change", (e) => Settings.update({ record_dela
 function startTour() {
   const rec = recKbd();
   Tour.start([
-    { el: "#macro-picker", title: "宏在这里切换、新建、保存、删除",
-      body: "一个宏 = 在某个程序窗口里的一串操作。新建时去点一下那个窗口就行，程序、名字、尺寸全部自动识别。新建的宏先是草稿（标着「未保存」），点「保存」才存进宏库。下拉里每个平台旁边的「导出」能把这个平台的整套宏打包成一个 .cwpack 文件，别人把文件拖进页面就导入好了。" },
-    { el: "#record-group", title: "最快的方式：录制",
-      body: `点「录制」或在任何窗口里按 ${rec}，到目标窗口里像平时一样操作，做完再按一下同一个快捷键就停止，不用切回来。录完会自动标出「发送」那一步、自动生成页面锚点，大多数时候直接就能空跑。` },
-    { el: "#palette", title: "也可以手动添加",
-      body: "点一下就插在当前选中的步骤后面。点击、输入、按键、滚动、拖动、延迟，还有「等待页面」：等某个页面出来再往下走，比固定延迟靠谱。" },
+    { el: "#macro-picker", title: "宏在这里切换和新建",
+      body: "一个宏 = 在某个程序窗口里的一串操作。下拉里点「新建宏」，去点一下那个窗口就行，程序、名字、尺寸全部自动识别。改动会自动保存，不用点保存；Ctrl/⌘+Z 撤销。平台旁边的「导出」能把整套宏打包成 .cwpack 文件，别人拖进页面就导入好了。" },
+    { el: "#run-bar", title: "录制 → 空跑 → 执行",
+      body: `点「录制」或在任何窗口里按 ${rec}，到目标窗口里像平时一样操作，再按一下就停止。录完点「空跑」（或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.dryHotkey) || "Alt+T")}</kbd>）完整走一遍但不发送；确认没问题再点「执行」，要点两次确认。执行会真的发送，所以没有全局快捷键。` },
     { el: "#steps-card", title: "步骤列表",
-      body: "点一行编辑，拖动排序，勾选后批量删除；Ctrl/⌘+Z 撤销。黄色 ⚠ 表示这一步还缺东西，鼠标放上去能看到原因。" },
-    { el: "#canvas-area", title: "画面：坐标和锚点",
-      body: "编号标记就是点击位置，可以直接拖。蓝色虚线框是页面锚点（录制时自动选的），程序靠它认出「现在在哪个页面」；选中一个点击步骤时，橙色框是它的目标图：执行时按图找到它再点，界面变了也不怕。宏用到好几个窗口（比如点开会话弹出的聊天窗口）时，每个窗口各有自己的参考图：选中哪一步就显示它所在的窗口，上方也能手动切换。",
+      body: "点一行编辑，拖动排序，勾选后批量删除。「＋ 添加」可以手动插一步，比如「等待页面」：等某个页面出来再往下走，比固定延迟靠谱。黄色 ⚠ 表示这一步还缺东西，鼠标放上去能看到原因。" },
+    { el: "#canvas-area", title: "画面：每一步录制时的样子",
+      body: "选中哪一步，就显示那一步动作之前的画面，编号标记是点击位置，可以直接拖。蓝色虚线框是页面锚点，程序靠它认出「现在在哪个页面」；橙色框是按图找的目标图，界面变了也能找到它再点。右上角的相机截取当前窗口，旁边的按钮框选锚点。",
       before: () => setTab("step") },
-    { el: "#pane-step", title: "关键两项：所在页面、发送",
-      body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错；框选锚点后会自动填上。录制时最后那一下点击或回车会被自动标成「发送」，不对可以在这里改。",
+    { el: "#panel", title: "参数、宏设置、运行日志",
+      body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错。说明藏在 ⓘ 里，不常用的选项在「更多」里。空跑 / 执行的进度和每一步截图在「运行」里。",
       before: () => { if (S.script?.steps.length && S.selected < 0) select(0); setTab("step"); } },
-    { el: "#pane-run", title: "先空跑，再执行",
-      body: `空跑会完整走一遍但跳过「发送」，每一步都有截图可点开看；录完在目标窗口里直接按 <kbd>${escapeHtml(prettyKey(S.dryHotkey) || "Alt+T")}</kbd> 就能空跑，不用切回来。确认没问题再点执行（要点两次确认，也可以按两次 Ctrl+Enter）。执行会真的发送，所以没有全局快捷键。`,
-      before: () => setTab("run") },
     { el: "#btn-panic", title: "随时可以停",
       body: `点「急停」或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.hotkey) || "急停热键")}</kbd> 立刻中止。执行时你一动键鼠，它也会自己停下来。` },
     { el: "#btn-settings", title: "设置都在齿轮里",
       body: `深色 / 浅色外观、快捷键、录制与执行的细节都在这里。录制开关现在是 ${rec}，想换就在「快捷键」里直接按下新的组合键；跟其他软件或系统冲突会当场提示。` },
     { el: "#nav-audit", title: "事后回看",
-      body: "每一步都留了截图和记录；审计页把最可疑的排在最前面，按 1 / 2 标记就行。" },
+      body: "每一步都留了截图和记录；审计页按每次运行分组，失败和可疑的排在前面，按 1 / 2 标记就行。" },
   ], "cw.tour.editor", () => setTab(S.selected >= 0 ? "step" : S.tab));
 }
 
@@ -1769,6 +1848,13 @@ $("#btn-tour").addEventListener("click", startTour);
     // 配置的快捷键被别的软件占了、自动换成了备选：告诉用户
     (st.hotkey_notes || []).forEach((n) => toast(n));
   }
-  await attempt(() => loadList());
+  // 审计页「去修改」带过来的：直接打开那个宏、选中出问题的那一步
+  const q = new URLSearchParams(location.search);
+  await attempt(() => loadList(q.get("macro")));
+  if (q.get("step") && S.script) {
+    const i = S.script.steps.findIndex((s) => s.id === q.get("step"));
+    if (i >= 0) select(i);
+  }
+  if (q.has("macro")) history.replaceState(null, "", "/");
   if (!Tour.seen("cw.tour.editor")) startTour();
 })();

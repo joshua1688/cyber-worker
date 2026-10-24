@@ -46,6 +46,12 @@ class ScreenshotStorage:
         write_image(path, img)
         return path
 
+    def remove_day(self, day: date) -> None:
+        """删掉这一天的全部截图。"""
+        d = self.root / day.isoformat()
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+
     def cleanup(self, *, today: date, keep_days: int = 30) -> list[Path]:
         """删除早于 keep_days 天的日期目录，返回被删的目录。"""
         cutoff = today - timedelta(days=keep_days)
