@@ -22,6 +22,8 @@ uv run cyber-worker studio          # http://127.0.0.1:9999
 | 右上：画面 | 参考图 / 最新截图 / 运行截图；点击与滚动的编号标记和路径连线、页面锚点框、选中点击步骤的目标框（橙色）；截取当前窗口、框选锚点 |
 | 右下：标签页 | **步骤参数**（选中步骤时自动切过来）· **宏设置**（名称、程序、变量、锚点）· **运行**（变量输入、空跑、执行、实时日志） |
 
+**平台包（导出 / 导入）**：选择器里每个已保存的平台分组旁边有「导出」，一键下载 `<平台>.cwpack`，里面是这个平台的全部宏连同页面锚点和按图找的目标图；整窗参考截图、草稿、运行截图不打进去。别人点下拉底部的「导入平台包」选文件，或者直接把 `.cwpack` 拖进页面就导入完成，不弹任何确认。包会先整体校验（只收 yaml / json / png、不能跳出目录、宏和锚点文件必须有效），有一处不对整包拒绝；同名的宏自动加 `-2`，显示名也跟着加。
+
 **草稿**：新建的宏先是草稿（选择器里标「未保存」），录制、截图、框锚点、空跑都可以在草稿上做；点「保存」才存进宏库（`user_data/platforms/`）。草稿放在 `user_data/drafts/`，切换到别的宏不会丢。
 
 **支持的操作**（录制和执行都支持）：
@@ -134,8 +136,10 @@ uv run cyber-worker studio          # http://127.0.0.1:9999
 | GET | `/api/windows` | 当前打开的窗口（含最小化的，不含 studio 自己），附带建议的宏名 `suggested_name` 和认窗口用的标题 `match_title` |
 | POST | `/api/windows/pick` | 等用户下一次真实点击（20 秒），返回点到的窗口；点到 studio 自己不算 |
 | GET | `/api/scripts` | 宏列表（`user_data/platforms/*/templates/*.yaml`） |
-| POST | `/api/scripts` | 新建空白宏**草稿**（校准窗口 + 参考图）；只需 `name`、`app`、`width`、`height`，平台按程序名生成，重名自动加序号 |
+| POST | `/api/scripts` | 新建空白宏**草稿**（校准窗口 + 参考图）；只需 `name`、`app`、`width`、`height`，平台按程序名生成，重名自动加序号（显示名也加） |
 | POST | `/api/scripts/{id}/commit` | 把草稿保存进宏库（连同参考图、页面锚点一起搬） |
+| GET | `/api/packs/{platform}` | 导出平台包：下载 `<平台>.cwpack`（只含宏库里已保存的宏，不含参考截图） |
+| POST | `/api/packs` | 导入平台包：请求体就是 `.cwpack` 文件本身；坏包返回 400 和原因，成功返回 `{platform, ids}` |
 | GET / PUT / DELETE | `/api/scripts/{id}/detail` | 读取 / 保存 / 删除 |
 | POST | `/api/scripts/{id}/capture` | 截取当前窗口 |
 | POST / DELETE | `/api/scripts/{id}/anchors[/{page}/{index}]` | 添加 / 删除页面锚点 |

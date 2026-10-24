@@ -729,7 +729,8 @@ function renderPickerList() {
   MP.active = Math.min(MP.active, Math.max(0, MP.items.length - 1));
   let i = 0;
   $("#mp-list").innerHTML = MP.items.length ? groups.map(([title, xs]) => `
-    <div class="mp-group"><span>${escapeHtml(title)}</span><span>${xs.length}</span></div>
+    <div class="mp-group"><span>${escapeHtml(title)}</span><span class="mp-group-r">${xs.length}${xs[0].draft ? ""
+      : `<button type="button" class="btn sm mp-export" data-export="${escapeHtml(title)}" title="把这个平台的所有宏导出成一个 .cwpack 文件，别人导入后就能直接使用">${icon("download")}导出</button>`}</span></div>
     ${xs.map((x) => {
       const idx = i++;
       return `<button type="button" class="mp-item ${idx === MP.active ? "active" : ""}" data-mp="${idx}"
@@ -807,12 +808,69 @@ $("#mp-list").addEventListener("mousemove", (e) => {
   }
 });
 $("#mp-list").addEventListener("click", (e) => {
+  const ex = e.target.closest("[data-export]");
+  if (ex) return attempt(() => exportPack(ex.dataset.export));
   const b = e.target.closest("[data-mp]");
   if (b) choose(MP.items[+b.dataset.mp]?.id);
 });
 $("#mp-new").addEventListener("click", () => {
   closePicker();
   openNewDialog();
+});
+
+// ---------------- 平台包：一键导出 / 选文件或拖进页面导入，不弹确认 ----------------
+
+async function exportPack(platform) {
+  const res = await fetch(`/api/packs/${encodeURIComponent(platform)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await res.blob());
+  a.download = `${platform}.cwpack`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast(`已导出 ${platform}.cwpack`);
+}
+
+async function importPack(file) {
+  closePicker();
+  if (S.dirty && !(await ensureSaved())) return;
+  const r = await attempt(() => api("POST", "/api/packs", file));
+  if (!r) return;
+  toast(`已导入 ${r.platform}：${r.ids.length} 个宏`);
+  await attempt(() => loadList(r.ids[0]));
+}
+
+$("#mp-import").addEventListener("click", () => $("#pack-file").click());
+$("#pack-file").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";  // 同一个文件可以再导一次
+  if (file) importPack(file);
+});
+
+// 拖文件进页面（步骤列表里拖动排序不是文件，不受影响）
+let dragDepth = 0;
+const isFileDrag = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+document.addEventListener("dragenter", (e) => {
+  if (!isFileDrag(e)) return;
+  dragDepth++;
+  $("#drop-overlay").hidden = false;
+});
+document.addEventListener("dragleave", (e) => {
+  if (isFileDrag(e) && --dragDepth <= 0) {
+    dragDepth = 0;
+    $("#drop-overlay").hidden = true;
+  }
+});
+document.addEventListener("dragover", (e) => {
+  if (isFileDrag(e)) e.preventDefault();
+});
+document.addEventListener("drop", (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  $("#drop-overlay").hidden = true;
+  const file = e.dataTransfer.files[0];
+  if (file) importPack(file);
 });
 document.addEventListener("mousedown", (e) => {
   if (MP.open && !e.target.closest("#mp")) closePicker();
@@ -1470,7 +1528,7 @@ function startTour() {
   const rec = recKbd();
   Tour.start([
     { el: "#macro-picker", title: "宏在这里切换、新建、保存、删除",
-      body: "一个宏 = 在某个程序窗口里的一串操作。新建时去点一下那个窗口就行，程序、名字、尺寸全部自动识别。新建的宏先是草稿（标着「未保存」），点「保存」才存进宏库。" },
+      body: "一个宏 = 在某个程序窗口里的一串操作。新建时去点一下那个窗口就行，程序、名字、尺寸全部自动识别。新建的宏先是草稿（标着「未保存」），点「保存」才存进宏库。下拉里每个平台旁边的「导出」能把这个平台的整套宏打包成一个 .cwpack 文件，别人把文件拖进页面就导入好了。" },
     { el: "#record-group", title: "最快的方式：录制",
       body: `点「录制」或在任何窗口里按 ${rec}，到目标窗口里像平时一样操作，做完再按一下同一个快捷键就停止，不用切回来。录完会自动标出「发送」那一步、自动生成页面锚点，大多数时候直接就能空跑。` },
     { el: "#palette", title: "也可以手动添加",

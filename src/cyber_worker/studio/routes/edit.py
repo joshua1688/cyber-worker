@@ -13,7 +13,7 @@ from cyber_worker.macro.anchors import add_anchor, remove_anchor, save_target
 from cyber_worker.macro.io.base import CalibrationError
 from cyber_worker.macro.schema import Click, Script, Window
 from cyber_worker.macro.screenshot.storage import read_image, write_image
-from cyber_worker.studio.state import Frame, Studio, check_name, platform_slug, safe_stem, window_json
+from cyber_worker.studio.state import Frame, Studio, check_name, platform_slug, renamed, safe_stem, window_json
 
 router = APIRouter(prefix="/api")
 
@@ -106,7 +106,10 @@ def create_script(body: NewScript, request: Request):
     platform = check_name(body.platform.strip(), "平台名") if body.platform else platform_slug(body.app)
     # 先建成草稿：用户点「保存」才进宏库
     folder = st.drafts / platform / "templates"
-    path = folder / f"{st.unique_stem(platform, safe_stem(name))}.yaml"  # 重名自动加序号，不打断用户
+    base = safe_stem(name)
+    stem = st.unique_stem(platform, base)  # 重名自动加序号，不打断用户
+    name = renamed(name, base, stem)
+    path = folder / f"{stem}.yaml"
     window = Window(app=body.app, title=body.title or None, width=body.width, height=body.height)
     if st.app.executor.busy or st.recording:
         raise HTTPException(409, "正在执行或录制，稍后再试")

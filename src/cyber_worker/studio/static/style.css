@@ -378,20 +378,51 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .mp-item .t mark { background: var(--accent-soft); color: inherit; border-radius: 3px; padding: 0 1px; }
 .mp-item .ok { color: var(--accent); }
 .mp-empty { padding: 22px 12px; text-align: center; color: var(--text-3); font-size: 13px; }
-.mp-foot {
+.mp-foot { display: flex; border-top: 1px solid var(--border); background: var(--surface-2); }
+.mp-foot button {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 10px 14px;
   border: none;
-  border-top: 1px solid var(--border);
-  background: var(--surface-2);
+  background: none;
   color: var(--text);
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
 }
-.mp-foot:hover { background: var(--hover); }
+.mp-foot button + button { border-left: 1px solid var(--border); }
+.mp-foot button:hover { background: var(--hover); }
+.mp-group { align-items: center; }
+.mp-group-r { display: flex; align-items: center; gap: 8px; }
+.mp-export { gap: 4px; height: 24px; padding: 0 8px; font-size: 12px; font-weight: 500; }
+.mp-export .icon { width: 14px; height: 14px; }
+/* 把 .cwpack 拖进页面时的整页提示；不接收事件，松手由 document 处理 */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+.drop-overlay[hidden] { display: none; }
+.drop-overlay > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 22px;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
 .meta-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip {
   display: inline-flex;

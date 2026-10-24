@@ -45,7 +45,11 @@
             <kbd>Esc</kbd>
           </div>
           <div class="mp-list" id="mp-list" role="listbox" aria-label="宏"></div>
-          <button class="mp-foot" id="mp-new"><i data-icon="plus"></i>新建宏</button>
+          <div class="mp-foot">
+            <button type="button" id="mp-new"><i data-icon="plus"></i>新建宏</button>
+            <button type="button" id="mp-import" title="选择 .cwpack 文件；也可以直接把文件拖进页面"><i data-icon="upload"></i>导入平台包</button>
+          </div>
+          <input type="file" id="pack-file" accept=".cwpack" hidden>
         </div>
       </div>
       <button class="btn" id="btn-new" title="新建一个宏"><i data-icon="plus"></i>新建</button>
@@ -230,6 +234,10 @@
       </div>
     </form>
   </dialog>
+
+  <div class="drop-overlay" id="drop-overlay" hidden>
+    <div><i data-icon="upload"></i>松开即可导入平台包</div>
+  </div>
 
   <script src="/static/common.js"></script>
   <script src="/static/tour.js"></script>

@@ -14,6 +14,7 @@ from cyber_worker.studio.routes import (
     audit,
     edit,
     hotkeys,
+    packs,
     preview,
     record,
     run,
@@ -44,7 +45,7 @@ def create_app(app: App, *, run_idle_sec: float | None = None) -> FastAPI:
     hotkeys.bind(api.state.studio)  # 全局快捷键：配置的键被占用时自动换一个，界面上会提示
 
     for r in (edit.router, record.router, run.router, preview.router, audit.router, hotkeys.router,
-              settings.router):
+              settings.router, packs.router):
         api.include_router(r)
 
     @api.websocket("/ws")

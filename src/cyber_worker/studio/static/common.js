@@ -48,6 +48,8 @@ const ICON_PATHS = {
   move: '<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
   logo: '<path d="M7 8l-3 4 3 4M17 8l3 4-3 4M14 5l-4 14"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+  upload: '<path d="M12 21V9M7 14l5-5 5 5M5 3h14"/>',
 };
 
 function icon(name, cls = "") {
@@ -87,11 +89,13 @@ const Theme = {
 
 // ---------------- 请求 / 提示 ----------------
 
+// body 是 File / Blob 时原样上传（导入平台包），否则按 JSON 发
 async function api(method, url, body) {
+  const raw = body instanceof Blob;
   const res = await fetch(url, {
     method,
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: body === undefined ? {} : { "Content-Type": raw ? "application/octet-stream" : "application/json" },
+    body: body === undefined || raw ? body : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

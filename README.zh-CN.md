@@ -89,6 +89,8 @@ sequenceDiagram
 > 状态图例：⬜ 待开始 · 🚧 进行中 · ✅ 已完成
 
 > 平台适配层是**声明式的平台包**：每个平台就是一个目录，里面只有 `platform.yaml`（能力 → 宏的映射、提取字段）、`pages.yaml`（页面指纹、监控区域）和录制好的宏。所有平台由同一个通用 `ScreenAdapter` 驱动。内置平台开箱即用；其他平台或私人场景，在 `studio` 里录制并保存成平台包即可，**无需改代码**。只有提取逻辑特别复杂时，才需要写一个可选的 `hooks.py`。
+>
+> 平台包可以**一键导出**成一个 `.cwpack` 文件分享给其他人，对方把文件拖进 studio 页面就导入完成，立刻拥有整套平台操作。导出时自动去掉只用于编辑器显示的整窗参考截图、草稿和运行截图；导入时自动校验文件，同名的宏自动加 `-2` 后缀，不弹任何确认框。
 
 ## 🏗️ 工作原理
 
@@ -370,6 +372,7 @@ cyber-worker/
 │   ├── adapters/                   # ★ 平台层：决定「在哪做」（声明式平台包）
 │   │   ├── screen_adapter.py       # 通用 PlatformPort 实现：读取平台包声明，调 macro 执行
 │   │   ├── loader.py               # 加载平台包（内置 + user_data/platforms/，同名文件用户版优先）
+│   │   ├── pack.py                 # 平台包导出 / 导入（.cwpack：打包、安全校验、解压）
 │   │   ├── wechat/
 │   │   │   ├── platform.yaml       # 能力 → 宏映射、提取字段（区域 + OCR）、窗口尺寸
 │   │   │   ├── pages.yaml          # 页面指纹 + 监控区域（朋友圈 / 发布页 / 主页）
@@ -408,6 +411,7 @@ cyber-worker/
 │       │   ├── run.py              # 空跑 / 执行（进执行器排队）、急停、实时状态推送
 │       │   ├── hotkeys.py          # 设置 · 快捷键（查冲突、改键写回 config.toml）
 │       │   ├── settings.py         # 设置 · 外观、录制与执行（立即生效，写回 config.toml）
+│       │   ├── packs.py            # 平台包一键导出（下载 .cwpack）/ 导入（上传或拖入页面）
 │       │   ├── pending.py          # 待确认动作（评论 + 发帖；通过 / 修改 / 拒绝，拒绝需选原因）
 │       │   └── audit.py            # 审计页（按可疑度排序）
 │       └── static/                 # 前端（原生 HTML + JS + Canvas，不引框架）
@@ -440,7 +444,8 @@ cyber-worker/
 │   │   ├── test_anomaly.py         # 单张状态粗筛的假阳/假阴
 │   │   └── test_reviewer.py        # 审计排序、抽查、日报
 │   ├── adapters/
-│   │   └── test_screen_adapter.py  # 平台包加载、能力映射、用户版覆盖
+│   │   ├── test_screen_adapter.py  # 平台包加载、能力映射、用户版覆盖
+│   │   └── test_pack.py            # 平台包导出 / 导入：往返一致、跳过参考图与草稿、拒绝坏包与路径穿越
 │   ├── studio/
 │   │   └── test_studio_api.py      # studio 接口（fake IO）：新建、保存、锚点、录制、空跑、审计
 │   └── fixtures/                   # ★ 测试样本（只用测试账号截图或已打码，走 Git LFS）
@@ -491,6 +496,7 @@ cyber-worker/
 | 🚧 | 全局执行器（动作排队互斥、你在用电脑时暂停、急停）：Windows 已实测，待 macOS 实机验证 |
 | 🚧 | 审计页（按可疑度排序、抽查、日报） |
 | 🚧 | `studio/` 宏设计器（新建 + 录制 + 编辑 + 锚点 + 按图找点击 + 等待页面 + 空跑 / 执行 + 深色 / 浅色外观 + 设置中心 + 新手引导） |
+| ✅ | 平台包导出 / 导入（一键导出 `.cwpack`，拖进页面即导入，方便分享给其他人） |
 | ⬜ | 按文字找点击（OCR，`locator/text.py` + `vision/ocr.py`） |
 | ⬜ | 平台包格式 + 通用 `ScreenAdapter`，用微信朋友圈验证 |
 | ⬜ | B站 / 抖音适配（只新增平台包，不改代码） |

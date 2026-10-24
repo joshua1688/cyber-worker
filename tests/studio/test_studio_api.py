@@ -1,6 +1,7 @@
 """studio 后端：全部走 fake IO，不碰真实屏幕。"""
 
 import random
+import shutil
 import threading
 
 import pytest
@@ -76,6 +77,7 @@ def test_new_macro_is_a_draft_until_saved(client, tmp_path):
     # 重名不报错，自动加序号
     again = new_script(client)
     assert again["id"] == "_draft/demo/templates/comment-2.yaml"
+    assert again["script"]["name"] == "comment-2"  # 显示名也带序号，列表里分得清
 
 
 def test_save_moves_draft_with_reference_and_anchors(client, tmp_path):
@@ -100,6 +102,7 @@ def test_save_renames_when_library_already_has_same_name(client):
     second = client.post(f"/api/scripts/{new_script(client)['id']}/commit").json()
     assert first["id"] == "demo/templates/comment.yaml"
     assert second["id"] == "demo/templates/comment-2.yaml"
+    assert [first["script"]["name"], second["script"]["name"]] == ["comment", "comment-2"]
 
 
 def test_delete_removes_macro_and_its_own_files(client, tmp_path):
@@ -124,6 +127,9 @@ def test_chinese_name_and_auto_platform(client):
     assert saved["id"] == "wechat/templates/朋友圈_评论.yaml"
     assert client.get("/api/scripts").json() == [
         {"id": saved["id"], "platform": "wechat", "name": "朋友圈 评论", "draft": False}]
+    again = client.post("/api/scripts", json={"name": "朋友圈 评论", "app": "WeChat.exe",
+                                              "width": 400, "height": 300}).json()
+    assert again["script"]["name"] == "朋友圈 评论-2"
 
 
 def test_windows_list_hides_studio_and_flags_shared_apps(client):
@@ -497,3 +503,48 @@ def test_recording_click_gets_target_image(client, tmp_path):
     assert not (tmp_path / "user_data/drafts/demo/templates/comment.targets").exists()
     client.delete(f"/api/scripts/{saved['id']}/detail")
     assert not (lib / "comment.targets").exists()
+
+
+def saved_with_anchor(client, name="comment"):
+    sid = new_script(client, name)["id"]
+    client.post(f"/api/scripts/{sid}/capture")
+    client.post(f"/api/scripts/{sid}/anchors", json={"page": "页面1", "x": 50, "y": 40, "w": 40, "h": 30})
+    return client.post(f"/api/scripts/{sid}/commit").json()
+
+
+def test_pack_export_then_import_renames_same_name_macros(client, tmp_path):
+    saved = saved_with_anchor(client)
+    new_script(client, "草稿")  # 草稿不进包
+    r = client.get("/api/packs/demo")
+    assert r.status_code == 200
+    assert "demo.cwpack" in r.headers["content-disposition"]
+
+    # 本机已经有同名宏：导入的自动加 -2，原来的不动
+    imported = client.post("/api/packs", content=r.content).json()
+    assert imported == {"platform": "demo", "ids": ["demo/templates/comment-2.yaml"]}
+    lib = tmp_path / "user_data/platforms/demo/templates"
+    assert sorted(p.name for p in lib.iterdir()) == [
+        "comment-2.anchors", "comment-2.pages.yaml", "comment-2.yaml",  # 参考截图没有导出
+        "comment.anchors", "comment.pages.yaml", "comment.png", "comment.yaml"]
+    d = client.get(f"/api/scripts/{imported['ids'][0]}/detail").json()
+    assert client.get(d["pages"]["页面1"][0]["url"]).status_code == 200  # 锚点图跟着改了名
+    assert d["frames"]["reference"] is None
+    assert d["script"]["name"] == "comment-2"
+    assert not list((tmp_path / "user_data").glob(".import-*"))  # 临时目录清掉了
+    assert saved["id"] in [s["id"] for s in client.get("/api/scripts").json()]
+
+
+def test_pack_import_into_fresh_platform(client, tmp_path):
+    saved_with_anchor(client)
+    data = client.get("/api/packs/demo").content
+    shutil.rmtree(tmp_path / "user_data/platforms/demo")
+    assert client.post("/api/packs", content=data).json()["ids"] == ["demo/templates/comment.yaml"]
+
+
+def test_pack_errors(client, tmp_path):
+    assert client.get("/api/packs/demo").status_code == 404  # 还没有保存的宏
+    assert client.get("/api/packs/..").status_code in (400, 404)
+    r = client.post("/api/packs", content=b"garbage")
+    assert r.status_code == 400 and "cwpack" in r.json()["detail"]
+    assert client.post("/api/packs", content=b"").status_code == 400
+    assert not list((tmp_path / "user_data").glob(".import-*"))

@@ -89,6 +89,8 @@ The value of a digital twin isn't how much it does — it's how much **what it d
 > Legend: ⬜ todo · 🚧 in progress · ✅ done
 
 > The platform layer is made of **declarative platform packs**. Each platform is a directory containing only `platform.yaml` (capability → macro mapping, extraction fields), `pages.yaml` (page fingerprints, watch regions) and recorded macros. All platforms are driven by one generic `ScreenAdapter`. Built-in platforms work out of the box; for other platforms or private use cases, record and save a platform pack in `studio` — **no code changes needed**. Only unusually complex extraction needs an optional `hooks.py`.
+>
+> A platform pack can be **exported in one click** as a single `.cwpack` file to share with others; they drag the file onto the studio page and it is imported, giving them the whole set of platform operations right away. Export automatically leaves out the full-window reference screenshots (only used for display in the editor), drafts and run screenshots; import validates the file automatically and renames same-name macros with a `-2` suffix, with no confirmation dialogs.
 
 ## 🏗️ How it works
 
@@ -370,6 +372,7 @@ cyber-worker/
 │   ├── adapters/                   # ★ Platform layer: decides "where to do it" (declarative platform packs)
 │   │   ├── screen_adapter.py       # Generic PlatformPort implementation: reads pack declarations, runs macros
 │   │   ├── loader.py               # Loads packs (built-in + user_data/platforms/; user files override same-name built-ins)
+│   │   ├── pack.py                 # Pack export / import (.cwpack: packing, safety checks, unpacking)
 │   │   ├── wechat/
 │   │   │   ├── platform.yaml       # Capability → macro mapping, extraction fields (region + OCR), window size
 │   │   │   ├── pages.yaml          # Page fingerprints + watch regions (Moments / Publish / Home)
@@ -408,6 +411,7 @@ cyber-worker/
 │       │   ├── run.py              # Dry run / run (queued on executor), panic, live status
 │       │   ├── hotkeys.py          # Settings · hotkeys (conflict check, save back to config.toml)
 │       │   ├── settings.py         # Settings · appearance, recording & run (applied live, saved to config.toml)
+│       │   ├── packs.py            # One-click pack export (download .cwpack) / import (upload or drop onto the page)
 │       │   ├── pending.py          # Pending actions (comments + posts; approve / edit / reject with reason)
 │       │   └── audit.py            # Audit page (sorted by suspicion)
 │       └── static/                 # Frontend (vanilla HTML + JS + Canvas, no framework)
@@ -440,7 +444,8 @@ cyber-worker/
 │   │   ├── test_anomaly.py         # Single-frame coarse filter FP/FN
 │   │   └── test_reviewer.py        # Audit ranking, spot checks, daily report
 │   ├── adapters/
-│   │   └── test_screen_adapter.py  # Pack loading, capability mapping, user overrides
+│   │   ├── test_screen_adapter.py  # Pack loading, capability mapping, user overrides
+│   │   └── test_pack.py            # Pack export / import: round trip, skips references and drafts, rejects bad packs and path traversal
 │   ├── studio/
 │   │   └── test_studio_api.py      # studio API (fake IO): create, save, anchors, record, dry run, audit
 │   └── fixtures/                   # ★ Test fixtures (test-account screenshots or redacted only; stored via Git LFS)
@@ -491,6 +496,7 @@ cyber-worker/
 | 🚧 | Global executor (mutual exclusion, pause while you use the computer, panic stop): verified on Windows, pending on macOS |
 | 🚧 | Audit page (suspicion ranking, spot checks, daily report) |
 | 🚧 | `studio/` macro editor (create + record + edit + anchors + find-by-image clicks + wait-for-page + dry run / run + dark / light appearance + settings center + onboarding tour) |
+| ✅ | Platform pack export / import (one-click `.cwpack` export, drop onto the page to import, easy to share with others) |
 | ⬜ | Find-by-text clicks (OCR, `locator/text.py` + `vision/ocr.py`) |
 | ⬜ | Platform pack format + generic `ScreenAdapter`, validated on WeChat Moments |
 | ⬜ | Bilibili / Douyin (new platform packs only, no code changes) |

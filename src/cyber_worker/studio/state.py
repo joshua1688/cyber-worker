@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,7 @@ from urllib.parse import quote
 
 from fastapi import HTTPException
 
+from cyber_worker.adapters import pack
 from cyber_worker.bootstrap import App
 from cyber_worker.macro.anchors import anchors_dir, default_pages_ref, targets_dir
 from cyber_worker.macro.io.base import stable_title
@@ -53,6 +55,15 @@ def window_json(w, shared_apps: set[str]) -> dict:
         "match_title": title if shared and title else None,
         "suggested_name": title if title and title.lower() != w.app.lower() else w.app,
     }
+
+
+_SEQ = re.compile(r"-\d+$")
+
+
+def renamed(name: str, old_stem: str, new_stem: str) -> str:
+    """文件名因重名加了序号（chat → chat-2），显示名也加上同样的序号，列表里分得清。"""
+    seq = _SEQ.search(new_stem[len(old_stem):]) if new_stem.startswith(old_stem) else None
+    return name + seq.group(0) if seq else name
 
 
 def platform_slug(app: str) -> str:
@@ -169,6 +180,44 @@ class Studio:
     def load(self, script_id: str) -> Script:
         return Script.load(self.script_path(script_id))
 
+    # ---- 平台包 ----
+
+    def export_pack(self, platform: str) -> bytes:
+        """宏库里的一个平台 → .cwpack（草稿不算）。"""
+        path = (self.root / platform).resolve()
+        if not path.is_relative_to(self.root.resolve()) or path == self.root.resolve():
+            raise HTTPException(400, "非法的平台名")
+        if not any(pack.is_macro(p.relative_to(path).as_posix()) for p in path.glob("templates/*.yaml")):
+            raise HTTPException(404, f"平台 {platform} 里还没有保存的宏")
+        return pack.export_pack(path)
+
+    def import_pack(self, data: bytes) -> dict:
+        """导入 .cwpack：先解压到临时目录，再一个个宏搬进宏库，重名的自动加 -2，不问用户。"""
+        self.user_data.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".import-", dir=self.user_data))
+        try:
+            try:
+                manifest = pack.unpack(data, staging)
+            except pack.PackError as e:
+                raise HTTPException(400, str(e)) from None
+            platform = manifest.platform
+            dst = self.root / platform
+            ids = []
+            for src in sorted(staging.glob("templates/*.yaml")):
+                if src.name.endswith(".pages.yaml"):
+                    continue
+                stem = self.unique_stem(platform, src.stem)
+                ids.append(self.script_id(relocate_macro(src, dst / "templates", stem)))
+            # 宏自己的文件已经跟着搬走了；剩下的是平台级文件，本机已有的不覆盖
+            for p in sorted(staging.rglob("*")):
+                target = dst / p.relative_to(staging)
+                if p.is_file() and not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(p, target)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        return {"platform": platform, "ids": ids}
+
     def file_url(self, path: Path | None) -> str | None:
         if path is None or not path.exists():
             return None
@@ -233,6 +282,7 @@ def relocate_macro(src: Path, dst_dir: Path, stem: str) -> Path:
     from cyber_worker.macro.vision.fingerprint import PageBook
 
     script = Script.load(src)
+    script.name = renamed(script.name, src.stem, stem)
     ref, pages, anchors = _own_files(src, script)
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = dst_dir / f"{stem}.yaml"
