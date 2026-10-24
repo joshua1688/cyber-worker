@@ -272,6 +272,32 @@ def ime_active() -> bool:
     return bool(ask(_IMC_GETOPENSTATUS)) and bool(ask(_IMC_GETCONVERSIONMODE) & _IME_CMODE_NATIVE)
 
 
+user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+user32.GetAsyncKeyState.restype = ctypes.c_short
+_HELD_VK = {"ctrl": (0x11,), "shift": (0x10,), "alt": (0x12,), "cmd": (0x5B, 0x5C)}
+
+
+def held_modifiers() -> set[str]:
+    return {name for name, vks in _HELD_VK.items() if any(user32.GetAsyncKeyState(vk) & 0x8000 for vk in vks)}
+
+
+# 开始：低→高两声；停止：高→低两声。Beep 会阻塞，放到后台线程
+_CHIMES = {"start": ((880, 70), (1320, 90)), "stop": ((1320, 70), (880, 90))}
+
+
+def chime(kind: str) -> None:
+    import winsound
+
+    def play() -> None:
+        try:
+            for freq, ms in _CHIMES.get(kind, ()):
+                winsound.Beep(freq, ms)
+        except RuntimeError:  # 没有声卡等：静默
+            pass
+
+    threading.Thread(target=play, daemon=True, name="chime").start()
+
+
 def _bring_to_front(hwnd) -> None:
     """Windows 不允许后台进程随意抢前台。两种常用的绕过：
     先按一下 Alt（系统认为本进程刚有键盘输入），再挂到当前前台窗口的输入队列上切换。"""
@@ -322,6 +348,12 @@ class WinScreenIO(PynputInput):
 
     def ime_active(self) -> bool:
         return ime_active()
+
+    def held_modifiers(self) -> set[str]:
+        return held_modifiers()
+
+    def chime(self, kind: str) -> None:
+        chime(kind)
 
     def calibrate(self, window: Window) -> WindowGeometry:
         hwnd = find_window(window.app, window.title)

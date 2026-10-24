@@ -77,6 +77,15 @@ class ScreenIO(Protocol):
         """前台窗口的中文（等）输入法是否处于「输入母语」模式：此时按键会先进输入法，录到的不是最终文字。"""
         ...
 
+    def held_modifiers(self) -> set[str]:
+        """此刻按着的修饰键（ctrl / shift / alt / cmd）。录制启动时用：按快捷键开始录制时 Alt 还没松开，
+        监听看不到它按下，不问一下就会把后面的字母当成普通输入录进去。"""
+        ...
+
+    def chime(self, kind: str) -> None:
+        """提示音，不阻塞。kind：start（开始录制）/ stop（停止录制）。人在目标窗口里也能知道快捷键生效了。"""
+        ...
+
     def calibrate(self, window: Window) -> WindowGeometry:
         """激活窗口并调整到录制时的尺寸；做不到就抛 CalibrationError。"""
         ...

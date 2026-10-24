@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -27,6 +28,8 @@ router = APIRouter(prefix="/api/record")
 
 SAMPLE_EVERY = 0.8  # 秒
 MAX_FRAMES = 24
+# 停止录制后这么久之内再按录制快捷键不算「重新开始」：停止要好几秒、又没看到反应时，人会忍不住再按一下
+RESTART_COOLDOWN = 1.5  # 秒
 
 
 class StartRecording(BaseModel):
@@ -73,6 +76,15 @@ class RecordError(Exception):
 
 
 def start_recording(st, script_id: str, record_delays: bool = True) -> None:
+    if not st.record_lock.acquire(blocking=False):
+        raise RecordError(409, "正在开始或停止录制，请稍等")
+    try:
+        _start(st, script_id, record_delays)
+    finally:
+        st.record_lock.release()
+
+
+def _start(st, script_id: str, record_delays: bool) -> None:
     if st.recording:
         raise RecordError(409, "已经在录制了")
     if st.app.executor.busy:
@@ -109,13 +121,31 @@ def start_recording(st, script_id: str, record_delays: bool = True) -> None:
     rec.sampler.start()
     st.recording = rec
     st.hub.publish({"type": "record_state", "recording": True, "script_id": script_id})
+    st.app.io.chime("start")
 
 
 def stop_recording(st) -> dict:
+    if not st.record_lock.acquire(blocking=False):
+        raise RecordError(409, "正在开始或停止录制，请稍等")
+    try:
+        if st.recording is None:
+            raise RecordError(409, "没有在录制")
+        st.stopping = True
+        try:
+            return _stop(st)
+        finally:
+            st.stopping = False
+            st.stopped_at = time.monotonic()
+    finally:
+        st.record_lock.release()
+
+
+def _stop(st) -> dict:
     rec = st.recording
-    if rec is None:
-        raise RecordError(409, "没有在录制")
     rec.stop.set()
+    # 后面要等线程、挑目标图、选锚点，要好几秒：先让人知道已经在停了
+    st.app.io.chime("stop")
+    st.hub.publish({"type": "record_state", "recording": True, "stopping": True, "script_id": rec.script_id})
     rec.thread.join(timeout=5)
     if rec.sampler:
         rec.sampler.join(timeout=5)
@@ -169,6 +199,10 @@ def stop_recording(st) -> dict:
 
 def toggle_recording(st) -> None:
     """全局快捷键：没在录就开始录当前打开的宏，在录就停止。在快捷键监听线程里调用。"""
+    if st.record_lock.locked():
+        return  # 上一下还在处理（正在开始 / 停止）：连按的这一下不算
+    if not st.recording and time.monotonic() - st.stopped_at < RESTART_COOLDOWN:
+        return  # 刚停下又按了一下：多半是连按，不算重新开始
     try:
         if st.recording:
             stop_recording(st)

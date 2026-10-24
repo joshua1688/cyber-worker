@@ -72,3 +72,47 @@ def test_stable_title():
     assert stable_title("海绵宝宝大战…等2个会话") == "海绵宝宝大战"
     assert stable_title("海绵宝宝大战括约鸡") == "海绵宝宝大战括约鸡"
     assert stable_title("(3) 微信") == "微信"
+
+
+def test_listen_counts_modifiers_already_held_at_start(monkeypatch):
+    """按 Alt+R 开始录制：监听开起来时 Alt 还按着、R 还没松开（或按住自动重复），不能录成一个字母 r。"""
+    import threading
+
+    from pynput import keyboard, mouse
+
+    from cyber_worker.macro.io.base import WindowGeometry
+    from cyber_worker.macro.recorder import RecordingBuilder, listen
+
+    callbacks = {}
+    ready = threading.Event()
+
+    class FakeListener:
+        def __init__(self, **kw):
+            callbacks.update(kw)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(keyboard, "Listener", FakeListener)
+    monkeypatch.setattr(mouse, "Listener", FakeListener)
+
+    b = RecordingBuilder(WindowGeometry(0, 0, 400, 300, 1.0), ignore_combos=["alt+r"])
+    stop = threading.Event()
+
+    def held():
+        ready.set()
+        return {"alt"}
+
+    t = threading.Thread(target=listen, args=(b, stop, lambda x, y: (x, y)), kwargs={"held": held})
+    t.start()
+    assert ready.wait(2)
+    press, release = callbacks["on_press"], callbacks["on_release"]
+    press(keyboard.KeyCode.from_char("r"))  # 还按着 Alt：是快捷键本身，不录
+    release(keyboard.Key.alt_l)
+    press(keyboard.KeyCode.from_char("h"))  # 松开 Alt 之后照常录
+    stop.set()
+    t.join(2)
+    assert [(s.action, s.text) for s in b.steps] == [("type", "h")]

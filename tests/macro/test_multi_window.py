@@ -123,3 +123,21 @@ def test_studio_window_recognized_by_new_and_old_titles():
     assert is_studio_title("审计 · 赛博打工人 - Microsoft Edge")
     assert is_studio_title("宏编辑 · cyber-worker studio - Google Chrome")  # 还开着的旧标签页
     assert not is_studio_title("赛博打工人 README - GitHub")  # 别的网页提到这个名字不算
+
+
+def test_other_programs_are_not_recorded():
+    """录制忘了停、去终端 / 浏览器里干别的：那些操作不能混进 QQ 的宏。"""
+    clock = Clock()
+    b = RecordingBuilder(MAIN_GEO, now=clock, record_delays=False,
+                         primary=Window(app="QQ.exe", title="QQ", width=320, height=740))
+    term = (WindowInfo("powershell", "本地分支", 1000, 700), WindowGeometry(600, 0, 1000, 700, 1.0))
+    b.on_click(188, 225, "left", (), QQ_MAIN)
+    b.on_click(700, 300, "left", (), term)
+    for ch in "daochu":
+        b.on_char(ch, term)
+    b.on_combo("ctrl+c", term)
+    b.on_char("你", CHAT)  # QQ 自己弹出的聊天窗口照常录
+
+    s = b.build("qq", Window(app="QQ", title="QQ", width=320, height=740))
+    assert [(st.action, st.win) for st in s.steps] == [("click", None), ("type", "w2")]
+    assert list(s.windows) == ["w2"]

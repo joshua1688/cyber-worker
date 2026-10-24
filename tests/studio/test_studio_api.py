@@ -296,7 +296,8 @@ def test_record_across_windows_saves_window_and_its_anchor(client):
     """QQ 那种场景：主窗口双击会话，弹出的聊天窗口里打字、点发送。"""
     from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
 
-    chat = (WindowInfo("QQ", "My Sky等2个会话", 300, 200), WindowGeometry(150, 80, 300, 200, 1.0))
+    # 同一个程序弹出的聊天窗口（别的程序的窗口不录）
+    chat = (WindowInfo("Demo", "My Sky等2个会话", 300, 200), WindowGeometry(150, 80, 300, 200, 1.0))
 
     def listen_two_windows(builder, stop):
         main = (WindowInfo("Demo", "Demo 窗口", 400, 300), builder.geo)
@@ -312,7 +313,7 @@ def test_record_across_windows_saves_window_and_its_anchor(client):
     client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
     r = client.post("/api/record/stop").json()
     s = r["script"]
-    assert s["windows"] == {"w2": {"app": "QQ", "title": "My Sky", "width": 300, "height": 200, "scale": 1.0}}
+    assert s["windows"] == {"w2": {"app": "Demo", "title": "My Sky", "width": 300, "height": 200, "scale": 1.0}}
     assert [(x["action"], x.get("win")) for x in s["steps"]] == [("click", None), ("type", "w2"), ("click", "w2")]
     assert s["steps"][0]["count"] == 2
     typed, send = s["steps"][1], s["steps"][2]
@@ -345,6 +346,47 @@ def test_record_hotkey_toggles_current_macro(client):
     done = events[-1]
     assert done["id"] == d["id"] and done["added"] >= 3 and done["rec_id"] == 1
 
+
+
+def test_record_hotkey_double_press_does_not_restart(client):
+    """停止要好几秒、人在别的窗口里看不到反应，会再按一下：不能又开一次录制，把后面的操作都录进去。"""
+    from cyber_worker.studio.routes.record import toggle_recording
+
+    st = client.app.state.studio
+    d = new_script(client)
+    client.post("/api/current", json={"script_id": d["id"]})
+    with client.websocket_connect("/ws") as ws:
+        toggle_recording(st)  # 开始
+        st.record_lock.acquire()  # 模拟「正在停止」：这时候按下的也不算
+        toggle_recording(st)
+        st.record_lock.release()
+        assert st.recording is not None
+        toggle_recording(st)  # 停止
+        toggle_recording(st)  # 紧跟着又按一下
+        assert st.recording is None and not st.stopping
+        events = []
+        while not events or events[-1]["type"] != "record_done":
+            events.append(ws.receive_json())
+    # 一按停止就先通知界面「正在停止」，最后才是结果
+    states = [(e["recording"], e.get("stopping", False)) for e in events if e["type"] == "record_state"]
+    assert states == [(True, False), (True, True), (False, False)]
+    assert [c for c in client.io.calls if c[0] == "chime"] == [("chime", "start"), ("chime", "stop")]
+    assert client.get("/api/status").json()["stopping"] is False
+    assert client.post("/api/record/stop").status_code == 409
+
+
+def test_record_hotkey_works_again_after_cooldown(client):
+    from cyber_worker.studio.routes import record
+
+    st = client.app.state.studio
+    d = new_script(client)
+    client.post("/api/current", json={"script_id": d["id"]})
+    record.toggle_recording(st)
+    record.toggle_recording(st)
+    st.stopped_at -= record.RESTART_COOLDOWN  # 过了冷却时间
+    record.toggle_recording(st)
+    assert st.recording is not None
+    record.toggle_recording(st)
 
 def test_hotkey_settings(client, tmp_path):
     """设置 → 快捷键：检查冲突、有冲突不让存、存了写进 config.toml 并立即按新键生效。"""

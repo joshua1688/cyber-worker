@@ -439,12 +439,13 @@ function renderStatus() {
   const el = $("#status");
   el.className = "status-pill" + (S.recording ? " rec" : S.running ? " busy" : "");
   const hk = prettyKey(S.recHotkey);
-  el.textContent = S.recording ? (hk ? `录制中 · 按 ${hk} 停止` : "录制中")
+  el.textContent = S.stopping ? "正在保存录制…" : S.recording ? (hk ? `录制中 · 按 ${hk} 停止` : "录制中")
     : S.running === "waiting" ? "等待开始" : S.running ? "执行中" : "空闲";
   el.title = S.hotkey ? `急停：${prettyKey(S.hotkey)}` : "";
   const btn = $("#btn-record");
   btn.classList.toggle("recording", S.recording);
-  btn.innerHTML = `<span class="rec-dot"></span><span>${S.recording ? "停止" : "录制"}</span>`
+  btn.disabled = !!S.stopping;  // 状态栏写着在保存，几秒就好
+  btn.innerHTML = `<span class="rec-dot"></span><span>${S.stopping ? "保存中…" : S.recording ? "停止" : "录制"}</span>`
     + (hk ? `<kbd class="kbd-in">${escapeHtml(hk)}</kbd>` : "");
   btn.title = S.recording
     ? `停止录制，把录到的步骤追加到末尾（在任何窗口里按 ${hk} 也行）`
@@ -1324,7 +1325,10 @@ function recStartHint() {
 }
 
 async function stopRecording() {
+  S.stopping = true;  // 停止要等好几秒：先让人看到已经在停了
+  renderStatus();
   const d = await attempt(() => api("POST", "/api/record/stop"));
+  S.stopping = false;
   if (d) await handleRecordDone(d);
   else {
     S.recording = false;
@@ -1337,6 +1341,7 @@ async function handleRecordDone(d) {
   if (d.rec_id && d.rec_id <= S.lastRecId) return; // 同一次录制的结果已经处理过
   S.lastRecId = d.rec_id || S.lastRecId;
   S.recording = false;
+  S.stopping = false;
   S.recSteps = [];
   if (d.id !== S.id) return render(); // 录的是别的宏（比如切走了）：不覆盖当前画面
   applyDetail(d);
@@ -1438,6 +1443,7 @@ async function syncStatus() {
   S.recHotkey = st.record_hotkey;
   const wasRecording = S.recording;
   S.recording = !!st.recording;
+  S.stopping = !!st.stopping;
   if (S.running && !st.busy) S.running = false;
   if (!S.running) clearInterval(runWatch);
   if (wasRecording !== S.recording || !S.running) render();
@@ -1458,6 +1464,7 @@ connectEvents((ev) => {
   } else if (ev.type === "record_state") {
     const started = ev.recording && !S.recording;
     S.recording = ev.recording;
+    S.stopping = !!ev.stopping;  // 按了快捷键停止：在保存录到的步骤
     if (started) {
       S.recSteps = [];
       if (ev.script_id === S.id) toast(recStartHint());
@@ -1565,6 +1572,7 @@ $("#btn-tour").addEventListener("click", startTour);
     S.hotkey = st.panic_hotkey;
     S.recHotkey = st.record_hotkey;
     S.recording = !!st.recording;
+    S.stopping = !!st.stopping;
     // 配置的快捷键被别的软件占了、自动换成了备选：告诉用户
     (st.hotkey_notes || []).forEach((n) => toast(n));
   }

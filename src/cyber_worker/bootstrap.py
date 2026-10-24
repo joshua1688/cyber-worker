@@ -82,7 +82,7 @@ def build(config_path: str | Path = "config.toml") -> App:
         executor=executor,
         listen=lambda builder, stop: listen(builder, stop, io.input_to_points,
                                             locate=io.window_geometry_at, foreground=io.foreground,
-                                            ime=io.ime_active),
+                                            ime=io.ime_active, held=io.held_modifiers),
         wait_click=wait_for_click,
         hotkeys=HotkeyManager(platform_backend()),
         config_path=Path(config_path),

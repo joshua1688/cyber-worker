@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -71,6 +72,11 @@ class _Press:
     seq: int = 0
 
 
+def _app(name: str) -> str:
+    """QQ.exe / QQ / qq 算同一个程序。"""
+    return re.sub(r"\.(exe|app)$", "", name.strip(), flags=re.I).lower()
+
+
 def _near(a: WindowGeometry, b: WindowGeometry, tol: float = 3) -> bool:
     return all(abs(p - q) <= tol for p, q in ((a.x, b.x), (a.y, b.y), (a.width, b.width), (a.height, b.height)))
 
@@ -96,6 +102,8 @@ class RecordingBuilder:
         # 录制 / 急停这些全局快捷键本身不能被录进宏
         self.ignore_combos = {normalize_combo(c) for c in ignore_combos}
         self.windows: dict[str, Window] = dict(windows or {})  # 主窗口以外的窗口（含之前录过的）
+        # 只录目标程序（主窗口的程序，加上宏里已有窗口的程序）：录制没停时在终端、浏览器里的操作不能混进来
+        self.apps = {_app(w.app) for w in (primary, *self.windows.values()) if w is not None}
         self.geos: dict[str, WindowGeometry] = {MAIN: geo}  # 各窗口现在的位置
         self.focus = MAIN  # 键盘输入当前进的是哪个窗口
         self.now = now
@@ -122,6 +130,8 @@ class RecordingBuilder:
             return MAIN
         info, geo = where
         if is_studio_title(info.title):
+            return None
+        if self.primary and _app(info.app) not in self.apps:
             return None
         title = stable_title(info.title)
         same_app = lambda w: w.app.lower() == info.app.lower()  # noqa: E731
@@ -346,11 +356,13 @@ def listen(
     locate: Callable[[float, float], Where] | None = None,
     foreground: Callable[[], Where] | None = None,
     ime: Callable[[], bool] | None = None,
+    held: Callable[[], set[str]] | None = None,
     include_injected: bool = False,
 ) -> None:
     """用 pynput 监听真实输入喂给 builder，直到 stop 被置位。to_points 把系统输入坐标换成点。
 
     locate(x, y)：系统输入坐标处是哪个窗口；foreground()：前台是哪个窗口。不传就只认主窗口。
+    held()：此刻按着的修饰键。用快捷键开始录制时 Alt 还按着，监听没看到它按下，要问一下。
 
     include_injected=True 时程序自己发出的键鼠也会录进去——只用于「录制 → 回放」的自测，正常录制不要打开。
     """
@@ -441,4 +453,10 @@ def listen(
         keyboard.Listener(on_press=kw(on_press, 1), on_release=kw(on_release, 1)),
         mouse.Listener(on_click=kw(on_click, 4), on_scroll=kw(on_scroll, 4)),
     ):
+        # 监听已经开着再问：之后松开修饰键一定能收到，不会一直当它按着
+        if held is not None:
+            try:
+                modifiers.update(m for m in held() if m in _MODIFIERS)
+            except Exception:  # noqa: BLE001
+                log.exception("读取修饰键状态失败")
         stop.wait()

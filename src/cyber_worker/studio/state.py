@@ -104,6 +104,10 @@ class Studio:
     current_id: str | None = None  # 界面上当前打开的宏：按录制快捷键时录的就是它
     record_delays: bool = True  # 上次录制时「录制延迟」的选择，快捷键开始录制时沿用
     record_seq: int = 0  # 每次录制的编号：界面靠它避免同一次录制的结果处理两遍
+    # 开始 / 停止录制互斥：停止要好几秒，期间再按快捷键不能又开一次录制
+    record_lock: threading.Lock = field(default_factory=threading.Lock)
+    stopping: bool = False  # 正在停止（保存录到的步骤）
+    stopped_at: float = float("-inf")  # 上次停止录制完成的时间（time.monotonic）
 
     @property
     def user_data(self) -> Path:

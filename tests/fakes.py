@@ -44,6 +44,12 @@ class FakeIO:
     def ime_active(self):
         return False
 
+    def held_modifiers(self):
+        return set()
+
+    def chime(self, kind):
+        self.calls.append(("chime", kind))
+
     def calibrate(self, window: Window) -> WindowGeometry:
         self.calibrations += 1
         key = window.title or window.app

@@ -86,6 +86,7 @@ def status(request: Request):
     return {
         "busy": st.app.executor.busy,
         "recording": st.recording.script_id if st.recording else None,
+        "stopping": st.stopping,  # 正在停止录制、保存步骤
         # 实际生效的键（配置的被占用时会自动换成备选），以及换了的说明
         "panic_hotkey": st.app.hotkeys.effective("panic"),
         "record_hotkey": st.app.hotkeys.effective("record"),

@@ -119,6 +119,16 @@ class MacScreenIO(PynputInput):
         # TODO(macOS 实机)：用 TISCopyCurrentKeyboardInputSource 判断当前是不是中文输入模式
         return False
 
+    def held_modifiers(self) -> set[str]:
+        # TODO(macOS 实机)：用 CGEventSourceFlagsState 读修饰键
+        return set()
+
+    def chime(self, kind: str) -> None:
+        sound = {"start": "Tink", "stop": "Pop"}.get(kind)
+        if sound:
+            subprocess.Popen(["afplay", f"/System/Library/Sounds/{sound}.aiff"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     def calibrate(self, window: Window) -> WindowGeometry:
         if not _APP_NAME.match(window.app):
             raise CalibrationError(f"进程名不合法：{window.app!r}")
