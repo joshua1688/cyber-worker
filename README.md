@@ -415,7 +415,7 @@ cyber-worker/
 │       │   ├── pending.py          # Pending actions (comments + posts; approve / edit / reject with reason)
 │       │   └── audit.py            # Audit page (sorted by suspicion)
 │       └── static/                 # Frontend (vanilla HTML + JS + Canvas, no framework)
-│           ├── index.html          # Macro editor (Razer-Synapse style): add / step list / canvas + params·macro·run tabs
+│           ├── index.html          # Macro editor: add / step list / canvas + params·macro·run tabs
 │           ├── pending.html        # Pending actions page
 │           ├── audit.html          # Audit replay page (single screenshot + expected state)
 │           ├── common.js           # Icons, appearance (dark / light / system), fetch wrapper, toasts, WebSocket

@@ -415,7 +415,7 @@ cyber-worker/
 │       │   ├── pending.py          # 待确认动作（评论 + 发帖；通过 / 修改 / 拒绝，拒绝需选原因）
 │       │   └── audit.py            # 审计页（按可疑度排序）
 │       └── static/                 # 前端（原生 HTML + JS + Canvas，不引框架）
-│           ├── index.html          # 宏设计（参考雷云）：添加 / 步骤列表 / 画布 + 参数·宏设置·运行 标签页
+│           ├── index.html          # 宏设计：添加 / 步骤列表 / 画布 + 参数·宏设置·运行 标签页
 │           ├── pending.html        # 待确认动作页
 │           ├── audit.html          # 审计回放页（单张截图 + 预期状态）
 │           ├── common.js           # 图标、外观（深色 / 浅色 / 跟随系统）、请求封装、提示、WebSocket
