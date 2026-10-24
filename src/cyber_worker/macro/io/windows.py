@@ -281,21 +281,19 @@ def held_modifiers() -> set[str]:
     return {name for name, vks in _HELD_VK.items() if any(user32.GetAsyncKeyState(vk) & 0x8000 for vk in vks)}
 
 
-# 开始：低→高两声；停止：高→低两声。Beep 会阻塞，放到后台线程
-_CHIMES = {"start": ((880, 70), (1320, 90)), "stop": ((1320, 70), (880, 90))}
-
-
 def chime(kind: str) -> None:
+    """异步播放提示音（合成好的 wav），立刻返回。"""
     import winsound
 
-    def play() -> None:
-        try:
-            for freq, ms in _CHIMES.get(kind, ()):
-                winsound.Beep(freq, ms)
-        except RuntimeError:  # 没有声卡等：静默
-            pass
+    from cyber_worker.macro.io.chime import NOTES, chime_file
 
-    threading.Thread(target=play, daemon=True, name="chime").start()
+    if kind not in NOTES:
+        return
+    try:
+        winsound.PlaySound(str(chime_file(kind)),
+                           winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+    except (RuntimeError, OSError):  # 没有声卡、临时目录写不了等：静默
+        pass
 
 
 def _bring_to_front(hwnd) -> None:

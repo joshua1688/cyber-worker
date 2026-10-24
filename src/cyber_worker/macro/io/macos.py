@@ -124,9 +124,10 @@ class MacScreenIO(PynputInput):
         return set()
 
     def chime(self, kind: str) -> None:
-        sound = {"start": "Tink", "stop": "Pop"}.get(kind)
-        if sound:
-            subprocess.Popen(["afplay", f"/System/Library/Sounds/{sound}.aiff"],
+        from cyber_worker.macro.io.chime import NOTES, chime_file
+
+        if kind in NOTES:  # 和 Windows 播同一段合成的提示音
+            subprocess.Popen(["afplay", str(chime_file(kind))],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def calibrate(self, window: Window) -> WindowGeometry:
