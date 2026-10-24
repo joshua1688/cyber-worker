@@ -69,6 +69,8 @@ class Executor:
         self._queue: queue.Queue[tuple[Callable[[Gate], object], Future, float, WaitCallback | None] | None] = (
             queue.Queue())
         self._running = False
+        # 排队 + 正在跑的任务数。busy 看它：取出任务到标记「在跑」之间队列已空，只看两者会有一瞬间误报空闲
+        self._pending = 0
         self._generation = 0
         self._lock = threading.Lock()
         self._worker = threading.Thread(target=self._loop, name="executor", daemon=True)
@@ -82,12 +84,18 @@ class Executor:
         """
         fut: Future[T] = Future()
         idle = self.resume_after_idle_sec if resume_after_idle_sec is None else resume_after_idle_sec
+        with self._lock:
+            self._pending += 1
         self._queue.put((job, fut, idle, on_wait))
         return fut
 
+    def _finished(self) -> None:
+        with self._lock:
+            self._pending -= 1
+
     @property
     def busy(self) -> bool:
-        return self._running or not self._queue.empty()
+        return self._pending > 0
 
     def panic(self) -> int:
         """急停。返回被取消的排队任务数。"""
@@ -103,6 +111,7 @@ class Executor:
                     self._queue.put(None)
                     break
                 item[1].cancel()
+                self._pending -= 1
                 dropped += 1
             return dropped
 
@@ -127,6 +136,7 @@ class Executor:
                 return
             job, fut, idle, on_wait = item
             if not fut.set_running_or_notify_cancel():
+                self._finished()
                 continue
             with self._lock:
                 gate = _JobGate(self, self._generation, idle)
@@ -138,3 +148,4 @@ class Executor:
                 fut.set_exception(e)
             finally:
                 self._running = False
+                self._finished()

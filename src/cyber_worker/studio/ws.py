@@ -16,6 +16,11 @@ class Hub:
         self._clients: set[asyncio.Queue] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
 
+    @property
+    def clients(self) -> int:
+        """连着的页面数。"""
+        return len(self._clients)
+
     def publish(self, event: dict[str, Any]) -> None:
         """线程安全，可在任意线程调用。"""
         loop = self._loop

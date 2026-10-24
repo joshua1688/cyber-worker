@@ -12,11 +12,13 @@ from cyber_worker.macro.io.hotkeys import DEFAULTS, LABELS
 from cyber_worker.macro.io.pynput_input import normalize_combo
 from cyber_worker.studio.routes.edit import studio
 from cyber_worker.studio.routes.record import toggle_recording
+from cyber_worker.studio.routes.run import hotkey_dry_run
 
 router = APIRouter(prefix="/api/hotkeys")
 
 # 名字 → config.toml 里的位置
-CONFIG_KEYS = {"record": ("studio", "record_hotkey"), "panic": ("executor", "panic_hotkey")}
+CONFIG_KEYS = {"record": ("studio", "record_hotkey"), "dry_run": ("studio", "dry_run_hotkey"),
+               "panic": ("executor", "panic_hotkey")}
 
 
 def configured(config) -> dict[str, str]:
@@ -33,6 +35,7 @@ def bind(st) -> None:
     st.app.hotkeys.apply(configured(st.app.config), {
         # 开始录制要校准窗口、截图，耗时约 1 秒：放到单独线程，别卡住快捷键监听
         "record": lambda: threading.Thread(target=toggle_recording, args=(st,), daemon=True).start(),
+        "dry_run": lambda: threading.Thread(target=hotkey_dry_run, args=(st,), daemon=True).start(),
         "panic": panic,
     })
     publish(st)

@@ -19,13 +19,15 @@ from cyber_worker.macro.io.pynput_input import (
     normalize_combo,
 )
 
-DEFAULTS = {"record": StudioConfig().record_hotkey, "panic": ExecutorConfig().panic_hotkey}
+DEFAULTS = {"record": StudioConfig().record_hotkey, "dry_run": StudioConfig().dry_run_hotkey,
+            "panic": ExecutorConfig().panic_hotkey}
 # 默认键被占用时依次尝试
 CANDIDATES = {
     "record": ["alt+r", "alt+shift+r", "ctrl+alt+f9", "ctrl+alt+f10", "ctrl+shift+f9"],
+    "dry_run": ["alt+t", "alt+shift+t", "ctrl+alt+f8", "ctrl+shift+f8"],
     "panic": [DEFAULTS["panic"], "ctrl+alt+f12", "ctrl+shift+f12"],
 }
-LABELS = {"record": "开始 / 停止录制", "panic": "急停"}
+LABELS = {"record": "开始 / 停止录制", "dry_run": "空跑当前宏", "panic": "急停"}
 
 # 系统保留：按了会被系统拦走，或者会破坏日常操作（复制粘贴、切换窗口……）
 _RESERVED_COMMON = {

@@ -102,7 +102,12 @@ class Studio:
     run_idle_sec: float = 2.0  # 设置里可改（[studio] run_idle_sec）
     latest: dict[str, Frame] = field(default_factory=dict)
     recording: Recording | None = None
-    current_id: str | None = None  # 界面上当前打开的宏：按录制快捷键时录的就是它
+    current_id: str | None = None  # 界面上当前打开的宏：按录制 / 空跑快捷键时用的就是它
+    current_vars: dict[str, str] = field(default_factory=dict)  # 界面上给它填的变量（空跑快捷键用）
+    # 报告当前宏的那个页面（每个标签页一个随机编号）、它有没有没保存的修改：
+    # 有的话空跑快捷键交给那个页面去跑（先写回再跑，和点按钮一样），不然跑的是磁盘上的旧版本
+    current_page: str | None = None
+    current_dirty: bool = False
     record_delays: bool = True  # 上次录制时「录制延迟」的选择，快捷键开始录制时沿用
     record_append: bool = False  # 录制时接在已有步骤后面，而不是替换（[studio] record_append）
     # 开始 / 停止录制互斥：停止要好几秒，期间再按快捷键不能又开一次录制
@@ -252,7 +257,7 @@ class Studio:
                 "latest": latest and {"url": self.file_url(latest.path), "scale": latest.scale,
                                       "win": latest.win},
             },
-            "problems": problems(script, set(pages)),
+            "problems": problems(script, {name: {a.win for a in fp.anchors} for name, fp in book.pages.items()}),
             # 按图找的目标图：步骤编号 → 图片地址（步骤参数里显示缩略图）
             "targets": {
                 s.id: self.file_url(script.base_dir / s.target.image)
@@ -325,8 +330,8 @@ def _display_name(path: Path) -> str:
         return path.stem
 
 
-def problems(script: Script, pages: set[str]) -> list[dict]:
-    """执行前就能发现的问题；runner 遇到这些也会拒绝执行。"""
+def problems(script: Script, pages: dict[str, set[str | None]]) -> list[dict]:
+    """执行前就能发现的问题；runner 遇到这些也会拒绝执行。pages：页面名 → 它的锚点截自哪些窗口（None = 主窗口）。"""
     out = []
     seen: set[str] = set()
     for step in script.steps:
@@ -340,6 +345,8 @@ def problems(script: Script, pages: set[str]) -> list[dict]:
             add("输入 / 发送前必须指定所在页面（expected_page）")
         if step.expected_page and step.expected_page not in pages:
             add(f"页面 {step.expected_page} 还没有锚点")
+        elif step.expected_page and step.win not in pages[step.expected_page]:
+            add(f"页面 {step.expected_page} 的锚点截自别的窗口，在这一步的窗口里永远对不上：换一个页面，或在这个窗口里框一个锚点")
         if isinstance(step, TypeText) and step.typed_with_ime:
             add(f"录制时开着中文输入法，录到的只是按键「{step.text}」：请改成实际要输入的文字")
         if isinstance(step, TypeText):
@@ -351,6 +358,8 @@ def problems(script: Script, pages: set[str]) -> list[dict]:
                 add("选一个要等的页面")
             elif step.page not in pages:
                 add(f"页面 {step.page} 还没有锚点")
+            elif step.win not in pages[step.page]:
+                add(f"页面 {step.page} 的锚点截自别的窗口，在这一步的窗口里永远对不上：换一个页面，或在这个窗口里框一个锚点")
     return out
 
 

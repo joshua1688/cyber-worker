@@ -20,10 +20,14 @@ const S = {
   recSteps: [],
   running: false, // false | "waiting"（等用户松开键鼠）| "running"
   recHotkey: "", // 开始 / 停止录制的全局快捷键
+  dryHotkey: "", // 空跑当前宏的全局快捷键
   seenRecIds: new Set(), // 处理过的录制结果：按钮的响应和推送事件可能各来一次
   runMarks: {}, // step_id → 最近一次运行的状态
   hotkey: "",
+  reportedDirty: false, // 上次告诉服务端的「有没保存的修改」
 };
+// 这个标签页的编号：空跑快捷键遇到没保存的修改时，交给报告它的那个页面去跑
+const PAGE_ID = crypto.randomUUID?.() ?? String(Math.random()).slice(2);
 
 const NEEDS_PAGE = (s) => s.action === "type" || !!s.sends;
 const VAR_RE = /\{([\p{L}\p{N}_]+)\}/gu;
@@ -69,7 +73,7 @@ async function loadList(selectId) {
     S.id = null;
     S.script = null;
     S.detail = null;
-    api("POST", "/api/current", { script_id: null }).catch(() => {});
+    reportCurrent();
     render();
     await showFrame();
   }
@@ -86,10 +90,19 @@ async function open(id) {
   S.checked.clear();
   $("#run-log").innerHTML = "";
   try { localStorage.setItem("cw.script", id); } catch {}
-  api("POST", "/api/current", { script_id: id }).catch(() => {});
+  reportCurrent();
   applyDetail(d);
   S.frame = d.frames.reference ? "reference" : "latest";
   await showFrame();
+}
+
+// 告诉服务端界面上开着哪个宏、填了哪些变量、有没有没保存的修改：按录制 / 空跑快捷键时用的就是它们
+function currentBody(dirty = S.dirty) {
+  return { script_id: S.id, variables: S.id ? savedVars() : {}, dirty: !!S.id && dirty, page: PAGE_ID };
+}
+function reportCurrent() {
+  S.reportedDirty = S.dirty;
+  api("POST", "/api/current", currentBody()).catch(() => {});
 }
 
 function remembered() {
@@ -261,9 +274,12 @@ function localProblems() {
     seen.add(s.id);
     if (NEEDS_PAGE(s) && !s.expected_page) add("输入 / 发送前必须指定所在页面");
     if (s.typed_with_ime) add(`录制时开着中文输入法，录到的只是按键「${s.text}」：请改成实际要输入的文字`);
+    const otherWin = (p) => `页面「${p}」的锚点截自别的窗口，在这一步的窗口里永远对不上：换一个页面，或在这个窗口里框一个锚点`;
     if (s.expected_page && !pages.has(s.expected_page)) add(`页面「${s.expected_page}」还没有锚点`);
+    else if (s.expected_page && !pageWins(s.expected_page).has(s.win || null)) add(otherWin(s.expected_page));
     if (s.action === "wait_page" && !s.page) add("选一个要等的页面");
     else if (s.action === "wait_page" && !pages.has(s.page)) add(`页面「${s.page}」还没有锚点`);
+    else if (s.action === "wait_page" && !pageWins(s.page).has(s.win || null)) add(otherWin(s.page));
     if (s.action === "type") {
       for (const v of varsIn(s.text)) {
         if (!S.script.variables.includes(v)) add(`{${v}} 没有声明为变量，会按原文输入`);
@@ -277,6 +293,7 @@ function localProblems() {
 
 function render() {
   const has = !!S.script;
+  if (S.id && S.dirty !== S.reportedDirty) reportCurrent();
   const busy = S.recording;
   $$("[data-add]").forEach((el) => (el.disabled = !has || busy));
   $("#btn-record").disabled = picking;
@@ -447,8 +464,11 @@ function renderStatus() {
   btn.disabled = !!S.stopping;  // 状态栏写着在保存，几秒就好
   btn.innerHTML = `<span class="rec-dot"></span><span>${S.stopping ? "保存中…" : S.recording ? "停止" : "录制"}</span>`
     + (hk ? `<kbd class="kbd-in">${escapeHtml(hk)}</kbd>` : "");
+  const dk = prettyKey(S.dryHotkey);
+  $("#btn-dry").title = `完整走一遍，但跳过「发送」${dk ? `（在任何窗口里按 ${dk} 也行）` : ""}`;
+  $("#btn-run").title = "真的执行，会发送（Ctrl / ⌘ + Enter 按两次也行）";
   btn.title = S.recording
-    ? `停止录制，把录到的步骤追加到末尾（在任何窗口里按 ${hk} 也行）`
+    ? `停止录制，保存录到的步骤（在任何窗口里按 ${hk} 也行）`
     : `录制你在目标窗口里的操作（在任何窗口里按 ${hk} 开始 / 停止）`;
 }
 
@@ -1051,6 +1071,7 @@ $("#run-vars").addEventListener("change", (e) => {
   const v = savedVars();
   v[e.target.dataset.var] = e.target.value;
   try { localStorage.setItem(`cw.vars.${S.id}`, JSON.stringify(v)); } catch {}
+  reportCurrent();
 });
 
 // 画面
@@ -1151,9 +1172,18 @@ function nextPageName() {
   return `页面${n}`;
 }
 
-// 输入 / 发送步骤还没指定页面的，自动填上 page 并保存
+// 页面的锚点截自哪些窗口（null = 主窗口）：页面只能用在同一个窗口的步骤上
+function pageWins(page) {
+  return new Set((S.detail?.pages?.[page] || []).map((a) => a.win || null));
+}
+
+// 同一窗口里的输入 / 发送步骤还没指定页面的，自动填上 page 并保存。别的窗口的步骤不填：
+// 主窗口的锚点拿去核对聊天窗口，永远对不上
 async function autoAssignPage(page) {
-  const idx = S.script.steps.map((s, i) => (NEEDS_PAGE(s) && !s.expected_page ? i : -1)).filter((i) => i >= 0);
+  const wins = pageWins(page);
+  const idx = S.script.steps
+    .map((s, i) => (NEEDS_PAGE(s) && !s.expected_page && wins.has(s.win || null) ? i : -1))
+    .filter((i) => i >= 0);
   if (!idx.length) return;
   mutate((sc) => idx.forEach((i) => (sc.steps[i].expected_page = page)));
   if (await save()) toast(`已把「${page}」设为第 ${idx.map((i) => i + 1).join("、")} 步的所在页面`);
@@ -1386,16 +1416,23 @@ $("#btn-record").addEventListener("click", () =>
 $("#btn-dry").addEventListener("click", () => run(true));
 $("#btn-run").addEventListener("click", (e) => confirmClick(e.currentTarget, "确认执行（会真的发送）", () => run(false)));
 
+let runStarting = false; // 写回、排队这一小段时间里再按一次（快捷键连按两下）不重复跑
 async function run(dryRun) {
-  if (!(await ensureSaved())) return;
-  const variables = {};
-  $$("[data-var]").forEach((el) => (variables[el.dataset.var] = el.value));
-  const missing = S.script.variables.filter((v) => !variables[v]);
-  if (missing.length) {
-    setTab("run");
-    return toast(`先填变量：${missing.join(", ")}`, true);
+  if (runStarting || S.running) return;
+  runStarting = true;
+  try {
+    if (!(await ensureSaved())) return;
+    const variables = {};
+    $$("[data-var]").forEach((el) => (variables[el.dataset.var] = el.value));
+    const missing = S.script.variables.filter((v) => !variables[v]);
+    if (missing.length) {
+      setTab("run");
+      return toast(`先填变量：${missing.join(", ")}`, true);
+    }
+    await attempt(() => api("POST", `/api/scripts/${S.id}/run`, { dry_run: dryRun, variables }));
+  } finally {
+    runStarting = false;
   }
-  await attempt(() => api("POST", `/api/scripts/${S.id}/run`, { dry_run: dryRun, variables }));
 }
 
 $("#btn-panic").addEventListener("click", async () => {
@@ -1423,6 +1460,15 @@ document.addEventListener("keydown", (e) => {
   const typing = e.target.matches("input, textarea, select");
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); save(); return; }
+  if (mod && e.key === "Enter") {
+    // 执行会真的发送：和点按钮一样，第一下只是准备，4 秒内再按一下才执行。没有全局快捷键
+    e.preventDefault();
+    const b = $("#btn-run");
+    if (b.disabled) return;
+    b.click();
+    if (b.dataset.armed) toast(`再按一次 ${IS_MAC ? "⌘" : "Ctrl"}+Enter 确认执行（会真的发送）`);
+    return;
+  }
   if (typing || $("#new-dialog").open) return;
   if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
@@ -1434,6 +1480,12 @@ document.addEventListener("keydown", (e) => {
 
 window.addEventListener("beforeunload", (e) => {
   if (S.dirty) e.preventDefault();
+});
+// 关掉页面时撤回「有没保存的修改」，不然空跑快捷键会一直交给这个已经不在的页面
+window.addEventListener("pagehide", () => {
+  if (!S.dirty) return;
+  const body = new Blob([JSON.stringify(currentBody(false))], { type: "application/json" });
+  navigator.sendBeacon("/api/current", body);
 });
 
 // 执行中定期跟服务端对一次状态：万一「完成」事件在断线时丢了，按钮也不会一直灰着
@@ -1447,6 +1499,7 @@ async function syncStatus() {
   if (!st) return;
   S.hotkey = st.panic_hotkey;
   S.recHotkey = st.record_hotkey;
+  S.dryHotkey = st.dry_run_hotkey;
   const wasRecording = S.recording;
   S.recording = !!st.recording;
   S.stopping = !!st.stopping;
@@ -1486,6 +1539,8 @@ connectEvents((ev) => {
     Settings.applyRemote(ev);
   } else if (ev.type === "run_wait" && ev.script_id === S.id) {
     if (S.running === "waiting") onRunWait(ev);
+  } else if (ev.type === "dry_run_request" && ev.page === PAGE_ID && ev.script_id === S.id) {
+    run(true); // 按了空跑快捷键、这里有没保存的修改：和点「空跑」一样，先写回再跑
   } else if (ev.type === "run_state" && ev.script_id === S.id) {
     if (ev.state === "queued") {
       S.running = "waiting";
@@ -1534,6 +1589,7 @@ async function onReconnect() {
 function applyHotkeys(items) {
   const by = Object.fromEntries(items.map((it) => [it.name, it.combo]));
   S.recHotkey = by.record ?? S.recHotkey;
+  S.dryHotkey = by.dry_run ?? S.dryHotkey;
   S.hotkey = by.panic ?? S.hotkey;
   render();
 }
@@ -1567,7 +1623,7 @@ function startTour() {
       body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错；框选锚点后会自动填上。录制时最后那一下点击或回车会被自动标成「发送」，不对可以在这里改。",
       before: () => { if (S.script?.steps.length && S.selected < 0) select(0); setTab("step"); } },
     { el: "#pane-run", title: "先空跑，再执行",
-      body: "空跑会完整走一遍但跳过「发送」，每一步都有截图可点开看。确认没问题再点执行（要点两次确认）。",
+      body: `空跑会完整走一遍但跳过「发送」，每一步都有截图可点开看；录完在目标窗口里直接按 <kbd>${escapeHtml(prettyKey(S.dryHotkey) || "Alt+T")}</kbd> 就能空跑，不用切回来。确认没问题再点执行（要点两次确认，也可以按两次 Ctrl+Enter）。执行会真的发送，所以没有全局快捷键。`,
       before: () => setTab("run") },
     { el: "#btn-panic", title: "随时可以停",
       body: `点「急停」或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.hotkey) || "急停热键")}</kbd> 立刻中止。执行时你一动键鼠，它也会自己停下来。` },
@@ -1589,6 +1645,7 @@ $("#btn-tour").addEventListener("click", startTour);
   if (st) {
     S.hotkey = st.panic_hotkey;
     S.recHotkey = st.record_hotkey;
+    S.dryHotkey = st.dry_run_hotkey;
     S.recording = !!st.recording;
     S.stopping = !!st.stopping;
     // 配置的快捷键被别的软件占了、自动换成了备选：告诉用户

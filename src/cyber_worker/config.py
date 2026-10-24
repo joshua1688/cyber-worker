@@ -22,6 +22,8 @@ class ExecutorConfig(BaseModel):
 class StudioConfig(BaseModel):
     # 全局快捷键：开始 / 停止录制（同一个键切换）。在任何窗口里都能按，按键本身不会被录进宏
     record_hotkey: str = "alt+r"
+    # 全局快捷键：空跑当前宏（跳过「发送」，误按也不会发出去）。真正执行没有全局快捷键，只能在 studio 里确认
+    dry_run_hotkey: str = "alt+t"
     theme: Literal["dark", "light", "system"] = "dark"
     record_delays: bool = True  # 录制时把操作之间的间隔录成延迟行
     record_append: bool = False  # 录制时接在已有步骤后面；默认替换（重新录一遍就是要这一遍）

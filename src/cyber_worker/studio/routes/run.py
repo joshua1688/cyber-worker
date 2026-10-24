@@ -34,6 +34,42 @@ def run(script_id: str, body: RunRequest, request: Request):
     st = studio(request)
     if st.recording:
         raise HTTPException(409, "正在录制，先停止录制")
+    start_run(st, script_id, dry_run=body.dry_run, variables=body.variables)
+    return {"queued": True}
+
+
+def hotkey_dry_run(st) -> None:
+    """全局快捷键：空跑界面上当前打开的宏。在快捷键线程里调用，出问题只弹提示，不往外抛。"""
+    def tell(text: str) -> None:
+        st.hub.publish({"type": "toast", "error": True, "text": text})
+
+    try:
+        if not st.current_id:
+            return tell("先在 studio 里选一个宏，再按快捷键空跑")
+        if st.recording or st.stopping:
+            return tell("正在录制，先停止录制再空跑")
+        if st.app.executor.busy:
+            return tell("正在执行，等这一次跑完再空跑")  # 连按两下也只跑一次
+        if st.current_dirty and st.hub.clients:
+            # 页面上有没保存的修改：让那个页面自己跑，它会先写回、检查变量，和点「空跑」按钮一样
+            st.app.io.chime("start")
+            return st.hub.publish({"type": "dry_run_request", "script_id": st.current_id,
+                                   "page": st.current_page})
+        script = st.load(st.current_id)
+        missing = script.missing_variables(st.current_vars)
+        if missing:
+            return tell(f"先在 studio 里填变量：{', '.join(missing)}")
+        st.app.io.chime("start")
+        start_run(st, st.current_id, dry_run=True, variables=st.current_vars)
+    except HTTPException as e:
+        tell(str(e.detail))
+    except Exception as e:  # noqa: BLE001 —— 快捷键线程里不能抛出去
+        tell(f"空跑出错：{e}")
+
+
+def start_run(st, script_id: str, *, dry_run: bool, variables: dict[str, str]) -> None:
+    """交给执行器排队；进度、结果都通过 run_state / run_entry 事件推给界面。"""
+    body = RunRequest(dry_run=dry_run, variables=variables)
     script = st.load(script_id)
     pages = PageBook.load(script.pages_path) if script.pages_path else None
 
@@ -71,7 +107,6 @@ def run(script_id: str, body: RunRequest, request: Request):
         st.hub.publish({"type": "run_state", "script_id": script_id, "state": "done", **result})
 
     fut.add_done_callback(done)
-    return {"queued": True}
 
 
 @router.post("/panic")
@@ -90,16 +125,24 @@ def status(request: Request):
         # 实际生效的键（配置的被占用时会自动换成备选），以及换了的说明
         "panic_hotkey": st.app.hotkeys.effective("panic"),
         "record_hotkey": st.app.hotkeys.effective("record"),
+        "dry_run_hotkey": st.app.hotkeys.effective("dry_run"),
         "hotkey_notes": list(st.app.hotkeys.notes.values()),
     }
 
 
 class Current(BaseModel):
     script_id: str | None
+    variables: dict[str, str] = {}  # 界面上给这个宏填的变量
+    dirty: bool = False  # 页面上有没保存的修改
+    page: str | None = None  # 报告的是哪个页面（标签页）
 
 
 @router.post("/current")
 def set_current(body: Current, request: Request):
-    """界面切换宏时告诉服务端：按录制快捷键时录的就是它。"""
-    studio(request).current_id = body.script_id
+    """界面切换宏、改变量、有了 / 没了未保存的修改时告诉服务端：按录制 / 空跑快捷键时用的就是它。"""
+    st = studio(request)
+    st.current_id = body.script_id
+    st.current_vars = body.variables
+    st.current_dirty = body.dirty
+    st.current_page = body.page
     return {"ok": True}

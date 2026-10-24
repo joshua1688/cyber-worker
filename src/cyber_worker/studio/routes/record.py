@@ -98,7 +98,7 @@ def _start(st, script_id: str, record_delays: bool, append: bool) -> None:
     except CalibrationError as e:
         raise RecordError(400, f"窗口校准失败：{e}") from e
     st.record_delays = record_delays
-    hotkeys = [st.app.hotkeys.effective("record"), st.app.hotkeys.effective("panic")]
+    hotkeys = [st.app.hotkeys.effective(n) for n in ("record", "dry_run", "panic")]
 
     def on_change(steps):
         st.hub.publish({"type": "record", "steps": [s.model_dump(mode="json") for s in steps]})

@@ -77,3 +77,30 @@ def test_pause_disabled_ignores_activity():
     ex = Executor(FakeActivity(idle=0), pause_on_user_input=False, poll_interval=0.01)
     assert ex.submit(lambda g: 1).result(timeout=2) == 1
     ex.shutdown()
+
+
+def test_busy_counts_queued_and_running_jobs():
+    """busy 不能有一瞬间误报空闲：空跑快捷键靠它挡住连按。"""
+    ex = Executor(poll_interval=0.01)
+    release = threading.Event()
+    started = threading.Event()
+
+    def slow(gate):
+        started.set()
+        release.wait(5)
+
+    assert not ex.busy
+    first = ex.submit(slow)
+    queued = ex.submit(slow)
+    assert ex.busy
+    assert started.wait(5) and ex.busy
+    assert ex.panic() == 1 and queued.cancelled()  # 排队的被取消，正在跑的还在
+    assert ex.busy
+    release.set()
+    first.result(timeout=5)
+    for _ in range(100):
+        if not ex.busy:
+            break
+        time.sleep(0.01)
+    assert not ex.busy
+    ex.shutdown()

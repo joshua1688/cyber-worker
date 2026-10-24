@@ -392,7 +392,8 @@ def test_hotkey_settings(client, tmp_path):
     """设置 → 快捷键：检查冲突、有冲突不让存、存了写进 config.toml 并立即按新键生效。"""
     r = client.get("/api/hotkeys").json()
     assert [(i["name"], i["combo"], i["default"]) for i in r["items"]] == [
-        ("record", "alt+r", "alt+r"), ("panic", "ctrl+shift+alt+.", "ctrl+shift+alt+.")]
+        ("record", "alt+r", "alt+r"), ("dry_run", "alt+t", "alt+t"),
+        ("panic", "ctrl+shift+alt+.", "ctrl+shift+alt+.")]
 
     def check(combo, name="record", other=None):
         return client.post("/api/hotkeys/check", json={"name": name, "combo": combo, "other": other}).json()
@@ -411,7 +412,7 @@ def test_hotkey_settings(client, tmp_path):
     assert r["items"][0]["combo"] == "ctrl+alt+f10"
     assert 'record_hotkey = "ctrl+alt+f10"' in (tmp_path / "config.toml").read_text(encoding="utf-8")
     assert client.get("/api/status").json()["record_hotkey"] == "ctrl+alt+f10"
-    assert sorted(client.hotkeys.bound) == ["ctrl+alt+f10", "ctrl+shift+alt+."]
+    assert sorted(client.hotkeys.bound) == ["alt+t", "ctrl+alt+f10", "ctrl+shift+alt+."]
 
     # 新键马上能用：按一下开始录制
     d = new_script(client)
@@ -430,7 +431,7 @@ def test_hotkey_capture_suspends_global_keys(client):
     client.post("/api/hotkeys/suspend")
     assert client.hotkeys.bound == {} and client.get("/api/hotkeys").json()["suspended"]
     client.post("/api/hotkeys/resume")
-    assert sorted(client.hotkeys.bound) == ["alt+r", "ctrl+shift+alt+."]
+    assert sorted(client.hotkeys.bound) == ["alt+r", "alt+t", "ctrl+shift+alt+."]
 
 
 def test_taken_hotkey_falls_back_and_tells_ui(tmp_path):
@@ -629,3 +630,77 @@ def test_record_append_setting_keeps_old_steps(client, tmp_path):
     client.post("/api/record/start", json={"script_id": sid, "record_append": False})
     r = client.post("/api/record/stop").json()
     assert len(r["script"]["steps"]) == r["added"]
+
+
+def test_dry_run_hotkey_runs_current_macro(client):
+    """在目标窗口里按 Alt+T：空跑界面上当前打开的宏（用界面上填的变量），不用切回 studio。"""
+    from cyber_worker.studio.routes.run import hotkey_dry_run
+
+    st = client.app.state.studio
+    assert client.get("/api/status").json()["dry_run_hotkey"] == "alt+t"
+    with client.websocket_connect("/ws") as ws:
+        hotkey_dry_run(st)  # 还没选宏
+        assert "先在 studio 里选一个宏" in ws.receive_json()["text"]
+
+        d = new_script(client)
+        sc = d["script"]
+        sc["steps"] = [{"id": "s01", "action": "type", "text": "{评论}"}]
+        sc["variables"] = ["评论"]
+        client.put(f"/api/scripts/{d['id']}/detail", json=sc)
+        client.post("/api/current", json={"script_id": d["id"]})
+        hotkey_dry_run(st)  # 变量没填
+        assert "先在 studio 里填变量：评论" in ws.receive_json()["text"]
+
+        client.post("/api/current", json={"script_id": d["id"], "variables": {"评论": "好看"}})
+        hotkey_dry_run(st)
+        hotkey_dry_run(st)  # 连按：正在跑，不再排一次
+        events = []
+        while not (events and events[-1].get("state") == "done"):
+            events.append(ws.receive_json())
+    states = [e["state"] for e in events if e["type"] == "run_state"]
+    assert states == ["queued", "running", "done"]
+    assert all(e["dry_run"] for e in events if e["type"] == "run_state" and "dry_run" in e)
+    assert any(e["type"] == "toast" and "正在执行" in e["text"] for e in events)
+    assert ("chime", "start") in client.io.calls
+
+
+def test_dry_run_hotkey_hands_unsaved_edits_to_the_page(client):
+    """页面上有没保存的修改（比如刚把输入法按键改成「你好」）：快捷键交给那个页面去跑，
+    它会先写回再跑；不能直接跑磁盘上的旧版本。"""
+    from cyber_worker.studio.routes.run import hotkey_dry_run
+
+    st = client.app.state.studio
+    d = new_script(client)
+    with client.websocket_connect("/ws") as ws:
+        client.post("/api/current", json={"script_id": d["id"], "dirty": True, "page": "tab-1"})
+        hotkey_dry_run(st)
+        ev = ws.receive_json()
+        assert ev == {"type": "dry_run_request", "script_id": d["id"], "page": "tab-1"}
+        assert not st.app.executor.busy  # 服务端自己没跑
+
+        # 保存后（或页面关掉时撤回）又直接跑文件
+        client.post("/api/current", json={"script_id": d["id"], "dirty": False, "page": "tab-1"})
+        hotkey_dry_run(st)
+        events = []
+        while not (events and events[-1].get("state") == "done"):
+            events.append(ws.receive_json())
+    assert not any(e["type"] == "dry_run_request" for e in events)
+
+
+def test_page_from_another_window_is_a_problem(client):
+    """主窗口的锚点拿去核对聊天窗口，永远对不上：执行前就要指出来。"""
+    d = new_script(client)
+    sid = d["id"]
+    client.post(f"/api/scripts/{sid}/capture")
+    d = client.post(f"/api/scripts/{sid}/anchors", json={
+        "page": "列表", "x": 50, "y": 40, "w": 40, "h": 30}).json()
+    sc = d["script"]
+    sc["windows"] = {"w2": sc["window"]}
+    sc["steps"] = [
+        {"id": "s01", "action": "type", "text": "你好", "expected_page": "列表"},
+        {"id": "s02", "win": "w2", "action": "type", "text": "你好", "expected_page": "列表"},
+    ]
+    r = client.put(f"/api/scripts/{sid}/detail", json=sc).json()
+    msgs = {p["step"]: p["message"] for p in r["problems"]}
+    assert "s01" not in msgs
+    assert "截自别的窗口" in msgs["s02"]

@@ -21,6 +21,7 @@ dry_run = false                 # 空跑：完整执行但跳过最后的「发�
 
 [studio]                        # 下面这些在 studio 右上角 ⚙ 设置里都能改，改了会写回这里
 # record_hotkey = "alt+r"       # 开始 / 停止录制的全局快捷键（在任何窗口里都能按）
+# dry_run_hotkey = "alt+t"      # 空跑当前宏的全局快捷键（跳过「发送」；真正执行没有全局快捷键）
 # theme = "dark"                # 外观：dark 深色 / light 浅色 / system 跟随系统
 # record_delays = true          # 录制时把操作之间的间隔录成延迟行
 # record_append = false         # 重新录制时接在已有步骤后面；默认替换旧步骤
