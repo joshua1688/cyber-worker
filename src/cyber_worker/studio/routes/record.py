@@ -16,7 +16,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from cyber_worker.macro.anchors import add_anchor, save_reference, save_shot, save_target_crop
+from cyber_worker.macro.anchors import add_anchor, free_page_name, save_reference, save_shot, save_target_crop
 from cyber_worker.macro.io.base import CalibrationError
 from cyber_worker.macro.recorder import RecordingBuilder, guess_send_step
 from cyber_worker.macro.io.base import stable_title
@@ -307,6 +307,7 @@ def _stop(st) -> dict:
     # （按下鼠标那一刻截的，窗口一定在）；没有步骤画面的窗口才用后台定时截的第一帧。
     # 追加录制时已有的参考图不动（除非窗口尺寸变了，旧图对不上了）；替换录制就换成这一遍的
     firsts = {**_first_frames(rec.frames), **_first_step_frames(new, rec)}
+    shots = _step_frames_by_win(new, rec)  # 下面重新编号后就按步骤编号查不到了，先取出来
     for key, (_, img) in firsts.items():
         if key != MAIN and key not in script.windows:
             continue
@@ -321,7 +322,7 @@ def _stop(st) -> dict:
     script.dump(path)
 
     # 2. 自动锚点：需要校验页面的步骤还没指定页面时，先沿用同一窗口里还对得上的页面，没有才从录制帧里挑一块新的
-    auto = _auto_anchor(path, rec)
+    auto = _auto_anchor(path, rec, shots)
     # 替换录制：旧步骤用过、现在没有步骤再用的页面一并清掉（不然新旧两个锚点框在同一个地方，标签叠在一起）
     dropped = [] if rec.append else _drop_unused_pages(path)
 
@@ -387,35 +388,51 @@ def _first_frames(frames) -> dict[str, tuple[float, object]]:
     return out
 
 
+def _step_frame(s, rec: Recording):
+    """这一步动作之前的画面 (窗口键, 缩放, 图)；没截到返回 None。"""
+    if isinstance(s, (Click, Drag)):
+        return rec.press_frames.get(rec.builder.press_of.get(s.id))
+    return rec.step_frames.get(s.id)
+
+
 def _first_step_frames(steps, rec: Recording) -> dict[str, tuple[float, object]]:
     """每个窗口第一步的画面（动作之前）：窗口键 → (缩放, 图)。"""
     out: dict[str, tuple[float, object]] = {}
     for s in steps:
-        if isinstance(s, (Click, Drag)):
-            frame = rec.press_frames.get(rec.builder.press_of.get(s.id))
-        else:
-            frame = rec.step_frames.get(s.id)
-        if frame is not None:
+        if (frame := _step_frame(s, rec)) is not None:
             key, scale, img = frame
             out.setdefault(key, (scale, img))
     return out
 
 
-def _auto_anchor(path, rec: Recording) -> dict | None:
+def _step_frames_by_win(steps, rec: Recording) -> dict[str, list[tuple[float, object]]]:
+    """每个窗口所有步骤的画面，按顺序：窗口键 → [(缩放, 图)]。"""
+    out: dict[str, list[tuple[float, object]]] = {}
+    for s in steps:
+        if (frame := _step_frame(s, rec)) is not None:
+            key, scale, img = frame
+            out.setdefault(key, []).append((scale, img))
+    return out
+
+
+def _auto_anchor(path, rec: Recording, shots: dict | None = None) -> dict | None:
     """每个窗口分别处理：这个窗口里有还没指定页面的输入 / 发送步骤时，
-    先看这个窗口已有的页面在这次录到的画面里还对不对得上，对得上就沿用；都对不上才从录制帧里挑一块稳定区域新建。"""
+    先看这个窗口已有的页面在这次录到的画面里还对不对得上，对得上就沿用；都对不上才从录制帧里挑一块稳定区域新建。
+    shots：每个窗口各步骤动作之前的画面（按下鼠标、开始打字那一刻截的，窗口一定在），排在后台定时截的帧前面。
+    还是选不出来的步骤放进 missing，界面提示用户自己框。"""
     script = Script.load(path)
     needing = [s for s in script.steps if needs_page_check(s) and not s.expected_page]
-    if not needing or not rec.frames:
+    if not needing:
         return None
     book = PageBook.load(script.pages_path) if script.pages_path and script.pages_path.exists() else PageBook()
     existing = book.pages
     pages, ids, reused = [], [], []
     for key in dict.fromkeys(s.win or MAIN for s in needing):
-        frames = [img for k, _, img in rec.frames if k == key]
-        if not frames:
+        mine = [*(shots or {}).get(key, []), *((sc, img) for k, sc, img in rec.frames if k == key)]
+        if not mine:
             continue
-        scale = next(sc for k, sc, _ in rec.frames if k == key)
+        scale = mine[0][0]
+        frames = [img for sc, img in mine if sc == scale]
         page = next((name for name, fp in existing.items()
                      if fp.anchors and all((a.win or MAIN) == key for a in fp.anchors)
                      and match_page(book, name, frames[-1], scale).matched), None)
@@ -428,10 +445,7 @@ def _auto_anchor(path, rec: Recording) -> dict | None:
             region = pick_stable_region(frames, scale, avoid=avoid)
             if region is None:
                 continue
-            n = 1
-            while f"页面{n}" in existing or f"页面{n}" in book.retired or f"页面{n}" in pages:  # 清出去的名字也不重用：撤销时要放回来
-                n += 1
-            page = f"页面{n}"
+            page = free_page_name(book, tuple(pages))
             add_anchor(path, page, region, frames[0], scale, key)
         pages.append(page)
         script = Script.load(path)  # add_anchor 可能刚写入了 pages 字段
@@ -440,9 +454,10 @@ def _auto_anchor(path, rec: Recording) -> dict | None:
                 s.expected_page = page
                 ids.append(s.id)
         script.dump(path)
-    if not pages:
+    missing = [s.id for s in Script.load(path).steps if needs_page_check(s) and not s.expected_page]
+    if not pages and not missing:
         return None
-    return {"page": "、".join(pages), "pages": pages, "steps": ids, "reused": reused}
+    return {"page": "、".join(pages), "pages": pages, "steps": ids, "reused": reused, "missing": missing}
 
 
 def _drop_unused_pages(path) -> list[str]:

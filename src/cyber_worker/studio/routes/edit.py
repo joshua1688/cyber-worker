@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from cyber_worker.macro.anchors import (
     add_anchor,
+    auto_page,
     remove_anchor,
     replace_frame,
     restore_pages,
@@ -53,6 +54,10 @@ class NewAnchor(BaseModel):
     frame: str = "latest"  # 从哪一帧截：reference / latest / step（某一步录制时的画面）
     win: str | None = None  # 哪个窗口的画面（None = 主窗口）
     step_id: str | None = None  # frame=step 时：哪一步的画面
+
+
+class AutoPage(BaseModel):
+    step_id: str
 
 
 class NewTarget(BaseModel):
@@ -249,6 +254,21 @@ def create_anchor(script_id: str, body: NewAnchor, request: Request):
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     return st.describe(script_id)
+
+
+@router.post("/scripts/{script_id:path}/auto-page")
+def create_auto_page(script_id: str, body: AutoPage, request: Request):
+    """步骤上「自动选一个」：替这一步选好「在哪个画面执行」（沿用对得上的页面，或从录制画面里挑一块新建）。"""
+    st = studio(request)
+    path = st.script_path(script_id)
+    script = Script.load(path)
+    step = next((s for s in script.steps if s.id == body.step_id), None)
+    frame = st.latest.get(script_id, {}).get(step.win or MAIN) if step is not None else None
+    try:
+        got = auto_page(path, body.step_id, read_image(frame.path) if frame is not None else None)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {**st.describe(script_id), "auto_page": got}
 
 
 @router.post("/scripts/{script_id:path}/targets")

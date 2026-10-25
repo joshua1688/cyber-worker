@@ -1,6 +1,6 @@
 import numpy as np
 
-from cyber_worker.macro.vision.auto_anchor import pick_stable_region
+from cyber_worker.macro.vision.auto_anchor import drop_odd_frames, pick_stable_region
 from helpers import pattern
 
 
@@ -44,3 +44,18 @@ def test_retina_frames():
     big = np.kron(frame, np.ones((2, 2, 1), np.uint8))
     region = pick_stable_region([big, big], 2.0)
     assert region is not None and region[2] == 140 and region[3] == 32
+
+
+def test_one_bad_frame_does_not_spoil_the_pick():
+    """后台截到一张坏帧（窗口没画完、截成了整个屏幕）：剔掉它，照样选得出来。"""
+    good = [chat_window(0, False), chat_window(1, True), chat_window(2, False)]
+    junk = np.random.default_rng(9).integers(0, 256, size=good[0].shape, dtype=np.uint8)
+    assert pick_stable_region([*good, junk], 1.0, avoid=[(500, 360)]) is not None
+    kept = drop_odd_frames([*good, junk])
+    assert len(kept) == 3 and not any(f is junk for f in kept)
+
+
+def test_frames_of_another_size_are_dropped():
+    frame = chat_window(0, False)
+    small = frame[:200, :300]
+    assert [f.shape for f in drop_odd_frames([frame, small, frame])] == [frame.shape, frame.shape]

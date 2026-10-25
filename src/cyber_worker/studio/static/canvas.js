@@ -89,6 +89,7 @@ class Stage {
   }
   _markers() {
     const out = [];
+    const slots = {};  // 同一次点击后面跟着几个输入 / 按键：方块依次往右排，不叠在一起
     this.steps.forEach((s, i) => {
       if ((s.win || null) !== (this.win || null)) return;
       if (MARKED.has(s.action) && s.x != null && s.y != null) {
@@ -98,7 +99,10 @@ class Stage {
       // 输入 / 按键：标在它打进去的地方（前面那次点击），只显示，不能拖
       if (s.action === "type" || s.action === "key") {
         const k = focusClick(this.steps, i);
-        if (k >= 0) out.push({ i, x: this.steps[k].x, y: this.steps[k].y, step: s, which: "focus" });
+        if (k >= 0) {
+          const slot = slots[k] = (slots[k] ?? -1) + 1;
+          out.push({ i, x: this.steps[k].x, y: this.steps[k].y, step: s, which: "focus", slot });
+        }
       }
     });
     return out;
@@ -109,7 +113,7 @@ class Stage {
     const info = css.getPropertyValue("--info").trim();
     const accent = css.getPropertyValue("--accent").trim();
     const cx = m.x * s, cy = m.y * s, q = 10 * k;
-    const x = cx + 20 * k, y = cy - 20 * k;  // 往右上错开，不盖住点击的编号
+    const x = cx + (20 + 24 * m.slot) * k, y = cy - 20 * k;  // 往右上错开，不盖住点击的编号；第二个、第三个再往右排
     ctx.save();
     if (selected) {
       ctx.lineWidth = 2 * k;
@@ -284,8 +288,8 @@ class Stage {
       arrow(ctx, a.x * s, a.y * s, m.x * s, m.y * s, m.i === this.selected ? accent : "#f28b3c", k);
     }
 
-    // 标记
-    for (const m of ms) {
+    // 标记：选中的最后画，压在别的标记上面
+    for (const m of [...ms.filter((m) => m.i !== this.selected), ...ms.filter((m) => m.i === this.selected)]) {
       if (m.which === "focus") {
         this._drawFocus(ctx, m, s, k, m.i === this.selected);
         continue;

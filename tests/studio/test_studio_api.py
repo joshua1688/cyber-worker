@@ -158,7 +158,7 @@ def test_save_validates_and_reports_problems(client):
     r = client.put(url, json=script)
     assert r.status_code == 200
     msgs = [p["message"] for p in r.json()["problems"]]
-    assert any("expected_page" in m for m in msgs)
+    assert any("在哪个画面执行" in m for m in msgs)
     assert any("{draft}" in m for m in msgs)
 
     script["steps"] = [{"id": "s01", "action": "teleport"}]
@@ -1190,3 +1190,47 @@ def test_only_local_pages_can_talk_to_studio(client):
             pass
     with client.websocket_connect(WS, headers={"Origin": "http://127.0.0.1:9999"}):
         pass
+
+
+def _clear_pages(client, sid):
+    """把输入 / 发送步骤上的页面去掉，回到「还没设在哪个画面执行」。"""
+    script = client.get(f"/api/scripts/{sid}/detail").json()["script"]
+    for s in script["steps"]:
+        s.pop("expected_page", None)
+    return client.put(f"/api/scripts/{sid}/detail", json=script).json()
+
+
+def test_auto_page_button_fixes_a_step_without_page(client):
+    """步骤上「自动选一个」：同一窗口里还对得上的页面就沿用；没有页面就从录制画面里挑一块新建，并填给这一步。"""
+    r = client.post("/api/record/start", json={"script_id": new_script(client)["id"], "record_delays": False})
+    assert r.status_code == 200
+    sid = client.post("/api/record/stop").json()["id"]
+    d = _clear_pages(client, sid)
+    typed = next(s for s in d["script"]["steps"] if s["action"] == "type")
+    assert d["problems"]
+
+    got = client.post(f"/api/scripts/{sid}/auto-page", json={"step_id": typed["id"]}).json()
+    assert got["auto_page"]["reused"] and got["auto_page"]["page"] == "页面1"
+    assert typed["id"] in got["auto_page"]["steps"] and got["problems"] == []
+
+    # 页面删掉以后再点：新挑一块
+    client.delete(f"/api/scripts/{sid}/anchors/页面1/0")
+    _clear_pages(client, sid)
+    got = client.post(f"/api/scripts/{sid}/auto-page", json={"step_id": typed["id"]}).json()
+    page = got["auto_page"]["page"]
+    assert not got["auto_page"]["reused"] and got["pages"][page]
+    assert {s.get("expected_page") for s in got["script"]["steps"] if s["action"] == "type"} == {page}
+    assert got["problems"] == []
+
+
+def test_record_reports_steps_it_could_not_give_a_page(client):
+    """画面里挑不出锚点（一片空白）：录完明确告诉界面哪几步没设好，「自动选一个」也说清楚该怎么办。"""
+    import numpy as np
+
+    client.io.screen = lambda: np.full((300, 400, 3), 255, np.uint8)
+    client.post("/api/record/start", json={"script_id": new_script(client)["id"], "record_delays": False})
+    r = client.post("/api/record/stop").json()
+    typed = next(s for s in r["script"]["steps"] if s["action"] == "type")
+    assert typed["id"] in r["auto_anchor"]["missing"] and not typed.get("expected_page")
+    bad = client.post(f"/api/scripts/{r['id']}/auto-page", json={"step_id": typed["id"]})
+    assert bad.status_code == 400 and "我自己框" in bad.json()["detail"]

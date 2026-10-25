@@ -7,9 +7,10 @@ from pathlib import Path
 
 import numpy as np
 
-from cyber_worker.macro.schema import MAIN, Script, Target
-from cyber_worker.macro.screenshot.storage import write_image
-from cyber_worker.macro.vision.fingerprint import Anchor, PageBook, PageFingerprint
+from cyber_worker.macro.schema import MAIN, Click, Drag, Script, Scroll, Target, WaitPage, needs_page_check
+from cyber_worker.macro.screenshot.storage import read_image, write_image
+from cyber_worker.macro.vision.auto_anchor import pick_stable_region
+from cyber_worker.macro.vision.fingerprint import Anchor, PageBook, PageFingerprint, match_page
 
 _PAGE_NAME = re.compile(r"^[\w\-]+$")
 
@@ -67,6 +68,63 @@ def add_anchor(
     fp.anchors.append(anchor)
     book.dump(pages_path)
     return anchor
+
+
+def free_page_name(book: PageBook, taken: tuple[str, ...] = ()) -> str:
+    """下一个没用过的「页面N」。清出去（retired）的名字也不重用：撤销录制时要把它放回来。"""
+    n = 1
+    while f"页面{n}" in book.pages or f"页面{n}" in book.retired or f"页面{n}" in taken:
+        n += 1
+    return f"页面{n}"
+
+
+def auto_page(script_path: Path, step_id: str, latest: np.ndarray | None = None) -> dict:
+    """给一步自动设「在哪个画面执行」：先看这一步所在窗口已有的页面对不对得上这一步录制时的画面，
+    对得上就沿用；否则从这个窗口各步骤的录制画面里挑一块稳定、独一无二的区域新建页面。
+    同一窗口里还没设页面的输入 / 发送步骤一起填上（调用方不用再 dump）。latest：这个窗口最近截的画面，没有录制画面时用。
+    返回 {"page", "reused", "steps"}；选不出来抛 ValueError（中文，说明怎么办）。"""
+    script = Script.load(script_path)
+    step = next((s for s in script.steps if s.id == step_id), None)
+    if step is None:
+        raise ValueError("这一步已经不在了")
+    key = step.win
+    scale = script.window_for(key).scale
+    # 这一步自己的画面排第一（新页面的锚点从它上面截），再加同一窗口其它步骤的画面，最后是参考图、最近截的画面
+    paths = [s.shot for s in [step, *script.steps] if s.win == key and s.shot]
+    ref = script.reference_for(key)
+    if ref is not None:
+        paths.append(ref.relative_to(script.base_dir).as_posix())
+    frames = [read_image(script.base_dir / p) for p in dict.fromkeys(paths) if (script.base_dir / p).exists()]
+    if latest is not None:
+        frames.append(latest)
+    if not frames:
+        raise ValueError("这个窗口还没有画面：先点画布上的「截取当前窗口」，再点「自动选一个」")
+    book = PageBook.load(script.pages_path) if script.pages_path and script.pages_path.exists() else PageBook()
+    page = next((name for name, fp in book.pages.items()
+                 if fp.anchors and all((a.win or None) == key for a in fp.anchors)
+                 and match_page(book, name, frames[0], scale).matched), None)
+    reused = page is not None
+    if not reused:
+        in_win = [s for s in script.steps if s.win == key]
+        avoid = [(s.x, s.y) for s in in_win if isinstance(s, (Click, Scroll, Drag)) and s.x is not None]
+        avoid += [(s.x2, s.y2) for s in in_win if isinstance(s, Drag)]
+        region = pick_stable_region(frames, scale, avoid=avoid)
+        if region is None:
+            raise ValueError("这个窗口的画面里找不到一块不会变、又认得出来的区域：请点「我自己框」，框一块标题或名字")
+        page = free_page_name(book)
+        add_anchor(script_path, page, region, frames[0], scale, key)
+    script = Script.load(script_path)  # add_anchor 可能刚写入了 pages 字段
+    if isinstance(step, WaitPage):  # 等待页面：等的就是这个页面
+        ids = [step_id]
+        next(s for s in script.steps if s.id == step_id).page = page
+    else:
+        ids = [s.id for s in script.steps
+               if s.win == key and (s.id == step_id or (needs_page_check(s) and not s.expected_page))]
+        for s in script.steps:
+            if s.id in ids:
+                s.expected_page = page
+    script.dump(script_path)
+    return {"page": page, "reused": reused, "steps": ids}
 
 
 def remove_anchor(script_path: Path, page: str, index: int) -> None:

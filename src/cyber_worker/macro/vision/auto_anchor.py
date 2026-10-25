@@ -19,6 +19,22 @@ def _gray(img: np.ndarray) -> np.ndarray:
     return img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 
+def drop_odd_frames(frames: Sequence[np.ndarray], max_changed: float = 0.5) -> list[np.ndarray]:
+    """去掉明显不对的帧：尺寸和多数帧不一样的；和其它帧大半个画面都不一样的（窗口还没画完、正在关、
+    截成了整个屏幕）。一张坏帧会让整个画面都算「变过」，一块区域都选不出来。少于三帧时看不出谁不对，只按尺寸筛。"""
+    if not frames:
+        return []
+    shapes = [f.shape[:2] for f in frames]
+    common = max(set(shapes), key=shapes.count)
+    kept = [f for f in frames if f.shape[:2] == common]
+    if len(kept) < 3:
+        return kept
+    grays = np.stack([_gray(f) for f in kept])
+    median = np.median(grays, axis=0).astype(np.int16)
+    good = [f for f, g in zip(kept, grays) if (np.abs(g.astype(np.int16) - median) > 18).mean() <= max_changed]
+    return good or kept
+
+
 def pick_stable_region(
     frames: Sequence[np.ndarray],
     scale: float,
@@ -29,7 +45,8 @@ def pick_stable_region(
     min_texture: float = 6.0,
     max_similar: float = 0.85,
 ) -> Region | None:
-    """返回窗口内坐标（点）；找不到合适的返回 None。frames[0] 作为基准帧。"""
+    """返回窗口内坐标（点）；找不到合适的返回 None。frames[0] 作为基准帧（先剔掉坏帧）。"""
+    frames = drop_odd_frames(frames)
     if not frames:
         return None
     base = _gray(frames[0]).astype(np.int16)

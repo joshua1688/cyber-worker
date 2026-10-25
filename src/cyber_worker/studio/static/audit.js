@@ -20,6 +20,8 @@ const stepNo = (e) => { const m = /^s(\d+)$/.exec(e.step_id); return m ? +m[1] :
 const stepName = (e) => (stepNo(e) ? `第 ${stepNo(e)} 步 · ` : "") + (TYPE_TEXT[e.action] || e.action);
 const flagged = (g) => g.es.some((e) => e.reviewed === 2);   // 标了「有问题，要修」
 const seen = (g) => !flagged(g) && g.es.every((e) => e.reviewed === 1);  // 标了「看过了」
+// 停下来是正常保护、不用改宏（你动了键鼠、窗口没开）：只留「看过了」，不给「要修」「去修改」
+const noFix = (g) => !!g.bad && advise(g.bad)?.edit === false;
 
 // 程序写的原因 → 一句人话。细节（得分、等了几秒）放在右边的「详细」里
 function human(detail) {
@@ -37,6 +39,42 @@ function human(detail) {
   if (/窗口已经关了或最小化了/.test(t)) return "窗口已经关了或最小化了";
   if (/^空跑：跳过发送/.test(t)) return "空跑：到「发送」前停下";
   return t;
+}
+
+// 出了问题的那一步怎么修：{ text, edit }。edit = 要到编辑器里改（显示「去修改」）；
+// 不用改宏的（你动了键鼠、窗口没开）只给一句说明。认不出的原因返回 null
+function advise(e) {
+  const t = e.detail || "";
+  const no = stepNo(e) ? `第 ${stepNo(e)} 步` : "这一步";
+  if (/没有声明 expected_page|没有 pages\.yaml/.test(t)) {
+    return { edit: true, text: `${no}还没设「在哪个画面执行」。打字、发送之前，程序要先认出窗口里一块不会变的区域（锚点，`
+      + `比如聊天窗口顶部的名字），确认画面对了才动手，所以停下了。点「去修改」打开${no}，点「自动选一个」，`
+      + "或者点「我自己框」在画面上框一块。" };
+  }
+  if (/^页面不符/.test(t)) {
+    return { edit: true, text: "窗口里没认出该有的画面：可能窗口没打开、被别的窗口挡住，或者界面变了。"
+      + "先看下面的截图；如果界面确实变了，点「去修改」，在当前画面上重新框一下这个页面的锚点。" };
+  }
+  if (/没找到要点的目标/.test(t)) {
+    return { edit: true, text: "要点的按钮 / 头像在窗口里没找到：可能换了位置、换了样式，或者还没出现。"
+      + `点「去修改」，截一张当前画面，给${no}点「重新框选」框住要点的东西；如果它只是出现得慢，把「最多等」调长一点。` };
+  }
+  if (/中文输入法/.test(t)) {
+    return { edit: true, text: `录制时开着中文输入法，${no}只录到了按键。点「去修改」，把这一步的文字改成实际要输入的内容。` };
+  }
+  if (/^缺少变量/.test(t)) {
+    return { edit: true, text: "执行前要填的变量没填。点「去修改」，在右边「运行」里把变量填上再执行。" };
+  }
+  if (/窗口尺寸/.test(t)) {
+    return { edit: false, text: "窗口大小和录制时不一样，又没能自动调整。把窗口从最大化还原成普通窗口再执行。" };
+  }
+  if (/找不到 .*窗口|窗口已经关了或最小化了|窗口校准失败/.test(t)) {
+    return { edit: false, text: "要操作的窗口没找到：先把这个程序打开，窗口别最小化，再执行。" };
+  }
+  if (/检测到你在用电脑/.test(t)) {
+    return { edit: false, text: "不用修：执行时你动了鼠标或键盘，程序为了不和你抢，先停下了。执行时别碰键鼠就行。" };
+  }
+  return null;
 }
 
 // ---------------- 数据 ----------------
@@ -166,6 +204,7 @@ function renderViewer() {
   const score = e.page_score == null ? "" : `，得分 ${e.page_score.toFixed(2)}`;
   const id = A.scripts[g.script];
   const fixStep = g.bad || g.top;
+  const advice = isBad(e) ? advise(e) : null;
   v.innerHTML = `
     <div class="card-head viewer-head">
       <span class="pill ${tone(g)}">${status}</span>
@@ -184,18 +223,21 @@ function renderViewer() {
       <div class="reason ${isBad(e) ? "bad" : pending(e) ? "warn" : ""}">
         <b>${escapeHtml(stepName(e))}：${escapeHtml(STATUS_TEXT[e.status] || e.status)}${e.spot_check ? ` <span class="badge warn">抽查</span>` : ""}</b>
         ${reason ? `<span>${escapeHtml(reason)}</span>` : ""}
-        <small>${e.expected_page ? `执行前核对页面「${escapeHtml(e.expected_page)}」${score}` : "这一步不用核对页面"}${
+        <small>${e.expected_page ? `执行前核对页面「${escapeHtml(e.expected_page)}」${score}`
+          : /没有声明 expected_page|没有 pages\.yaml/.test(e.detail || "") ? "这一步还没设页面" : "这一步不用核对页面"}${
           e.detail && reason !== e.detail ? ` · 详细：${escapeHtml(e.detail)}` : ""}</small>
       </div>
+      ${advice ? `<div class="advice">${icon("info")}<div><b>怎么修</b><p>${escapeHtml(advice.text)}</p>
+        ${advice.edit && id ? `<a class="btn sm primary" href="/?macro=${encodeURIComponent(id)}&step=${encodeURIComponent(e.step_id)}">${icon("sliders")}去修改</a>` : ""}</div></div>` : ""}
       ${e.screenshot_url ? `<div class="viewer-shot"><img src="${e.screenshot_url}" alt="操作后截图"></div>`
         : `<p class="no-shot">${icon("image")}这一步没有截图${isBad(e) ? "：没做成，所以没有操作后的画面" : ""}</p>`}
     </div>
     <div class="review-actions">
       <button class="btn ${seen(g) ? "primary" : ""}" data-act="seen"
         title="${seen(g) ? "再点一下撤销" : "这次运行看过了，没问题；自动跳到下一次"}">${icon("check")}${seen(g) ? "已看过" : "看过了"} <kbd>1</kbd></button>
-      <button class="btn ${flagged(g) ? "danger" : "danger-ghost"}" data-act="fix"
-        title="${flagged(g) ? "再点一下撤销" : "这次运行做错了：留在「要修」里，回头去改宏"}">${icon("alert")}${flagged(g) ? "已标为要修" : "有问题，要修"} <kbd>2</kbd></button>
-      ${flagged(g) ? (id ? `<a class="btn" href="/?macro=${encodeURIComponent(id)}&step=${encodeURIComponent(fixStep.step_id)}">${icon("sliders")}去修改</a>`
+      ${noFix(g) ? "" : `<button class="btn ${flagged(g) ? "danger" : "danger-ghost"}" data-act="fix"
+        title="${flagged(g) ? "再点一下撤销" : "这次运行做错了：留在「要修」里，回头去改宏"}">${icon("alert")}${flagged(g) ? "已标为要修" : "有问题，要修"} <kbd>2</kbd></button>`}
+      ${flagged(g) && !noFix(g) && !(advice?.edit && id) ? (id ? `<a class="btn" href="/?macro=${encodeURIComponent(id)}&step=${encodeURIComponent(fixStep.step_id)}">${icon("sliders")}去修改</a>`
         : `<button class="btn" disabled title="这个宏已经删了，没法再改">${icon("trash")}宏已删除</button>`) : ""}
       <span class="grow"></span>
       <span class="muted" style="font-size:12px"><kbd>↑</kbd> <kbd>↓</kbd> 切换运行 · <kbd>←</kbd> <kbd>→</kbd> 切换步骤</span>
@@ -226,7 +268,7 @@ async function markSeen() {
 
 async function markFix() {
   const g = selectedGroup();
-  if (!g) return;
+  if (!g || noFix(g)) return;
   const undo = flagged(g);
   const pairs = runsOf(g).flatMap((r) => r.es.map((e) => [e, undo ? 0 : e === (r.bad || r.top) ? 2 : 1]));
   if (await setMarks(pairs)) render();

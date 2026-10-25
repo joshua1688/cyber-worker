@@ -340,27 +340,46 @@ async function ensureSaved() {
 
 // ---------------- 问题检查（与服务端 problems() 规则一致） ----------------
 
+// 每条问题：text 是什么问题，hint 为什么、怎么办（大白话），fixes 是一点就修的按钮 [文字, 动作]
+const PAGE_WHY = "打字、发送之前，程序要先在窗口里认出一块不会变的区域（叫「锚点」，比如聊天窗口顶部的名字），"
+  + "确认窗口里是对的画面，免得把字打到别的聊天里。";
+const PAGE_FIXES = [["自动选一个", "auto-page"], ["我自己框", "frame-anchor"]];
+
 function localProblems() {
   const out = {};
   if (!S.script) return out;
   const pages = new Set(Object.keys(S.detail?.pages || {}));
   const seen = new Set();
   for (const s of S.script.steps) {
-    const add = (m) => (out[s.id] ||= []).push(m);
-    if (seen.has(s.id)) add("步骤编号重复");
+    const add = (text, hint = "", fixes = []) => (out[s.id] ||= []).push({ text, hint, fixes });
+    if (seen.has(s.id)) add("步骤编号重复", "保存一下就会重新编号");
     seen.add(s.id);
-    if (NEEDS_PAGE(s) && !s.expected_page) add("输入 / 发送前必须指定所在页面");
-    if (s.typed_with_ime) add(`录制时开着中文输入法，录到的只是按键「${s.text}」：请改成实际要输入的文字`);
-    const otherWin = (p) => `页面「${p}」的锚点截自别的窗口，在这一步的窗口里永远对不上：换一个页面，或在这个窗口里框一个锚点`;
-    if (s.expected_page && !pages.has(s.expected_page)) add(`页面「${s.expected_page}」还没有锚点`);
-    else if (s.expected_page && !pageWins(s.expected_page).has(s.win || null)) add(otherWin(s.expected_page));
-    if (s.action === "wait_page" && !s.page) add("选一个要等的页面");
-    else if (s.action === "wait_page" && !pages.has(s.page)) add(`页面「${s.page}」还没有锚点`);
-    else if (s.action === "wait_page" && !pageWins(s.page).has(s.win || null)) add(otherWin(s.page));
-    if (offTarget(s)) add(OFF_TARGET);
+    const otherWin = (p) => add(`页面「${p}」是在别的窗口里框的`,
+      `这一步在「${windowLabel(s.win)}」窗口里执行，拿别的窗口里框的锚点来核对，永远对不上。`
+      + "点「自动选一个」在这个窗口里重新选，或者自己框一块。", PAGE_FIXES);
+    const noAnchor = (p) => add(`页面「${p}」还没有锚点`,
+      "没有锚点就没法确认窗口里是不是这个画面。点「自动选一个」，或者自己在画面上框一块。", PAGE_FIXES);
+    if (NEEDS_PAGE(s) && !s.expected_page) {
+      add("还没设「在哪个画面执行」", PAGE_WHY + "点「自动选一个」让程序自己挑，或者点「我自己框」在画面上拖一个框。", PAGE_FIXES);
+    }
+    if (s.typed_with_ime) {
+      add(`录到的是输入法按键「${s.text}」`, "录制时开着中文输入法，只录到了按键，没录到打出来的字。请改成实际要输入的文字。",
+        [["改文字", "edit-text"]]);
+    }
+    if (s.expected_page && !pages.has(s.expected_page)) noAnchor(s.expected_page);
+    else if (s.expected_page && !pageWins(s.expected_page).has(s.win || null)) otherWin(s.expected_page);
+    if (s.action === "wait_page" && !s.page) {
+      add("还没选要等哪个页面", "这一步会一直等到窗口里出现某个画面再往下走。选一个页面，或者自己框一块新的。",
+        [...(pages.size ? [["选页面", "pick-page"]] : []), ...PAGE_FIXES]);
+    } else if (s.action === "wait_page" && !pages.has(s.page)) noAnchor(s.page);
+    else if (s.action === "wait_page" && !pageWins(s.page).has(s.win || null)) otherWin(s.page);
+    if (offTarget(s)) add(...OFF_TARGET);
     if (s.action === "type") {
       for (const v of varsIn(s.text)) {
-        if (!S.script.variables.includes(v)) add(`{${v}} 没有声明为变量，会按原文输入`);
+        if (!S.script.variables.includes(v)) {
+          add(`{${v}} 还不是变量`, `现在会原样打出「{${v}}」这几个字。设为变量后，每次执行前填上这次要打的内容。`,
+            [["设为变量", `declare-var:${v}`]]);
+        }
       }
     }
   }
@@ -368,7 +387,8 @@ function localProblems() {
 }
 
 // 按图找的点击 / 悬停：点击位置离目标框太远，执行时会点到目标外面（规则同服务端 state.off_target）
-const OFF_TARGET = "点击位置不在目标图上，执行时会点到目标外面：把编号标记拖回目标框里";
+const OFF_TARGET = ["点击位置不在目标图上", "执行时会先找到目标图，再偏出去这么远点下去，会点到目标外面。"
+  + "点「移回目标中心」，或者把画面上的编号标记拖回橙色框里。", [["移回目标中心", "snap-target"]]];
 function offTarget(s) {
   const t = s.target;
   if (!t || s.use_target === false || (s.action !== "click" && s.action !== "hover")) return false;
@@ -494,7 +514,7 @@ function renderSteps() {
         ${s.note ? `<span class="sub">${escapeHtml(s.note)}</span>` : ""}
         ${tags(s)}
       </span>
-      ${probs.length ? `<span class="badge warn" title="${escapeHtml(probs.join("\n"))}">${icon("alert")}${probs.length}</span>` : ""}
+      ${probs.length ? `<span class="badge warn" title="${escapeHtml(probs.map((p) => p.text).join("\n") + "\n点开这一步看怎么修")}">${icon("alert")}${probs.length}</span>` : ""}
       ${mark ? `<span class="run-mark ${mark[1]}" title="${STATUS_TEXT[S.runMarks[s.id]]}">${icon(mark[0])}</span>` : ""}
       ${rec ? "" : `<span class="grip" title="拖动排序">${icon("grip")}</span>`}
     </li>`;
@@ -743,13 +763,22 @@ function renderStepPane() {
   pane.innerHTML = `
     <div class="section-title"><span class="type-ico sm ${s.action}">${icon(t.icon)}</span>${
       actionNo(S.script.steps, S.selected) ? `第 ${actionNo(S.script.steps, S.selected)} 步 · ` : ""}${t.name}</div>
-    ${probs.map((p) => `<div class="problem">${icon("alert")}<span>${escapeHtml(p)}</span></div>`).join("")}
+    ${probs.map(problemHtml).join("")}
     ${focusNote(s, S.selected)}
     <div class="fields">${body}</div>
     ${more.length ? `<details class="more" ${S.moreOpen ? "open" : ""}>
       <summary>${icon("chevron")}更多：${more.map((m) => m[0]).join("、")}</summary>
       <div class="fields">${more.map((m) => field(...m)).join("")}</div>
     </details>` : ""}`;
+}
+
+function problemHtml(p) {
+  return `<div class="problem">${icon("alert")}<div>
+    <b>${escapeHtml(p.text)}</b>
+    ${p.hint ? `<p>${escapeHtml(p.hint)}</p>` : ""}
+    ${p.fixes.length ? `<div class="fixes">${p.fixes.map(([label, act], j) =>
+      `<button type="button" class="btn sm ${j ? "" : "primary"}" data-fix="${escapeHtml(act)}">${escapeHtml(label)}</button>`).join("")}</div>` : ""}
+  </div></div>`;
 }
 
 // 输入、按键打进哪里（画布上也标在那里）
@@ -1133,6 +1162,11 @@ $("#pane-step").addEventListener("focusout", (e) => {
   e.target.dataset.cursorEnd = e.target.selectionEnd;
 });
 $("#pane-step").addEventListener("click", (e) => {
+  const fix = e.target.closest("[data-fix]");
+  if (fix) {
+    fixProblem(fix.dataset.fix, fix);
+    return;
+  }
   const mode = e.target.closest('[data-seg="mode"] button');
   if (mode) {
     mutate((sc) => {
@@ -1172,6 +1206,49 @@ $("#pane-step").addEventListener("click", (e) => {
   ta.value = ta.value.slice(0, at) + token + ta.value.slice(end);
   ta.dispatchEvent(new Event("change", { bubbles: true }));
 });
+
+// 问题上的修复按钮
+async function fixProblem(act, btn) {
+  const i = S.selected;
+  const s = S.script?.steps[i];
+  if (!s) return;
+  if (act === "auto-page") {
+    if (!(await ensureSaved())) return;
+    btn.disabled = true;
+    btn.textContent = "正在选…";
+    const d = await attempt(() => api("POST", `/api/scripts/${S.id}/auto-page`, { step_id: s.id }));
+    if (!d) return render();
+    S.undo.push(JSON.stringify(S.script));
+    S.redo = [];
+    applyDetail(d);
+    S.selected = i;
+    S.frame = "reference";  // 看录制画面：新框的锚点就在上面
+    await showFrame();
+    render();
+    const nos = d.auto_page.steps.map((id) => actionNo(S.script.steps, S.script.steps.findIndex((x) => x.id === id)));
+    toast(`${d.auto_page.reused ? "沿用" : "自动选好了"}页面「${d.auto_page.page}」，第 ${nos.join("、")} 步执行前会先核对它（画面上的框就是锚点）`);
+  } else if (act === "frame-anchor") {
+    setWin(s.win, false);
+    await showFrame();
+    S.anchorFor = s.id;
+    setAnchorMode(true);
+    $("#anchor-page").value = nextPageName();
+    toast("在画面上拖一个框，框住一块不会变的地方（比如窗口顶部的名字、标题），再点确定");
+  } else if (act === "pick-page") {
+    $("#pane-step [data-f=page]")?.focus();
+  } else if (act === "edit-text") {
+    $("#pane-step [data-f=text]")?.select();
+  } else if (act === "snap-target") {
+    mutate((sc) => {
+      const st = sc.steps[i], t = st.target;
+      Object.assign(st, { x: Math.round(t.x + t.w / 2), y: Math.round(t.y + t.h / 2) });
+    });
+  } else if (act.startsWith("declare-var:")) {
+    const v = act.slice("declare-var:".length);
+    mutate((sc) => { if (!sc.variables.includes(v)) sc.variables.push(v); });
+    toast(`「${v}」设为变量了，执行前会让你填`);
+  }
+}
 
 // 宏设置
 $("#pane-macro").addEventListener("change", (e) => {
@@ -1274,7 +1351,10 @@ function setAnchorMode(on, purpose = "anchor") {
     showFrame();
   }
 }
-$("#anchor-cancel").addEventListener("click", () => setAnchorMode(false));
+$("#anchor-cancel").addEventListener("click", () => {
+  S.anchorFor = null;
+  setAnchorMode(false);
+});
 $("#anchor-page").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("#anchor-ok").click();
 });
@@ -1288,6 +1368,13 @@ $("#anchor-ok").addEventListener("click", async () => {
     setAnchorMode(false);
     $("#anchor-page").value = "";
     toast(`已添加锚点：${page}`);
+    // 从某一步的「我自己框」来的：这个页面直接给那一步
+    const asked = S.script.steps.findIndex((x) => x.id === S.anchorFor);
+    S.anchorFor = null;
+    if (asked >= 0 && pageWins(page).has(S.script.steps[asked].win || null)) {
+      const key = S.script.steps[asked].action === "wait_page" ? "page" : "expected_page";
+      if (S.script.steps[asked][key] !== page) mutate((sc) => (sc.steps[asked][key] = page));
+    }
     await autoAssignPage(page);
   }
 });
@@ -1589,7 +1676,7 @@ async function handleRecordDone(d) {
     const fresh = d.auto_anchor.pages.filter((p) => !(d.auto_anchor.reused || []).includes(p));
     if (d.auto_anchor.reused?.length) done.push(`沿用页面「${d.auto_anchor.reused.join("、")}」`);
     if (fresh.length) done.push(`自动生成页面「${fresh.join("、")}」`);
-    done.push(`${d.auto_anchor.steps.length} 步会先核对页面`);
+    if (d.auto_anchor.steps.length) done.push(`${d.auto_anchor.steps.length} 步会先核对页面`);
     S.win = d.last_win || null; // 录制结束时所在的窗口，自动选的锚点多半就在这里
     S.frame = "reference"; // 录完看录制画面：点哪一步就显示那一步录制时的样子（没有就退回当前画面）
     await showFrame();
@@ -1605,6 +1692,12 @@ async function handleRecordDone(d) {
     select(imeAt);
     toast(`第 ${actionNo(S.script.steps, imeAt)} 步是用中文输入法打的，只录到了按键，请在右边填上实际要输入的文字`, true);
     setTimeout(() => $("#pane-step [data-f=text]")?.select(), 50);
+  }
+  // 没能自动选出锚点的输入 / 发送步骤：选中第一步，右边就是修复按钮
+  const missAt = S.script.steps.findIndex((s) => d.auto_anchor?.missing?.includes(s.id) && !s.expected_page);
+  if (imeAt < 0 && missAt >= 0) {
+    select(missAt);
+    toast(`第 ${actionNo(S.script.steps, missAt)} 步没能自动设好「在哪个画面执行」：在右边点「自动选一个」，或「我自己框」`, true);
   }
   if (!Object.keys(localProblems()).length) toast("录好了，已自动保存。点上面的「空跑」先跑一遍看看");
 }

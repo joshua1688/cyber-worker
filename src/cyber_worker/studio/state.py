@@ -447,7 +447,7 @@ def problems(script: Script, pages: dict[str, set[str | None]]) -> list[dict]:
             add("步骤编号重复")
         seen.add(step.id)
         if needs_page_check(step) and not step.expected_page:
-            add("输入 / 发送前必须指定所在页面（expected_page）")
+            add("还没设「在哪个画面执行」：选中这一步，点「自动选一个」或「我自己框」")
         if step.expected_page and step.expected_page not in pages:
             add(f"页面 {step.expected_page} 还没有锚点")
         elif step.expected_page and step.win not in pages[step.expected_page]:

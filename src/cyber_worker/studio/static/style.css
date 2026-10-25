@@ -760,6 +760,10 @@ details.more > .fields { margin-top: 10px; }
   color: var(--warn);
   font-size: 13px;
 }
+.problem > .icon, .problem > svg { flex: none; margin-top: 2px; }
+.problem b { display: block; font-weight: 600; }
+.problem p { margin: 4px 0 0; color: var(--text-2); line-height: 1.5; }
+.problem .fixes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .toggle-row { display: flex; gap: 8px; align-items: center; cursor: pointer; }
 
 .anchors { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
@@ -1224,6 +1228,14 @@ button.link:hover { text-decoration: underline; }
 .reason small { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
 .reason.bad b { color: var(--danger); }
 .reason.warn b { color: var(--warn); }
+.advice {
+  display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; padding: 12px 14px;
+  border-radius: var(--radius); background: var(--info-soft); font-size: 13px;
+}
+.advice > .icon { flex: none; margin-top: 2px; color: var(--info); }
+.advice b { display: block; }
+.advice p { margin: 4px 0 8px; line-height: 1.5; color: var(--text-2); }
+.advice a.btn { text-decoration: none; }
 .viewer-body .viewer-shot { padding: 0; background: none; border: none; justify-content: flex-start; }
 .no-shot { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--text-3); }
 
