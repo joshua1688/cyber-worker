@@ -100,6 +100,8 @@ def cmd_run(args) -> int:
     script = Script.load(args.script)
     pages = PageBook.load(script.pages_path) if script.pages_path else None
     variables = dict(v.split("=", 1) for v in args.var)
+    path = Path(args.script).resolve()
+    app_name = path.parent.parent.name if path.parent.name == "templates" else None  # 宏库里的宏：<应用>/templates/
 
     app = build(args.config)
     dry_run = args.dry_run or app.config.executor.dry_run
@@ -113,7 +115,7 @@ def cmd_run(args) -> int:
     print(f"执行 {script.name}{'（空跑）' if dry_run else ''}，急停：{hotkey}")
     fut = app.executor.submit(
         lambda gate: app.runner.run(script, pages=pages, variables=variables,
-                                    dry_run=dry_run, gate=gate)
+                                    dry_run=dry_run, gate=gate, app=app_name)
     )
     try:
         result = fut.result()

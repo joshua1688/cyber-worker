@@ -112,8 +112,9 @@ class Runner:
         dry_run: bool = False,
         gate: Gate | None = None,
         observer: Callable[[AuditEntry], None] | None = None,
+        app: str | None = None,
     ) -> RunResult:
-        """observer 在每条审计写入后被调用（studio 用来实时推送进度）。"""
+        """observer 在每条审计写入后被调用（studio 用来实时推送进度）。app：宏所在的应用，记进审计。"""
         variables = variables or {}
         gate = gate or Gate()
         run_id = uuid.uuid4().hex[:12]
@@ -121,7 +122,7 @@ class Runner:
         def log(step_id: str, action: str, status: StepStatus, **kw) -> None:
             entry = AuditEntry(
                 run_id=run_id, at=self.now(), script=script.name, step_id=step_id,
-                action=action, status=status, dry_run=dry_run, **kw,
+                action=action, status=status, dry_run=dry_run, app=app, **kw,
             )
             self.audit.write(entry)
             if observer:

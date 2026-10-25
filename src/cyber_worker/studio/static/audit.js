@@ -9,7 +9,7 @@ const A = {
   rows: [],      // 列表上的行：一行 = 连着几次同样结果的运行（通常就一次）
   show: "all",   // all | pending | bad | fix
   selected: -1,  // A.entries 的下标（右边正在看的那一步）
-  scripts: {},   // 宏名 → 宏的 id（「去修改」用）
+  macros: [],    // 这一天出现过的 {app, app_title, script}：宏筛选下拉按应用分组
 };
 const TYPE_TEXT = { click: "点击", type: "输入", key: "按键", scroll: "滚动", wait: "延迟", drag: "拖动",
   hover: "悬停", wait_page: "等待页面", start: "开始", calibrate: "找窗口" };
@@ -104,9 +104,14 @@ async function loadDays() {
 
 async function load(keepRun) {
   const params = new URLSearchParams({ day: $("#f-day").value });
-  if ($("#f-script").value) params.set("script", $("#f-script").value);
-  const [data, scripts] = await Promise.all([api("GET", `/api/audit?${params}`), api("GET", "/api/scripts")]);
-  A.scripts = Object.fromEntries(scripts.filter((s) => !s.draft).map((s) => [s.name, s.id]));
+  // 下拉的值："" 全部；JSON [应用] 这个应用的全部宏；JSON [应用, 宏名] 这一个宏（没认出应用的旧记录，应用是 ""）
+  const pick = $("#f-script").value && JSON.parse($("#f-script").value);
+  if (pick) {
+    params.set("app", pick[0]);
+    if (pick.length > 1) params.set("script", pick[1]);
+  }
+  const data = await api("GET", `/api/audit?${params}`);
+  A.macros = data.macros;
   A.entries = data.entries;
   buildGroups();
   buildRows();
@@ -128,7 +133,8 @@ function buildGroups() {
     es.sort((x, y) => x.id - y.id);
     const bad = es.find(isBad);
     const top = bad || es.reduce((m, e) => (e.suspicion > m.suspicion ? e : m), es[es.length - 1]);
-    return { es, top, bad, at: es[0].at, script: es[0].script, dry: es[0].dry_run };
+    const { app, app_title: appTitle, macro_id: macroId, script } = es[0];
+    return { es, top, bad, at: es[0].at, script, app, appTitle, macroId, dry: es[0].dry_run };
   });
   A.groups.sort((x, y) => y.top.suspicion - x.top.suspicion || y.at.localeCompare(x.at));
 }
@@ -149,7 +155,7 @@ function buildRows() {
   A.rows = [];
   for (const g of A.groups.filter(keep)) {
     const last = A.rows[A.rows.length - 1];
-    const key = `${g.script}|${g.dry}|${summary(g)}`;
+    const key = `${g.app}|${g.script}|${g.dry}|${summary(g)}`;
     if (g.bad && last?.key === key) last.groups.push(g);
     else A.rows.push({ key, groups: [g] });
   }
@@ -176,13 +182,41 @@ function renderReport(r) {
     <div class="stat ${r.suspicious_unreviewed ? "alert" : ""}"><div class="v">${r.suspicious_unreviewed}</div><div class="k">待审</div></div>`;
 }
 
+// 「全部 QQ 的宏」「全部微信的宏」：英文名两边空一格
+const allOf = (title) => (/^[A-Za-z0-9]|[A-Za-z0-9]$/.test(title) ? `全部 ${title} 的宏` : `全部${title}的宏`);
+
+// 宏筛选：按应用分组，每组先是「全部 QQ 的宏」，再是一个个宏；同名的宏在不同应用里也分得清
 function renderScripts() {
   const sel = $("#f-script");
   const current = sel.value;
-  const names = [...new Set(A.entries.map((e) => e.script))].sort();
-  if (current && !names.includes(current)) names.push(current);
-  sel.innerHTML = `<option value="">全部宏</option>` + names.map((n) =>
-    `<option ${n === current ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
+  const groups = new Map();
+  A.macros.forEach((m) => {
+    const k = m.app || "";
+    if (!groups.has(k)) groups.set(k, { title: m.app_title || "其他", names: [] });
+    groups.get(k).names.push(m.script);
+  });
+  const opt = (value, text) => `<option value="${escapeHtml(value)}" ${value === current ? "selected" : ""}>${escapeHtml(text)}</option>`;
+  let html = opt("", "全部宏");
+  for (const [app, g] of groups) {
+    html += `<optgroup label="${escapeHtml(g.title)}">${
+      g.names.length > 1 ? opt(JSON.stringify([app]), allOf(g.title)) : ""}${
+      g.names.map((n) => opt(JSON.stringify([app, n]), n)).join("")}</optgroup>`;
+  }
+  // 选中的宏这一天没有记录了（换了日期）：留着它，别悄悄变成「全部」
+  if (current && !html.includes(`value="${escapeHtml(current)}"`)) {
+    const p = JSON.parse(current);
+    html += opt(current, p.length > 1 ? p[1] : allOf(p[0]));
+  }
+  sel.innerHTML = html;
+}
+
+// 哪个应用：头像 + 「QQ › 群聊天」；认不出应用（宏名在好几个应用里都有的旧记录）只写宏名
+function appName(g, link) {
+  if (!g.app) return `<b>${escapeHtml(g.script)}</b>`;
+  const title = escapeHtml(g.appTitle || g.app);
+  return `${avatar(g.app, "xs", g.appTitle || g.app)}${link
+    ? `<a class="app-link" href="/apps?app=${encodeURIComponent(g.app)}" title="打开这个应用">${title}</a>`
+    : `<span class="app-name">${title}</span>`}<span class="sep">›</span><b>${escapeHtml(g.script)}</b>`;
 }
 
 function renderList() {
@@ -192,7 +226,7 @@ function renderList() {
     return `<li><button type="button" class="run-row ${r.groups.includes(cur) ? "on" : ""} ${seen(g) ? "seen" : ""}" data-row="${i}">
       <span class="dot ${tone(g)}"></span>
       <span class="run-main">
-        <span class="run-line"><b>${escapeHtml(g.script)}</b><span class="muted">${g.dry ? "空跑" : "执行"}</span>
+        <span class="run-line">${appName(g)}<span class="muted">${g.dry ? "空跑" : "执行"}</span>
           ${r.groups.length > 1 ? `<span class="times" title="连着 ${r.groups.length} 次一样">×${r.groups.length}</span>` : ""}
           ${flagged(g) ? `<span class="fix-tag">要修</span>` : seen(g) ? `<span class="seen-tag">${icon("check")}看过</span>` : ""}
           <span class="grow"></span><span class="time">${g.at.slice(11, 16)}</span></span>
@@ -218,13 +252,13 @@ function renderViewer() {
   const status = g.bad ? STATUS_TEXT[g.bad.status] : tone(g) === "warn" ? "待看" : "正常";
   const reason = human(e.detail);
   const score = e.page_score == null ? "" : `，得分 ${e.page_score.toFixed(2)}`;
-  const id = A.scripts[g.script];
+  const id = g.macroId;
   const fixStep = g.bad || g.top;
   const advice = isBad(e) ? advise(e) : weakTarget(e) || movedAnchor(e);
   v.innerHTML = `
     <div class="card-head viewer-head">
       <span class="pill ${tone(g)}">${status}</span>
-      <b>${escapeHtml(g.script)} · ${g.dry ? "空跑" : "执行"}</b>
+      <span class="viewer-title">${appName(g, true)}<b>· ${g.dry ? "空跑" : "执行"}</b></span>
       <span class="muted">${g.at.slice(11, 19)}</span>
       <span class="grow"></span>
       ${twins.length ? `<span class="muted twins">同样的还有 ${twins.map((t) =>

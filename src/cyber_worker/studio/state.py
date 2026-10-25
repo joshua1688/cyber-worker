@@ -181,23 +181,19 @@ class Studio:
             new, n = name.strip(), 2
             while new in taken:
                 new, n = f"{name.strip()}-{n}", n + 1
-            self.rename_runs(script.name, new)
+            self.rename_runs(script.name, new, path.parent.parent.name)
             script.name = new
         script.dump(path)
         return {"name": script.name, "description": script.description}
 
-    def rename_runs(self, old: str, new: str) -> None:
-        """宏改名后，审计里以前的记录跟着改名。"""
+    def rename_runs(self, old: str, new: str, app: str | None = None) -> None:
+        """宏改名后，审计里以前的记录跟着改名（只改这个应用的）。"""
         if old != new and hasattr(self.app.audit, "rename_script"):
-            self.app.audit.rename_script(old, new)
+            self.app.audit.rename_script(old, new, app)
 
-    def apps(self, today: date) -> list[dict]:
-        """应用总览 / 应用首页要的东西：每个应用（宏库里的一个平台目录）和它的宏，宏带上说明、几步、大概多久、
-        最近一次运行的结果（卡片上只放要紧的：变量、窗口这些细节进了编辑器再看）；应用带上今天运行了几次、几次出了问题。
-        运行记录按宏名对（审计里记的是宏名）。草稿不算：打开就会存进宏库。"""
-        runs = self.app.audit.runs() if hasattr(self.app.audit, "runs") else []
-        last = {r["script"]: r for r in runs}  # 按先后排的，后面的覆盖前面的：留下的就是最近一次
-        today_runs = [r for r in runs if r["at"][:10] == today.isoformat()]
+    def _library(self) -> list[tuple[str, str, list[tuple[Path, Script]]]]:
+        """宏库里的每个应用：(平台目录名, 显示名, [(宏文件, 宏)])。显示名是主窗口标题里最常见的那个
+        （Windows PowerShell），没有标题用程序名，一个宏都没有用目录名。读不出来的宏跳过，别的照样显示。"""
         out = []
         for d in sorted(p for p in self.root.glob("*") if p.is_dir()):
             macros, titles = [], Counter()
@@ -206,20 +202,54 @@ class Studio:
                     continue
                 try:
                     s = Script.load(p)
-                except Exception:  # noqa: BLE001 —— 一个宏读不出来，总览照样显示别的
+                except Exception:  # noqa: BLE001, S112 —— 一个宏读不出来，别的照样显示
                     continue
-                titles[s.window.title or s.window.app] += 1  # 应用名：主窗口标题（Windows PowerShell），没有标题用程序名
-                run = last.get(s.name)
+                titles[s.window.title or s.window.app] += 1
+                macros.append((p, s))
+            out.append((d.name, titles.most_common(1)[0][0] if titles else d.name, macros))
+        return out
+
+    @staticmethod
+    def _owners(library) -> dict[str, str]:
+        """宏名 → 应用，只收只在一个应用里出现的名字：没记应用的旧审计记录靠它认应用，重名的不猜。"""
+        seen: dict[str, set[str]] = {}
+        for platform, _, macros in library:
+            for _, s in macros:
+                seen.setdefault(s.name, set()).add(platform)
+        return {name: next(iter(ps)) for name, ps in seen.items() if len(ps) == 1}
+
+    def audit_apps(self) -> tuple[dict[str, str], dict[tuple[str, str], str], dict[str, str]]:
+        """审计页要的：应用显示名 {平台: 名字}、宏 id {(平台, 宏名): id}（「去修改」用）、旧记录认应用用的 {宏名: 平台}。"""
+        library = self._library()
+        titles = {platform: title for platform, title, _ in library}
+        ids = {(platform, s.name): self.script_id(p) for platform, _, macros in library for p, s in macros}
+        return titles, ids, self._owners(library)
+
+    def apps(self, today: date) -> list[dict]:
+        """应用总览 / 应用首页要的东西：每个应用（宏库里的一个平台目录）和它的宏，宏带上说明、几步、大概多久、
+        最近一次运行的结果（卡片上只放要紧的：变量、窗口这些细节进了编辑器再看）；应用带上今天运行了几次、几次出了问题。
+        运行记录按（应用, 宏名）对；没记应用的旧记录按宏名认（名字只在一个应用里有才算）。草稿不算：打开就会存进宏库。"""
+        library = self._library()
+        owners = self._owners(library)
+        runs = self.app.audit.runs() if hasattr(self.app.audit, "runs") else []
+        for r in runs:
+            r["app"] = r.get("app") or owners.get(r["script"])
+        last = {(r["app"], r["script"]): r for r in runs}  # 按先后排的，后面的覆盖前面的：留下的就是最近一次
+        today_runs = [r for r in runs if r["at"][:10] == today.isoformat()]
+        out = []
+        for platform, title, scripts in library:
+            macros = []
+            for p, s in scripts:
+                run = last.get((platform, s.name))
                 macros.append({
                     "id": self.script_id(p), "name": s.name, "description": s.description,
                     "steps": sum(not isinstance(st, Wait) for st in s.steps),
                     "seconds": round(sum(st.seconds if isinstance(st, Wait) else st.delay_after for st in s.steps), 1),
                     "last": run and {k: run[k] for k in ("at", "dry_run", "bad", "step_id", "detail")},
                 })
-            names = {m["name"] for m in macros}
-            mine = [r for r in today_runs if r["script"] in names]
+            mine = [r for r in today_runs if r["app"] == platform]
             runs_at = [m["last"]["at"] for m in macros if m["last"]]
-            out.append({"platform": d.name, "title": titles.most_common(1)[0][0] if titles else d.name,
+            out.append({"platform": platform, "title": title,
                         "macros": macros, "last_at": max(runs_at, default=None),  # 「最近用过」排序用
                         "today": {"runs": len(mine), "bad": sum(r["bad"] for r in mine)}})
         return out

@@ -58,6 +58,7 @@ def client(tmp_path):
         c.io = io
         c.activity = executor.activity
         c.hotkeys = app.hotkeys.backend
+        c.audit = audit
         yield c
     executor.shutdown()
 
@@ -1440,6 +1441,54 @@ def test_rename_from_the_app_page_keeps_run_history(client):
     client.put(f"/api/scripts/{a}/detail", json=script)
     macros = {m["id"]: m for m in client.get("/api/apps").json()[0]["macros"]}
     assert macros[a]["name"] == "发群消息" and macros[a]["last"] is not None
+
+
+def test_audit_says_which_app_each_run_belongs_to(client):
+    """审计记录带上应用：新的运行直接记下应用；没记应用的旧记录按宏名认，宏名在好几个应用里都有就不猜。
+    可以按应用 / 应用里的某个宏筛选；改名只改这个应用的记录；应用页的「最近一次」也按应用对。"""
+    from datetime import datetime
+
+    from cyber_worker.macro.audit.logger import AuditEntry, StepStatus
+
+    sid = client.post(f"/api/scripts/{new_script(client, '群聊天')['id']}/commit").json()["id"]
+    other = client.post("/api/scripts", json={"platform": "wx", "name": "群聊天", "app": "WeChat",
+                                              "width": 400, "height": 300}).json()["id"]
+    other = client.post(f"/api/scripts/{other}/commit").json()["id"]
+    client.post("/api/scripts", json={"platform": "wx", "name": "回复", "app": "WeChat", "width": 400, "height": 300})
+    only = client.post(f"/api/scripts/{client.get('/api/scripts').json()[0]['id']}/commit").json()["id"]
+    client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+    client.post("/api/record/stop")
+    with client.websocket_connect(WS) as ws:
+        client.post(f"/api/scripts/{sid}/run", json={"dry_run": True})
+        while ws.receive_json().get("state") != "done":
+            pass
+    now = datetime.now()
+    client.audit.write(AuditEntry("old1", now, "回复", "s01", "click", StepStatus.OK))  # 旧记录：只有 wx 有「回复」
+    client.audit.write(AuditEntry("old2", now, "群聊天", "s01", "click", StepStatus.OK))  # 两个应用都有：认不出
+
+    day = now.date().isoformat()
+    data = client.get(f"/api/audit?day={day}").json()
+    by_run = {e["run_id"]: e for e in data["entries"]}
+    new = next(e for e in data["entries"] if e["run_id"] not in ("old1", "old2"))
+    assert (new["app"], new["app_title"], new["macro_id"]) == ("demo", "Demo", sid)
+    assert (by_run["old1"]["app"], by_run["old1"]["app_title"], by_run["old1"]["macro_id"]) == ("wx", "WeChat", only)
+    assert by_run["old2"]["app"] is None and by_run["old2"]["macro_id"] is None
+    assert {(m["app"], m["script"]) for m in data["macros"]} == {("demo", "群聊天"), ("wx", "回复"), (None, "群聊天")}
+
+    only_demo = client.get(f"/api/audit?day={day}&app=demo").json()
+    assert {e["run_id"] for e in only_demo["entries"]} == {new["run_id"]}
+    assert len(only_demo["macros"]) == 3  # 下拉的选项不受筛选影响
+    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&app=wx&script=回复").json()["entries"]} == {"old1"}
+    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&app=&script=群聊天").json()["entries"]} == {"old2"}
+
+    apps = {a["platform"]: a for a in client.get("/api/apps").json()}
+    assert apps["demo"]["macros"][0]["last"] is not None and apps["demo"]["today"]["runs"] == 1
+    wx = {m["id"]: m for m in apps["wx"]["macros"]}
+    assert wx[other]["last"] is None and wx[only]["last"] is not None  # 同名的「群聊天」不会认成 wx 的
+
+    client.patch(f"/api/scripts/{other}/meta", json={"name": "微信群"})  # 改 wx 的：demo 的记录不动
+    entries = client.get(f"/api/audit?day={day}").json()["entries"]
+    assert {e["script"] for e in entries if e["run_id"] == new["run_id"]} == {"群聊天"}
 
 
 def test_delete_app_goes_to_trash_and_can_be_undone(client, tmp_path):

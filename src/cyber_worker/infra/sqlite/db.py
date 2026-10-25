@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
     dry_run       INTEGER NOT NULL,
     suspicious    INTEGER NOT NULL,
     detail        TEXT NOT NULL DEFAULT '',
-    reviewed      INTEGER NOT NULL DEFAULT 0
+    reviewed      INTEGER NOT NULL DEFAULT 0,
+    app           TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_log_run ON audit_log (run_id);
 """
@@ -34,4 +35,13 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """旧库补上后来加的列（CREATE TABLE IF NOT EXISTS 不会改已有的表）。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(audit_log)")}
+    if "app" not in cols:  # 以前只记宏名，不知道是哪个应用的：旧记录留空，显示时按宏名去找
+        with conn:
+            conn.execute("ALTER TABLE audit_log ADD COLUMN app TEXT")

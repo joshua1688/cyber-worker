@@ -61,3 +61,27 @@ def test_runs_summarise_each_run(tmp_path):
     assert ok["script"] == "群聊天" and not ok["bad"] and ok["step_id"] is None
     assert bad["script"] == "查看资料" and bad["bad"] and bad["step_id"] == "s02" and "没找到" in bad["detail"]
 
+
+def test_old_database_gets_the_app_column(tmp_path):
+    """旧库没有 app 列：打开时补上，旧记录的应用是空的；改名给了应用就只改这个应用的（加上没记应用的旧记录）。"""
+    import sqlite3
+
+    path = tmp_path / "state.db"
+    old = sqlite3.connect(path)
+    old.execute("""CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, at TEXT NOT NULL,
+        script TEXT NOT NULL, step_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, screenshot TEXT,
+        expected_page TEXT, page_score REAL, dry_run INTEGER NOT NULL, suspicious INTEGER NOT NULL,
+        detail TEXT NOT NULL DEFAULT '', reviewed INTEGER NOT NULL DEFAULT 0)""")
+    old.execute("""INSERT INTO audit_log (run_id, at, script, step_id, action, status, dry_run, suspicious)
+                   VALUES ('r0', '2026-10-25T09:00:00', 'chat', 's01', 'click', 'ok', 0, 0)""")
+    old.commit()
+    old.close()
+
+    store = SqliteAuditStore(connect(path))
+    at = datetime(2026, 10, 25, 10)
+    store.write(AuditEntry("r1", at, "chat", "s01", "click", StepStatus.OK, app="qq"))
+    store.write(AuditEntry("r2", at, "chat", "s01", "click", StepStatus.OK, app="wx"))
+    assert [(r["run_id"], r["app"]) for r in store.runs()] == [("r0", None), ("r1", "qq"), ("r2", "wx")]
+
+    assert store.rename_script("chat", "群聊天", "qq") == 2
+    assert [(r["run_id"], r["script"]) for r in store.runs()] == [("r0", "群聊天"), ("r1", "群聊天"), ("r2", "chat")]

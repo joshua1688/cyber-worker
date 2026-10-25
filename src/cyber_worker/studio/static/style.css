@@ -1254,6 +1254,14 @@ code.path {
 
 /* 审计右边：标题 → 步骤时间线 → 原因 → 截图 */
 .viewer-head { gap: 10px; flex-wrap: nowrap; }
+/* 运行属于哪个应用：小头像 + 「QQ › 群聊天」 */
+.mp-avatar.xs { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; flex: none; }
+.run-line .app-name { color: var(--text-2); }
+.run-line .sep, .viewer-title .sep { color: var(--text-3); }
+.viewer-title { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; }
+.viewer-title .mp-avatar.xs { width: 22px; height: 22px; border-radius: 6px; font-size: 11px; }
+.viewer-title .app-link { color: var(--text-2); font-size: 14px; text-decoration: none; }
+.viewer-title .app-link:hover { color: var(--text); text-decoration: underline; }
 .viewer-head b { font-size: 14px; white-space: nowrap; }
 .viewer-head .muted { font-size: 12px; white-space: nowrap; }
 .viewer-head .twins { overflow: hidden; text-overflow: ellipsis; }
