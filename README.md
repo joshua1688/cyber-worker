@@ -499,7 +499,7 @@ cyber-worker/
 | 🚧 | `macro/` minimal loop (record + window calibration + page verification + execute + post-action screenshot + dry run): verified on Windows, pending on macOS |
 | 🚧 | Global executor (mutual exclusion, pause while you use the computer, panic stop): verified on Windows, pending on macOS |
 | ✅ | Audit page (suspicion ranking, spot checks, daily report; failed steps come with a "how to fix" note and a button straight to the fix) |
-| ✅ | `studio/` macro editor (create + record + edit + anchors + find-by-image clicks + wait-for-page + dry run / run + dark / light appearance + settings center + onboarding tour; every problem comes with a one-click fix) |
+| ✅ | `studio/` app pages (app overview, each app's macro cards: description, last run) + macro editor (create + record + edit + anchors + find-by-image clicks + wait-for-page + dry run / run + dark / light appearance + settings center + onboarding tour; every problem comes with a one-click fix) |
 | ✅ | Platform pack export / import (one-click `.cwpack` export, drop onto the page to import, easy to share with others) |
 | ⬜ | Find-by-text clicks (OCR, `locator/text.py` + `vision/ocr.py`) |
 | ⬜ | Platform pack format + generic `ScreenAdapter`, validated on WeChat Moments |
