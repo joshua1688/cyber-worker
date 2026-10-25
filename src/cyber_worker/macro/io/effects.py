@@ -54,7 +54,7 @@ class NullOverlay:
 def pretty_combo(combo: str) -> str:
     """ctrl+a → Ctrl+A；和 studio 界面上的写法一致。"""
     names = {"cmd": "⌘" if sys.platform == "darwin" else "Win", "esc": "Esc", "escape": "Esc",
-             "page_up": "PageUp", "page_down": "PageDown", "space": "空格"}
+             "page_up": "PageUp", "page_down": "PageDown", "space": "Space"}
     return "+".join(names.get(k, k.upper() if len(k) == 1 else k[:1].upper() + k[1:])
                     for k in combo.lower().split("+"))
 

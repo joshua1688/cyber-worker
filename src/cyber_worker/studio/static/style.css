@@ -1098,6 +1098,16 @@ code.path {
   cursor: pointer;
 }
 .var-chips button:hover { border-style: solid; border-color: var(--info); background: var(--info-soft); }
+/* 按键步骤：点一下框再按键；下面一排常用键 */
+.key-cap { flex: 1; min-width: 0; text-align: left; cursor: pointer; font-weight: 600; letter-spacing: .02em; }
+.key-cap.capturing { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); color: var(--text-2); font-weight: 400; }
+.key-chips { grid-column: 2; display: flex; gap: 6px; flex-wrap: wrap; margin-top: -4px; }
+.key-chips button {
+  height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-2); font-size: 12px; cursor: pointer;
+}
+.key-chips button:hover { color: var(--text); border-color: var(--border-strong); }
+.key-chips button.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 
 /* 提示从顶部正中间弹出：右上角是「录制 / 空跑 / 执行」，弹在那里会把按钮盖住 */
 .toasts {

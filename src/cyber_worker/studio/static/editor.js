@@ -496,7 +496,7 @@ function summary(s) {
     case "drag": return `${modsText(s)}${BUTTON_TEXT[s.button] || ""}拖动 (${s.x}, ${s.y}) → (${s.x2}, ${s.y2})`;
     case "hover": return `悬停 (${s.x}, ${s.y}) ${s.seconds} 秒`;
     case "type": return s.text ? `输入「${s.text}」` : "输入（还没填内容）";
-    case "key": return `按 ${s.combo}${s.times > 1 ? ` × ${s.times}` : ""}`;
+    case "key": return `按 ${keyLabel(s.combo)}${s.times > 1 ? ` × ${s.times}` : ""}`;
     case "scroll": {
       const parts = [];
       if (s.dy) parts.push(`向${s.dy > 0 ? "下" : "上"} ${Math.abs(s.dy)} 格`);
@@ -759,7 +759,14 @@ function renderStepPane() {
       + `<span class="help">花括号里的是变量，执行时在「运行」里填，比如每次不同的评论</span>`
       + field("先清空", toggle("clear_first", s.clear_first !== false, "输入前先清空输入框"), "防止空跑或中断后留下的文字跟着一起发出去");
   } else if (s.action === "key") {
-    body += field("组合键", `<input type="text" class="input" data-f="combo" value="${escapeHtml(s.combo)}">`, "如 enter、ctrl+v、cmd+shift+z、f5")
+    body += field("按键", S.keyManual
+      ? `<input type="text" class="input" data-f="combo" value="${escapeHtml(s.combo)}" placeholder="如 enter、ctrl+v、f5">
+         <button type="button" class="link" data-keymanual>改回按键录入</button>`
+      : `<button type="button" class="input key-cap" data-keycap>${escapeHtml(keyLabel(s.combo) || "点一下，再按键")}</button>
+         <button type="button" class="link" data-keymanual>手动输入</button>`,
+      "点一下框，再按键盘上的键或组合键（比如 Enter、Ctrl+V）。Ctrl+W、Ctrl+T、Win 这类会被浏览器或系统先抢走，录不到时点下面的常用键或「手动输入」")
+      + `<div class="key-chips">${KEY_CHIPS.map((c) =>
+        `<button type="button" data-keychip="${c}" class="${c === s.combo ? "on" : ""}">${escapeHtml(keyLabel(c))}</button>`).join("")}</div>`
       + field("次数", num("times", s.times ?? 1), "按住不放会自动重复，录下来就是这里的次数")
       + field("发送", toggle("sends", s.sends, "这一下就是「发送」"));
   } else if (s.action === "scroll") {
@@ -1234,6 +1241,21 @@ $("#pane-step").addEventListener("click", (e) => {
       set.has(mod.dataset.v) ? set.delete(mod.dataset.v) : set.add(mod.dataset.v);
       st.modifiers = ["ctrl", "shift", "alt", "cmd"].filter((m) => set.has(m));
     });
+    return;
+  }
+  if (e.target.closest("[data-keycap]")) {
+    startKeyCapture(e.target.closest("[data-keycap]"));
+    return;
+  }
+  const keyChip = e.target.closest("[data-keychip]");
+  if (keyChip) {
+    mutate((sc) => (sc.steps[S.selected].combo = keyChip.dataset.keychip));
+    return;
+  }
+  if (e.target.closest("[data-keymanual]")) {
+    S.keyManual = !S.keyManual;
+    renderStepPane();
+    if (S.keyManual) $("#pane-step [data-f=combo]")?.focus();
     return;
   }
   const chip = e.target.closest("[data-insert-var]");
@@ -1813,6 +1835,67 @@ $("#run-log").addEventListener("click", (e) => {
     renderSteps();
     syncStage();
   }
+});
+
+// 按键步骤：点一下框，按什么就记什么（和设置里录快捷键一样）。存的还是 ctrl+v 这种写法，显示成 Ctrl + V
+const KEY_CHIPS = ["enter", "esc", "tab", "backspace", "ctrl+v", "ctrl+a", "ctrl+c", "space"];
+const KEY_CODES = {
+  Space: "space", Enter: "enter", NumpadEnter: "enter", Tab: "tab", Backspace: "backspace", Delete: "delete", Escape: "esc",
+  Home: "home", End: "end", PageUp: "page_up", PageDown: "page_down",
+  ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+  Period: ".", Comma: ",", Minus: "-", Equal: "=", Slash: "/", Semicolon: ";", Backquote: "`",
+  BracketLeft: "[", BracketRight: "]", Backslash: "\\", Quote: "'",
+};
+const KEY_LABELS = {
+  ctrl: "Ctrl", shift: "Shift", alt: "Alt", cmd: IS_MAC ? "⌘" : "Win", enter: "Enter", esc: "Esc", tab: "Tab",
+  backspace: "Backspace", delete: "Delete", space: "Space", home: "Home", end: "End", page_up: "PageUp", page_down: "PageDown",
+  up: "↑", down: "↓", left: "←", right: "→",
+};
+function keyLabel(combo) {
+  return (combo || "").split("+").filter(Boolean)
+    .map((k) => KEY_LABELS[k] || (/^f\d+$/.test(k) ? k.toUpperCase() : k.length === 1 ? k.toUpperCase() : k)).join(" + ");
+}
+function keyFromEvent(e) {
+  const c = e.code || "";
+  if (/^Key[A-Z]$/.test(c)) return c.slice(3).toLowerCase();
+  if (/^(Digit|Numpad)\d$/.test(c)) return c.slice(-1);
+  if (/^F([1-9]|1[0-2])$/.test(c)) return c.toLowerCase();
+  return KEY_CODES[c] || null;
+}
+let keyCapture = null;  // 正在录按键的那个框
+function startKeyCapture(el) {
+  keyCapture = el;
+  el.classList.add("capturing");
+  el.textContent = "请按下按键…";
+  el.title = "按下要录的键或组合键；点别处取消";
+  el.focus();
+}
+function stopKeyCapture() {
+  if (!keyCapture) return;
+  keyCapture = null;
+  renderStepPane();
+}
+// 录按键时，键盘事件全给它：Delete、Ctrl+Z 这些不能再去删步骤、撤销
+window.addEventListener("keydown", (e) => {
+  if (!keyCapture) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const mods = [e.ctrlKey && "ctrl", e.shiftKey && "shift", e.altKey && "alt", e.metaKey && "cmd"].filter(Boolean);
+  if (["Control", "Shift", "Alt", "Meta", "AltGraph", "OS"].includes(e.key)) {
+    keyCapture.textContent = `${keyLabel(mods.join("+"))} + …`;
+    return;
+  }
+  const name = keyFromEvent(e);
+  if (!name) {
+    keyCapture.textContent = "这个键录不了，换一个";
+    return;
+  }
+  const combo = [...mods, name].join("+");
+  keyCapture = null;
+  mutate((sc) => (sc.steps[S.selected].combo = combo));
+}, true);
+document.addEventListener("focusout", (e) => {
+  if (keyCapture && e.target === keyCapture) stopKeyCapture();
 });
 
 // 右键一步：在后面添加 / 在前面添加 / 换成 / 复制一份 / 删除；「添加」「换成」往右弹出 8 种步骤类型。
