@@ -184,7 +184,7 @@ async function showFrame() {
   const shot = S.frame === "reference" && f && f === stepShot();
   $("#frame-note").textContent = shot ? `第 ${actionNo(S.script.steps, S.selected)} 步录制时的画面`
     : sel?.action === "wait_page" && f ? `等待页面「${sel.page}」：高亮的是它的锚点`
-    : S.frame === "reference" && f ? `${windowLabel(S.win)}录制时的画面` : "";
+    : S.frame === "reference" && f ? `「${windowLabel(S.win)}」录制时的画面` : "";
   $("#canvas-empty").hidden = !!f;
   $("#canvas").hidden = !f;
   if (f?.url !== S.shownUrl) {  // 同一张图不重新加载（连着几步共用一张画面时）
@@ -1420,7 +1420,7 @@ async function capture(replace) {
   const ids = d.replaced_steps || [];
   toast(!replace ? "已截图，画面切到「当前画面」"
     : ids.length ? `已更新第 ${numRanges(ids.map((id) => actionNo(S.script.steps, S.script.steps.findIndex((s) => s.id === id))))} 步的录制画面（Ctrl+Z 换回原来的）`
-    : `已更新${windowLabel(S.win)}的录制画面（Ctrl+Z 换回原来的）`);
+    : `已更新「${windowLabel(S.win)}」的录制画面（Ctrl+Z 换回原来的）`);
 }
 $("#btn-anchor-mode").addEventListener("click", () => setAnchorMode(!S.anchorMode || S.regionFor !== "anchor"));
 function setAnchorMode(on, purpose = "anchor") {
