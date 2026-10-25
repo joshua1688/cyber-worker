@@ -48,3 +48,16 @@ def test_a_busy_day_is_not_cut_off(tmp_path):
         store.write(AuditEntry(f"r{i}", datetime(2026, 10, 23, 9), "comment", "s01", "click", StepStatus.OK))
     assert len(store.entries(day=date(2026, 10, 23), limit=None)) == 1005
     assert len(store.entries()) == 1000
+
+
+def test_runs_summarise_each_run(tmp_path):
+    """每次运行一行：成功的只有时间；出了问题的带上第一处出问题的步骤和原因（应用首页的卡片上显示）。"""
+    store = SqliteAuditStore(connect(tmp_path / "state.db"))
+    store.write(AuditEntry("r1", datetime(2026, 10, 25, 9), "群聊天", "s01", "click", StepStatus.OK))
+    store.write(AuditEntry("r2", datetime(2026, 10, 25, 10), "查看资料", "s01", "click", StepStatus.OK))
+    store.write(AuditEntry("r2", datetime(2026, 10, 25, 10), "查看资料", "s02", "hover", StepStatus.ABORTED,
+                           detail="s02 没找到要点的目标（等了 5 秒）"))
+    ok, bad = store.runs()
+    assert ok["script"] == "群聊天" and not ok["bad"] and ok["step_id"] is None
+    assert bad["script"] == "查看资料" and bad["bad"] and bad["step_id"] == "s02" and "没找到" in bad["detail"]
+

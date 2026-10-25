@@ -97,6 +97,7 @@ async function open(id) {
   S.checked.clear();
   $("#run-log").innerHTML = "";
   try { localStorage.setItem("cw.script", id); } catch {}
+  history.replaceState(null, "", `/?macro=${encodeURIComponent(id)}`);
   reportCurrent();
   applyDetail(d);
   S.win = null;
@@ -850,6 +851,7 @@ function renderMacroPane() {
     <div class="section-title">${icon("page")}基本信息</div>
     <div class="fields">
       ${field("宏名", `<input type="text" class="input" data-s="name" value="${escapeHtml(sc.name)}">`)}
+      ${field("说明", `<input type="text" class="input" data-s="description" value="${escapeHtml(sc.description || "")}" placeholder="一句话说它是做什么的，比如：在群里发一条消息">`, "显示在应用首页的卡片上")}
       ${field("程序", `<input type="text" class="input" data-s="app" value="${escapeHtml(sc.window.app)}">`)}
       ${field("窗口标题", `<input type="text" class="input" data-s="title" value="${escapeHtml(sc.window.title || "")}" placeholder="可选">`, "同一程序有多个窗口时用")}
       ${field("窗口尺寸", `${sc.window.width} × ${sc.window.height}<span class="muted">（缩放 ${sc.window.scale}）</span>`, "坐标都相对这个尺寸；要换尺寸请新建宏")}
@@ -883,17 +885,6 @@ function savedVars() {
 
 const MP = { open: false, q: "", active: 0, items: [] };
 
-// 同一个平台总是同一个颜色
-function hueOf(text) {
-  let h = 0;
-  for (const ch of text || "") h = (h * 31 + ch.codePointAt(0)) % 360;
-  return h;
-}
-
-function avatar(platform, cls = "") {
-  return `<span class="mp-avatar ${cls}" style="--h:${hueOf(platform)}">${escapeHtml((platform || "?")[0].toUpperCase())}</span>`;
-}
-
 function highlight(text, q) {
   const safe = escapeHtml(text);
   if (!q) return safe;
@@ -917,10 +908,13 @@ function renderPickerTrigger() {
   }
   av.className = "mp-avatar";
   av.style.setProperty("--h", hueOf(cur.platform));
-  av.textContent = (cur.platform[0] || "?").toUpperCase();
-  $("#mp-name").textContent = S.script?.name || cur.name;
+  const appName = S.script?.window.title || S.script?.window.app || cur.platform;  // 和应用页一样：窗口标题
+  av.textContent = ([...appName][0] || "?").toUpperCase();
+  $("#mp-name").innerHTML = `<span class="mp-app">${escapeHtml(appName)}</span><span class="mp-sep">›</span>${escapeHtml(S.script?.name || cur.name)}`;
+  $("#mp-back").href = `/apps?app=${encodeURIComponent(cur.platform)}`;
+  $("#mp-back").title = `回到 ${appName} 的首页`;
   const w = S.script?.window;
-  $("#mp-sub").textContent = `${cur.platform} · ${S.dirty ? "正在保存…" : "已自动保存"}`;
+  $("#mp-sub").textContent = S.dirty ? "正在保存…" : "已自动保存";
   $("#mp-sub").title = w ? `${w.app}${w.title ? " · " + w.title : ""} · ${w.width} × ${w.height}` : "";
   $("#mp-badge").innerHTML = "";
 }
@@ -1029,20 +1023,6 @@ $("#mp-new").addEventListener("click", () => {
 });
 
 // ---------------- 平台包：一键导出 / 选文件或拖进页面导入，不弹确认 ----------------
-
-async function exportPack(platform) {
-  const res = await fetch(`/api/packs/${encodeURIComponent(platform)}`);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(await res.blob());
-  a.download = `${platform}.cwpack`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  toast(`已导出 ${platform}.cwpack`);
-  if (res.headers.get("X-Pack-Screenshots") === "1") {
-    toast("包里含有录制时的窗口截图（可能有聊天内容），分享前请确认；不想带可以在设置 › 录制与执行里关掉");
-  }
-}
 
 async function importPack(file) {
   closePicker();
@@ -1320,6 +1300,7 @@ $("#pane-macro").addEventListener("change", (e) => {
   if (!name) return;
   mutate((sc) => {
     if (name === "name") sc.name = el.value.trim();
+    if (name === "description") sc.description = el.value.trim();
     if (name === "app") sc.window.app = el.value.trim();
     if (name === "title") sc.window.title = el.value.trim() || null;
     if (name === "variables") sc.variables = el.value.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
@@ -1587,7 +1568,7 @@ async function createFromWindow(w, { record = false } = {}) {
     title: (custom && $("#nf-title").value.trim()) || w.match_title,
     width: (custom && +$("#nf-width").value) || w.width,
     height: (custom && +$("#nf-height").value) || w.height,
-    platform: (custom && $("#nf-platform").value.trim()) || null,
+    platform: (custom && $("#nf-platform").value.trim()) || S.newApp || null,
   };
   const d = await attempt(() => api("POST", "/api/scripts", body));
   if (!d) return false;
@@ -2190,8 +2171,8 @@ $("#opt-delays").addEventListener("change", (e) => Settings.update({ record_dela
 function startTour() {
   const rec = recKbd();
   Tour.start([
-    { el: "#macro-picker", title: "宏在这里切换和新建",
-      body: "一个宏 = 在某个程序窗口里的一串操作。下拉里点「新建宏」，去点一下那个窗口就行，程序、名字、尺寸全部自动识别。改动会自动保存，不用点保存；Ctrl/⌘+Z 撤销。平台旁边的「导出」能把整套宏打包成 .cwpack 文件，别人拖进页面就导入好了。" },
+    { el: "#macro-picker", title: "现在在哪个应用、哪个宏",
+      body: "「QQ › 群聊天」：这是 QQ 应用里的「群聊天」这个宏。左边的「‹」回到 QQ 的首页，那里能看到它的所有宏；点这一栏可以直接切到别的宏、新建宏。改动会自动保存，不用点保存；Ctrl/⌘+Z 撤销。" },
     { el: "#run-bar", title: "录制 → 空跑 → 执行",
       body: `点「录制」或在任何窗口里按 ${rec}，到目标窗口里像平时一样操作，再按一下就停止。录完点「空跑」（或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.dryHotkey) || "Alt+T")}</kbd>）完整走一遍但不发送；确认没问题再点「执行」，要点两次确认。执行会真的发送，所以没有全局快捷键。` },
     { el: "#steps-card", title: "步骤列表",
@@ -2234,11 +2215,17 @@ $("#btn-tour").addEventListener("click", startTour);
   }
   // 审计页「去修改」带过来的：直接打开那个宏、选中出问题的那一步
   const q = new URLSearchParams(location.search);
+  if (!q.has("macro") && !q.has("new")) return location.replace("/apps");
   await attempt(() => loadList(q.get("macro")));
   if (q.get("step") && S.script) {
     const i = S.script.steps.findIndex((s) => s.id === q.get("step"));
     if (i >= 0) select(i);
   }
-  if (q.has("macro")) history.replaceState(null, "", "/");
+  if (q.has("new")) {
+    S.newApp = q.get("app");  // 在某个应用里「录一个新宏」：建在这个应用下
+    quickStart();
+  } else if (q.get("dry") && S.script) {
+    run(true);  // 应用首页卡片上的「空跑」
+  }
   if (!Tour.seen("cw.tour.editor")) startTour();
 })();

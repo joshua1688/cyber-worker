@@ -6,7 +6,9 @@ import re
 import shutil
 import tempfile
 import threading
+from collections import Counter
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -17,7 +19,7 @@ from cyber_worker.bootstrap import App
 from cyber_worker.macro.anchors import anchors_dir, default_pages_ref, refs_dir, shots_dir, targets_dir
 from cyber_worker.macro.io.base import stable_title
 from cyber_worker.macro.recorder import RecordingBuilder
-from cyber_worker.macro.schema import MAIN, Click, Hover, Script, Step, TypeText, WaitPage, needs_page_check
+from cyber_worker.macro.schema import MAIN, Click, Hover, Script, Step, TypeText, Wait, WaitPage, needs_page_check
 from cyber_worker.macro.vision.fingerprint import PageBook
 from cyber_worker.macro.screenshot.storage import write_image
 from cyber_worker.studio.ws import Hub
@@ -166,6 +168,62 @@ class Studio:
                             "name": _display_name(p), "draft": draft})
         return out
 
+    def update_meta(self, script_id: str, *, name: str | None = None, description: str | None = None) -> dict:
+        """应用首页卡片上改名、写说明。名字和同一个应用里的别的宏重了就加 -2（和新建时一样，不弹窗），
+        改了名把以前的审计记录也改过来。返回改完的名字和说明。"""
+        path = self.script_path(script_id)
+        script = Script.load(path)
+        if description is not None:
+            script.description = description.strip()
+        if name is not None and name.strip() and name.strip() != script.name:
+            taken = {_display_name(p) for p in path.parent.glob("*.yaml")
+                     if p != path and not p.name.endswith(".pages.yaml")}
+            new, n = name.strip(), 2
+            while new in taken:
+                new, n = f"{name.strip()}-{n}", n + 1
+            self.rename_runs(script.name, new)
+            script.name = new
+        script.dump(path)
+        return {"name": script.name, "description": script.description}
+
+    def rename_runs(self, old: str, new: str) -> None:
+        """宏改名后，审计里以前的记录跟着改名。"""
+        if old != new and hasattr(self.app.audit, "rename_script"):
+            self.app.audit.rename_script(old, new)
+
+    def apps(self, today: date) -> list[dict]:
+        """应用总览 / 应用首页要的东西：每个应用（宏库里的一个平台目录）和它的宏，宏带上说明、几步、大概多久、
+        最近一次运行的结果（卡片上只放要紧的：变量、窗口这些细节进了编辑器再看）；应用带上今天运行了几次、几次出了问题。
+        运行记录按宏名对（审计里记的是宏名）。草稿不算：打开就会存进宏库。"""
+        runs = self.app.audit.runs() if hasattr(self.app.audit, "runs") else []
+        last = {r["script"]: r for r in runs}  # 按先后排的，后面的覆盖前面的：留下的就是最近一次
+        today_runs = [r for r in runs if r["at"][:10] == today.isoformat()]
+        out = []
+        for d in sorted(p for p in self.root.glob("*") if p.is_dir()):
+            macros, titles = [], Counter()
+            for p in sorted(d.glob("templates/*.yaml")):
+                if p.name.endswith(".pages.yaml"):
+                    continue
+                try:
+                    s = Script.load(p)
+                except Exception:  # noqa: BLE001 —— 一个宏读不出来，总览照样显示别的
+                    continue
+                titles[s.window.title or s.window.app] += 1  # 应用名：主窗口标题（Windows PowerShell），没有标题用程序名
+                run = last.get(s.name)
+                macros.append({
+                    "id": self.script_id(p), "name": s.name, "description": s.description,
+                    "steps": sum(not isinstance(st, Wait) for st in s.steps),
+                    "seconds": round(sum(st.seconds if isinstance(st, Wait) else st.delay_after for st in s.steps), 1),
+                    "last": run and {k: run[k] for k in ("at", "dry_run", "bad", "step_id", "detail")},
+                })
+            names = {m["name"] for m in macros}
+            mine = [r for r in today_runs if r["script"] in names]
+            runs_at = [m["last"]["at"] for m in macros if m["last"]]
+            out.append({"platform": d.name, "title": titles.most_common(1)[0][0] if titles else d.name,
+                        "macros": macros, "last_at": max(runs_at, default=None),  # 「最近用过」排序用
+                        "today": {"runs": len(mine), "bad": sum(r["bad"] for r in mine)}})
+        return out
+
     def unique_stem(self, platform: str, stem: str) -> str:
         """在宏库和草稿里都不重名。"""
         taken = lambda s: any((r / platform / "templates" / f"{s}.yaml").exists()  # noqa: E731
@@ -199,6 +257,55 @@ class Studio:
         _remove_macro_files(path)
         self.latest.pop(script_id, None)
 
+    # ---- 删除应用：整个挪进回收站，能撤销 ----
+
+    @property
+    def trash(self) -> Path:
+        return self.user_data / ".trash"
+
+    def app_dir(self, platform: str) -> Path:
+        d = (self.root / platform).resolve()
+        if d.parent != self.root.resolve() or not d.is_dir():
+            raise HTTPException(404, "这个应用已经不在了")
+        return d
+
+    def delete_app(self, platform: str, now: datetime | None = None) -> dict:
+        """删除一个应用（它的全部宏、锚点、截图）：整个目录挪进 user_data/.trash/<平台>-<时间>，
+        撤销就原样挪回来；过了 TRASH_DAYS 天的在 studio 启动时清掉。审计记录不动。"""
+        d = self.app_dir(platform)
+        if self.recording and self.script_path(self.recording.script_id).is_relative_to(d):
+            raise HTTPException(409, "正在录制这个应用里的宏，先停止录制")
+        if self.app.executor.busy:
+            raise HTTPException(409, "正在执行，稍后再删")
+        macros = [p for p in d.glob("templates/*.yaml") if not p.name.endswith(".pages.yaml")]
+        name = f"{platform}-{(now or datetime.now()):%Y%m%d-%H%M%S}"
+        self.trash.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(d), str(self.trash / name))
+        for sid in [k for k in self.latest if k.startswith(f"{platform}/")]:
+            self.latest.pop(sid, None)
+        return {"trash": name, "platform": platform, "macros": len(macros)}
+
+    def restore_app(self, trash: str) -> str:
+        """撤销删除：把回收站里的应用挪回宏库。宏库里已经又有同名的应用了就不覆盖。返回平台名。"""
+        src = (self.trash / trash).resolve()
+        if src.parent != self.trash.resolve() or not src.is_dir():
+            raise HTTPException(404, "回收站里没有这个应用了")
+        platform = _TRASH_SUFFIX.sub("", trash)
+        dst = self.root / platform
+        if dst.exists():
+            raise HTTPException(409, "已经又有一个同名的应用了，没法放回去")
+        self.root.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return platform
+
+    def _purge_trash(self, now: datetime) -> None:
+        """回收站里放了超过 TRASH_DAYS 天的应用真正删掉（看目录名里的时间）。"""
+        for d in self.trash.glob("*") if self.trash.is_dir() else []:
+            m = _TRASH_SUFFIX.search(d.name)
+            when = datetime.strptime(m.group(1), "%Y%m%d-%H%M%S") if m else None
+            if when is None or (now - when).days >= TRASH_DAYS:
+                shutil.rmtree(d, ignore_errors=True)
+
     def load(self, script_id: str) -> Script:
         return Script.load(self.script_path(script_id))
 
@@ -222,6 +329,7 @@ class Studio:
             for d in root.glob("*") if root.is_dir() else []:
                 if d.is_dir() and not any(f.is_file() for f in d.rglob("*")):
                     shutil.rmtree(d, ignore_errors=True)
+        self._purge_trash(datetime.fromtimestamp(now) if now is not None else datetime.now())
         return removed
 
     def set_latest(self, script_id: str, key: str | None, img, scale: float) -> None:
@@ -329,6 +437,8 @@ def _own_files(path: Path, script: Script) -> tuple[Path | None, Path | None, Pa
     return ref, pages, anchors
 
 
+TRASH_DAYS = 7  # 删除的应用在回收站里留这么多天，期间能撤销
+_TRASH_SUFFIX = re.compile(r"-(\d{8}-\d{6})$")  # 回收站目录名：<平台>-<删除时间>
 GARBAGE_AGE = 3 * 24 * 3600  # 秒：没人用的旧图过了这么久才删（期间 Ctrl+Z 还能用上）
 
 
@@ -453,8 +563,8 @@ def problems(script: Script, pages: dict[str, set[str | None]]) -> list[dict]:
     out = []
     seen: set[str] = set()
     for step in script.steps:
-        def add(msg: str) -> None:
-            out.append({"step": step.id, "message": msg})
+        def add(msg: str, sid: str = step.id) -> None:  # 绑定这一步的编号（循环变量不能在闭包里直接用）
+            out.append({"step": sid, "message": msg})
 
         if step.id in seen:
             add("步骤编号重复")

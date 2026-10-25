@@ -298,6 +298,15 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .subbar .split > .btn:nth-child(2) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .macro-picker { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .macro-picker .mp { flex: 1; min-width: 0; }
+/* 宏选择框左边的「‹」：回到这个应用的首页 */
+.mp-back {
+  display: grid; place-items: center; width: 32px; height: 44px; flex: none; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2); box-shadow: var(--shadow-sm);
+}
+.mp-back:hover { color: var(--text); border-color: var(--border-strong); }
+.mp-back .icon { transform: rotate(90deg); }
+.mp-app { color: var(--text-2); font-weight: 500; }
+.mp-sep { margin: 0 6px; color: var(--text-3); font-weight: 400; }
 /* 宏选择器：可搜索的下拉框（按平台分组、草稿置顶、键盘可用） */
 .mp { position: relative; }
 .mp-trigger {
@@ -1280,7 +1289,6 @@ button.link:hover { text-decoration: underline; }
 .advice > .icon { flex: none; margin-top: 2px; color: var(--info); }
 .advice b { display: block; }
 .advice p { margin: 4px 0 8px; line-height: 1.5; color: var(--text-2); }
-.advice a.btn { text-decoration: none; }
 .viewer-body .viewer-shot { padding: 0; background: none; border: none; justify-content: flex-start; }
 .no-shot { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--text-3); }
 
@@ -1297,7 +1305,6 @@ button.link:hover { text-decoration: underline; }
 .fix-tag { padding: 0 7px; border-radius: 999px; background: var(--danger-soft); color: var(--danger); font-size: 11px; line-height: 18px; font-weight: 600; }
 .seen-tag { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 11px; }
 .seen-tag .icon { width: 12px; height: 12px; }
-.review-actions a.btn { text-decoration: none; }
 
 /* 延迟不是「步」：不编号，窄一点、淡一点，夹在两个动作之间 */
 .step.idle { padding-top: 3px; padding-bottom: 3px; color: var(--text-3); font-size: 12.5px; }
@@ -1309,3 +1316,103 @@ button.link:hover { text-decoration: underline; }
 /* 输入 / 按键打进哪里 */
 .focus-note { display: flex; align-items: center; gap: 6px; margin: -4px 0 12px; font-size: 12px; color: var(--info); }
 .focus-note .icon { width: 13px; height: 13px; }
+
+/* ---------- 应用页：应用总览（每个应用一张卡片）/ 应用首页（它的宏一张张卡片） ---------- */
+.apps-page { flex: 1; min-height: 0; overflow: auto; padding: 44px 28px 56px; }
+/* 内容居中、限宽：宽屏上不铺满，两边留白 */
+.apps-inner { width: 100%; max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+.apps-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.apps-head h1 { margin: 0; font-size: 26px; }
+.apps-head p { margin: 4px 0 0; font-size: 13px; }
+/* 页头只有主按钮 + ⋯（导出、删除收在 ⋯ 里，⋯ 放最后）；两个一样高，⋯ 是正方形 */
+.apps-head > .btn, .apps-head .more-group > .btn { height: 36px; }
+.apps-head .more-group > .btn { width: 36px; padding: 0; justify-content: center; }
+.apps-head .btn.primary { font-weight: 600; }
+.mp-avatar.lg { width: 44px; height: 44px; border-radius: 12px; font-size: 18px; }
+.crumbs { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-3); }
+.crumbs a { color: var(--text-2); text-decoration: none; }
+.crumbs a:hover { color: var(--text); }
+.app-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 900px) { .app-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .app-grid { grid-template-columns: minmax(0, 1fr); } }
+.app-card { min-height: 156px; box-sizing: border-box; border-radius: 16px; }
+.app-card-macros { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-card, .macro-card {
+  display: flex; flex-direction: column; gap: 12px; padding: 18px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); text-decoration: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+.app-card:hover, .macro-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.app-card-head { display: flex; align-items: center; gap: 12px; }
+.app-card-head b { display: block; font-size: 16px; }
+.app-card-head small { display: block; font-size: 12px; color: var(--text-2); }
+.app-card-foot { display: flex; justify-content: space-between; margin-top: auto; font-size: 12px; }
+.small { font-size: 12px; line-height: 1.6; }
+.ok-text { color: var(--accent); }
+.bad-text { color: var(--danger); }
+/* 「新建应用」：和应用卡片一样大的虚线卡片，排在网格最后 */
+.app-card.app-new {
+  align-items: center; justify-content: center; gap: 8px; text-align: center;
+  background: transparent; border-style: dashed; border-color: var(--border-strong); color: var(--text-2);
+}
+.app-card.app-new:hover { border-color: var(--accent); box-shadow: none; }
+.app-card.app-new b { font-size: 14px; color: var(--text); }
+.app-card.app-new small { font-size: 12px; }
+.app-new-ico {
+  display: grid; place-items: center; width: 40px; height: 40px; border-radius: 20px;
+  background: var(--accent-soft); color: var(--accent);
+}
+.center { text-align: center; }
+.apps-tools { display: flex; align-items: center; gap: 10px; }
+/* 应用首页右上角的「⋯」：删除这个应用 */
+.more-group { position: relative; }
+.app-menu { right: 0; left: auto; width: 200px; padding: 6px; }
+
+/* 带放大镜的搜索框（应用页） */
+.find-box {
+  display: flex; align-items: center; gap: 8px; width: 260px; height: 34px; box-sizing: border-box; padding: 0 10px;
+  border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text-3);
+}
+.find-box:focus-within { border-color: var(--accent); }
+.find-box .icon { width: 15px; height: 15px; flex: none; }
+.find-box input { flex: 1; min-width: 0; border: none; outline: none; background: none; font: inherit; font-size: 13px; color: var(--text); }
+.macro-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.macro-card { gap: 10px; padding: 16px; }
+/* 同一行的卡片一样高：内容在上，按钮压到底部，几张卡片的按钮对齐 */
+.macro-main { flex: 1; }
+.macro-card { cursor: pointer; }
+.macro-name { font-size: 15px; font-weight: 600; color: var(--text); text-decoration: none; }
+.macro-desc-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.macro-desc-row .macro-desc { min-width: 0; }
+/* 名字、说明旁的小铅笔：鼠标移到卡片上才出现，点了原地编辑 */
+.pencil {
+  display: inline-grid; place-items: center; width: 24px; height: 24px; flex: none; padding: 0;
+  border: none; border-radius: 6px; background: none; color: var(--text-3); cursor: pointer; opacity: 0;
+}
+.pencil .icon { width: 14px; height: 14px; }
+.macro-card:hover .pencil, .pencil:focus-visible { opacity: 1; }
+.pencil:hover { background: var(--hover); color: var(--text); }
+.inline-edit { height: 30px; flex: 1; min-width: 0; font-size: 13px; }
+.inline-edit.name { font-size: 15px; font-weight: 600; max-width: 260px; }
+.macro-actions { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
+.macro-card.bad { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.macro-main { display: flex; flex-direction: column; gap: 8px; color: inherit; text-decoration: none; }
+.macro-title { display: flex; align-items: center; gap: 8px; }
+.macro-desc { font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.macro-desc-row { min-height: 24px; }
+/* 没有说明：平时什么都不显示，鼠标移到卡片上才出现「＋ 加一句说明」 */
+.add-desc {
+  padding: 0; border: none; background: none; font: inherit; font-size: 12px; color: var(--text-3);
+  cursor: pointer; opacity: 0;
+}
+.macro-card:hover .add-desc, .add-desc:focus-visible { opacity: 1; }
+.add-desc:hover { color: var(--accent); }
+.macro-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.run-state { font-size: 12px; white-space: nowrap; }
+.run-state.ok { color: var(--accent); }
+.run-state.bad { color: var(--danger); }
+.run-state.none { color: var(--text-3); }
+.macro-fail { font-size: 12px; color: var(--danger); text-decoration: none; }
+.macro-fail:hover { text-decoration: underline; }
+.macro-actions { display: flex; gap: 8px; }
+a.btn { text-decoration: none; }  /* 跳页面的按钮用 <a>，长得和按钮一样 */

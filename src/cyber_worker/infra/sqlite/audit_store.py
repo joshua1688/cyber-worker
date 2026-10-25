@@ -68,6 +68,33 @@ class SqliteAuditStore:
         with self._lock:
             return [dict(r) for r in self._conn.execute(sql, args).fetchall()]
 
+    def runs(self) -> list[dict]:
+        """每次运行一行，按先后：宏名、开始时间、是不是空跑、有没有出问题（中止 / 出错）；
+        出了问题的，带上第一处出问题的步骤和原因（应用首页的卡片上显示）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT run_id, script, MIN(at) AS at, MAX(dry_run) AS dry,
+                          MAX(status IN ('failed', 'aborted')) AS bad
+                   FROM audit_log GROUP BY run_id ORDER BY MIN(id)"""
+            ).fetchall()
+            first_bad = {r["run_id"]: r for r in self._conn.execute(
+                """SELECT run_id, step_id, detail FROM audit_log WHERE id IN
+                   (SELECT MIN(id) FROM audit_log WHERE status IN ('failed', 'aborted') GROUP BY run_id)"""
+            ).fetchall()}
+        out = []
+        for r in rows:
+            b = first_bad.get(r["run_id"])
+            out.append({"run_id": r["run_id"], "script": r["script"], "at": r["at"], "dry_run": bool(r["dry"]),
+                        "bad": bool(r["bad"]), "step_id": b["step_id"] if b else None,
+                        "detail": b["detail"] if b else ""})
+        return out
+
+    def rename_script(self, old: str, new: str) -> int:
+        """宏改了名：以前的记录跟着改名（记录按宏名对应宏，不改的话卡片上「最近一次」和审计历史都对不上）。"""
+        with self._lock, self._conn:
+            cur = self._conn.execute("UPDATE audit_log SET script = ? WHERE script = ?", (new, old))
+        return cur.rowcount
+
     def days(self, limit: int = 30) -> list[str]:
         with self._lock:
             rows = self._conn.execute(

@@ -1387,3 +1387,84 @@ def test_window_you_typed_into_is_never_a_popup(client):
     client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
     again = client.post("/api/record/stop").json()
     assert again["script"]["windows"]["w2"].get("popup", False) is False
+
+
+def test_apps_list_macros_with_their_last_run(client):
+    """应用页：每个应用（宏库里的平台目录）列出它的宏，带说明、几步、变量、最近一次运行；应用带上今天运行了几次、失败几次。"""
+    d = new_script(client)
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    client.post("/api/record/stop")
+    sid = client.post(f"/api/scripts/{d['id']}/commit").json()["id"]
+    script = client.get(f"/api/scripts/{sid}/detail").json()["script"]
+    script["description"] = "在群里发一条消息"
+    client.put(f"/api/scripts/{sid}/detail", json=script)
+
+    (app,) = client.get("/api/apps").json()
+    (m,) = app["macros"]
+    assert app["platform"] == "demo" and app["title"] == "Demo"
+    assert m["id"] == sid and m["description"] == "在群里发一条消息" and m["last"] is None
+    assert m["steps"] >= 2 and app["today"] == {"runs": 0, "bad": 0}
+
+    with client.websocket_connect(WS) as ws:
+        client.post(f"/api/scripts/{sid}/run", json={"dry_run": True})
+        while ws.receive_json().get("state") != "done":
+            pass
+    (app,) = client.get("/api/apps").json()
+    last = app["macros"][0]["last"]
+    assert last["dry_run"] and not last["bad"] and app["today"]["runs"] == 1
+    assert client.get("/apps").status_code == 200
+
+
+def test_rename_from_the_app_page_keeps_run_history(client):
+    """卡片上改名、写说明：重名自动加 -2；以前的运行记录跟着改名，卡片上「最近一次」不会变成「还没跑过」。
+    在编辑器的宏设置里改名也一样。"""
+    a = client.post(f"/api/scripts/{new_script(client, 'chat')['id']}/commit").json()["id"]
+    b = client.post(f"/api/scripts/{new_script(client, 'other')['id']}/commit").json()["id"]
+    client.post("/api/record/start", json={"script_id": a, "record_delays": False})  # 有步骤，空跑才有记录
+    client.post("/api/record/stop")
+    with client.websocket_connect(WS) as ws:
+        client.post(f"/api/scripts/{a}/run", json={"dry_run": True})
+        while ws.receive_json().get("state") != "done":
+            pass
+
+    r = client.patch(f"/api/scripts/{a}/meta", json={"name": "群聊天", "description": "在群里发一条消息"}).json()
+    assert r == {"name": "群聊天", "description": "在群里发一条消息"}
+    macros = {m["id"]: m for m in client.get("/api/apps").json()[0]["macros"]}
+    assert macros[a]["name"] == "群聊天" and macros[a]["last"] is not None  # 历史跟过来了
+
+    assert client.patch(f"/api/scripts/{b}/meta", json={"name": "群聊天"}).json()["name"] == "群聊天-2"
+    assert client.patch(f"/api/scripts/{b}/meta", json={"name": "  "}).json()["name"] == "群聊天-2"  # 空的不改
+
+    script = client.get(f"/api/scripts/{a}/detail").json()["script"]
+    script["name"] = "发群消息"
+    client.put(f"/api/scripts/{a}/detail", json=script)
+    macros = {m["id"]: m for m in client.get("/api/apps").json()[0]["macros"]}
+    assert macros[a]["name"] == "发群消息" and macros[a]["last"] is not None
+
+
+def test_delete_app_goes_to_trash_and_can_be_undone(client, tmp_path):
+    """删除整个应用：挪进回收站（不在应用列表里了），撤销就原样放回来；宏库里又有同名应用时不覆盖；
+    回收站里放了 7 天以上的，studio 启动时清掉。"""
+    from datetime import datetime, timedelta
+
+    sid = client.post(f"/api/scripts/{new_script(client)['id']}/commit").json()["id"]
+    r = client.delete("/api/apps/demo").json()
+    assert r["platform"] == "demo" and r["macros"] == 1
+    trash = tmp_path / "user_data/.trash" / r["trash"]
+    assert trash.is_dir() and not (tmp_path / "user_data/platforms/demo").exists()
+    assert client.get("/api/apps").json() == []
+
+    assert client.post("/api/apps/restore", json={"trash": r["trash"]}).json() == {"platform": "demo"}
+    assert [m["id"] for m in client.get("/api/apps").json()[0]["macros"]] == [sid]
+
+    # 删了以后又建了个同名应用：撤销不覆盖它
+    r2 = client.delete("/api/apps/demo").json()
+    client.post(f"/api/scripts/{new_script(client)['id']}/commit")
+    assert client.post("/api/apps/restore", json={"trash": r2["trash"]}).status_code == 409
+    assert client.post("/api/apps/restore", json={"trash": "../platforms"}).status_code == 404
+    assert client.delete("/api/apps/nope").status_code == 404
+
+    # 过期清理
+    st = client.app.state.studio
+    st.collect_garbage(now=(datetime.now() + timedelta(days=8)).timestamp())
+    assert not (tmp_path / "user_data/.trash" / r2["trash"]).exists()

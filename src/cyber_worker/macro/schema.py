@@ -161,6 +161,7 @@ _VAR = re.compile(r"\{(\w+)\}")
 
 class Script(BaseModel):
     name: str
+    description: str = ""  # 这个宏是做什么的，一句话（应用首页的卡片上显示）
     platform: str | None = None
     window: Window  # 主窗口
     windows: dict[str, Window] = {}  # 录制中用到的其他窗口，键如 "w2"

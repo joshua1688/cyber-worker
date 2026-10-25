@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>应用 · 赛博打工人</title>
+  <script>
+    // 首帧前确定主题（默认深色），避免闪一下
+    try {
+      const p = localStorage.getItem("cw.theme") || "dark";
+      const dark = p === "system" ? matchMedia("(prefers-color-scheme: dark)").matches : p !== "light";
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    } catch (e) { document.documentElement.dataset.theme = "dark"; }
+  </script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22 role=%22img%22 aria-label=%22cyber-worker%22%3E%3Ctext x=%2250%22 y=%2254%22 text-anchor=%22middle%22 dominant-baseline=%22central%22 font-size=%2286%22 font-family=%22'Segoe UI Emoji'%2C'Apple Color Emoji'%2C'Noto Color Emoji'%2Csans-serif%22%3E%F0%9F%A4%96%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="logo" href="/apps" aria-label="赛博打工人 Studio"><span class="logo-mark" aria-hidden="true">🤖</span><span class="wordmark">赛博打工人</span><span class="brand-tag">Studio</span></a>
+    <nav class="nav">
+      <a href="/apps" class="active"><i data-icon="layers"></i>应用</a>
+      <a href="/audit"><i data-icon="audit"></i>审计</a>
+    </nav>
+    <span class="grow"></span>
+    <button class="icon-btn" id="btn-settings" title="设置"><i data-icon="gear"></i></button>
+    <button class="icon-btn" id="btn-tour" title="新手引导"><i data-icon="help"></i></button>
+  </header>
+
+  <!-- 应用总览（没带 ?app）或某个应用的首页（?app=qq），由 apps.js 画 -->
+  <main class="apps-page" id="apps-main"></main>
+
+  <input type="file" id="pack-file" accept=".cwpack" hidden>
+  <div class="drop-overlay" id="drop-overlay" hidden>
+    <div><i data-icon="upload"></i>松开即可导入应用包</div>
+  </div>
+
+  <script src="/static/common.js"></script>
+  <script src="/static/tour.js"></script>
+  <script src="/static/settings.js"></script>
+  <script src="/static/apps.js"></script>
+</body>
+</html>

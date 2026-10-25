@@ -45,6 +45,7 @@ const ICON_PATHS = {
   loop: '<path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/>',
   window: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  pencil: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
   copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
   move: '<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>',
@@ -228,6 +229,34 @@ const KEY_CODE_NAMES = {
   ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
   Period: ".", Comma: ",", Minus: "-", Equal: "=", Slash: "/", Semicolon: ";", Backquote: "`",
 };
+
+// 同一个应用总是同一个颜色（宏选择框、应用页的小方块）
+function hueOf(text) {
+  let h = 0;
+  for (const ch of text || "") h = (h * 31 + ch.codePointAt(0)) % 360;
+  return h;
+}
+
+// 颜色按应用目录名（不会变）；字取显示的名字的头一个字（钉钉 → 钉，不是目录名 dingtalk 的 D）
+function avatar(platform, cls = "", label = platform) {
+  return `<span class="mp-avatar ${cls}" style="--h:${hueOf(platform)}">${escapeHtml(([...(label || "?")][0] || "?").toUpperCase())}</span>`;
+}
+
+// 导出一个应用的全部宏（.cwpack）：宏设计页、应用页共用
+async function exportPack(platform) {
+  const res = await fetch(`/api/packs/${encodeURIComponent(platform)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await res.blob());
+  a.download = `${platform}.cwpack`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast(`已导出 ${platform}.cwpack`);
+  if (res.headers.get("X-Pack-Screenshots") === "1") {
+    toast("包里含有录制时的窗口截图（可能有聊天内容），分享前请确认；不想带可以在设置 › 录制与执行里关掉");
+  }
+}
+
 function prettyKey(combo) {
   if (!combo) return "";
   const mac = { ctrl: "⌃", alt: "⌥", shift: "⇧", cmd: "⌘" };

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from cyber_worker.bootstrap import App
 from cyber_worker.studio.guard import LocalOnly
 from cyber_worker.studio.routes import (
+    apps,
     audit,
     edit,
     hotkeys,
@@ -60,7 +61,7 @@ def create_app(app: App, *, run_idle_sec: float | None = None) -> FastAPI:
     api.state.studio.collect_garbage()  # 宏目录里没人用的旧图（重新录制、换画面留下的，过了几天撤销也用不上了）
     hotkeys.bind(api.state.studio)  # 全局快捷键：配置的键被占用时自动换一个，界面上会提示
 
-    for r in (edit.router, record.router, run.router, preview.router, audit.router, hotkeys.router,
+    for r in (apps.router, edit.router, record.router, run.router, preview.router, audit.router, hotkeys.router,
               settings.router, packs.router):
         api.include_router(r)
 
@@ -76,6 +77,10 @@ def create_app(app: App, *, run_idle_sec: float | None = None) -> FastAPI:
     def audit_page():
         return FileResponse(STATIC / "audit.html")
 
+    @api.get("/apps")
+    def apps_page():
+        return FileResponse(STATIC / "apps.html")
+
     @api.get("/api/build")
     def build():
         return {"build": build_id()}
@@ -89,7 +94,7 @@ def create_app(app: App, *, run_idle_sec: float | None = None) -> FastAPI:
     async def no_stale_frontend(request, call_next):
         # 本地工具：前端文件每次都向服务端确认（ETag 未变则 304），升级后不会用到旧的 JS
         response = await call_next(request)
-        if request.url.path == "/" or request.url.path == "/audit" or request.url.path.startswith("/static/"):
+        if request.url.path in ("/", "/audit", "/apps") or request.url.path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-cache"
         return response
 

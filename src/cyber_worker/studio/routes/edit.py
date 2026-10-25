@@ -56,6 +56,11 @@ class NewAnchor(BaseModel):
     step_id: str | None = None  # frame=step 时：哪一步的画面
 
 
+class MacroMeta(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
 class AutoPage(BaseModel):
     step_id: str
 
@@ -161,9 +166,16 @@ async def save_script(script_id: str, request: Request):
     except ValidationError as e:
         raise HTTPException(422, [{"loc": err["loc"], "msg": err["msg"]} for err in e.errors()]) from e
     script.renumber()  # 增删、挪动步骤后编号跟着位置走：界面、日志、审计里的「第 N 步」一致
+    st.rename_runs(Script.load(path).name, script.name)  # 在宏设置里改了名：以前的运行记录跟着改
     script.dump(path)
     restore_pages(Script.load(path))  # 撤销重新录制：旧步骤用到的页面被清出去了，放回来
     return st.describe(script_id)
+
+
+@router.patch("/scripts/{script_id:path}/meta")
+def update_meta(script_id: str, body: MacroMeta, request: Request):
+    """应用首页卡片上改名、写说明（不用打开编辑器）。"""
+    return studio(request).update_meta(script_id, name=body.name, description=body.description)
 
 
 @router.delete("/scripts/{script_id:path}/detail")
