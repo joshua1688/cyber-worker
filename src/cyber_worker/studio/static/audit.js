@@ -9,19 +9,26 @@ const A = {
   rows: [],      // 列表上的行：一行 = 连着几次同样结果的运行（通常就一次）
   show: "all",   // all | pending | bad | fix
   selected: -1,  // A.entries 的下标（右边正在看的那一步）
-  flows: [],    // 这一天出现过的 {platform, platform_title, flow}：流程筛选下拉按应用分组
+  flows: [],    // 这一天出现过的 {platform, platform_title, flow, runs}：流程筛选下拉按应用分组
+  days: [],     // 有记录的日子 {day, runs, bad}，新的在前（今天总在）
+  day: "",      // 正在看的那天 YYYY-MM-DD
+  calMonth: "", // 月历正显示哪个月 YYYY-MM
+  pick: "",     // 流程筛选："" 全部；JSON [应用] 这个应用的全部流程；JSON [应用, 流程名] 这一个流程
+  report: null, // 后台的日报（卡片上只用它的成功率；数量都在页面里按运行数）
 };
 const TYPE_TEXT = { click: "点击", type: "输入", key: "按键", scroll: "滚动", wait: "延迟", drag: "拖动",
   hover: "悬停", wait_page: "等待页面", start: "开始", calibrate: "找窗口" };
 
-const isBad = (e) => e.status === "failed" || e.status === "aborted";
+// 执行时你动了键鼠、程序让给你（runner 记成「中止」）：和急停一样是人为打断，流程没毛病，不算失败
+const userStop = (e) => e.status === "aborted" && /检测到你在用电脑/.test(e.detail || "");
+const isBad = (e) => (e.status === "failed" || e.status === "aborted") && !userStop(e);
 const pending = (e) => !e.reviewed && e.suspicion >= 0.3;
 const stepNo = (e) => { const m = /^s(\d+)$/.exec(e.step_id); return m ? +m[1] : null; };
 const stepName = (e) => (stepNo(e) ? `第 ${stepNo(e)} 步 · ` : "") + (TYPE_TEXT[e.action] || e.action);
 const flagged = (g) => g.es.some((e) => e.reviewed === 2);   // 标了「有问题，要修」
 const seen = (g) => !flagged(g) && g.es.every((e) => e.reviewed === 1);  // 标了「看过了」
 // 停下来是正常保护、不用改流程（你动了键鼠、窗口没开）：只留「看过了」，不给「要修」「去修改」
-const noFix = (g) => !!g.bad && advise(g.bad)?.edit === false;
+const noFix = (g) => (!!g.bad && advise(g.bad)?.edit === false) || (!g.bad && !!stopped(g));
 
 // 程序写的原因 → 一句人话。细节（得分、等了几秒）放在右边的「详细」里
 function human(detail) {
@@ -95,17 +102,83 @@ function movedAnchor(e) {
 
 // ---------------- 数据 ----------------
 
+const dayStr = (d) => d.toLocaleDateString("sv-SE"); // YYYY-MM-DD
+// 「今天」「昨天」，更早的「10月22日 周三」
+function dayLabel(day) {
+  const now = new Date();
+  if (day === dayStr(now)) return "今天";
+  if (day === dayStr(new Date(now.getTime() - 86400000))) return "昨天";
+  const d = new Date(`${day}T00:00:00`);
+  return `${d.getMonth() + 1}月${d.getDate()}日 周${"日一二三四五六"[d.getDay()]}`;
+}
+
 async function loadDays() {
   const days = await api("GET", "/api/audit/days");
-  const today = new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD
-  if (!days.includes(today)) days.unshift(today);
-  $("#f-day").innerHTML = days.map((d) => `<option value="${d}">${d === today ? "今天" : d}</option>`).join("");
+  const today = dayStr(new Date());
+  if (!days.some((d) => d.day === today)) days.unshift({ day: today, runs: 0, bad: 0 });
+  A.days = days;
+  if (!days.some((d) => d.day === A.day)) A.day = today;
+  renderDay();
+}
+
+const monthOf = (day) => day.slice(0, 7); // YYYY-MM
+function shiftMonth(month, n) {
+  const d = new Date(`${month}-01T00:00:00`);
+  d.setMonth(d.getMonth() + n);
+  return dayStr(d).slice(0, 7);
+}
+
+// 日期：筛选栏最左边「‹ 今天 ›」，‹ › 一天天翻（只翻有记录的日子）；点中间弹出月历
+function renderDay() {
+  const i = A.days.findIndex((d) => d.day === A.day);
+  $("#day-label").textContent = dayLabel(A.day);
+  $("#day-prev").disabled = i >= A.days.length - 1;
+  $("#day-next").disabled = i <= 0;
+  renderCalendar();
+}
+
+// 月历：一周从周一开始。全部成功的日子下面一个绿点，有失败的红点，没有记录的灰着点不了；今天、选中的那天加框
+function renderCalendar() {
+  A.calMonth ||= monthOf(A.day);
+  const today = dayStr(new Date());
+  const byDay = Object.fromEntries(A.days.map((x) => [x.day, x]));
+  const first = new Date(`${A.calMonth}-01T00:00:00`);
+  const blanks = (first.getDay() + 6) % 7;
+  const count = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  let cells = "";
+  for (let k = 0; k < blanks; k++) cells += `<span></span>`;
+  for (let n = 1; n <= count; n++) {
+    const day = `${A.calMonth}-${String(n).padStart(2, "0")}`;
+    const rec = byDay[day];
+    const cls = [day === A.day && "on", day === today && "today", rec?.runs && "has", rec?.bad && "bad"].filter(Boolean).join(" ");
+    const tip = rec?.runs ? `${rec.runs} 次${rec.bad ? `，${rec.bad} 次失败` : ""}` : "没有记录";
+    cells += `<button type="button" class="cal-day ${cls}" data-day="${day}" title="${tip}" ${rec ? "" : "disabled"}>${n}<i></i></button>`;
+  }
+  const oldest = monthOf(A.days[A.days.length - 1].day);
+  const [y, m] = A.calMonth.split("-");
+  $("#day-menu").innerHTML = `
+    <div class="cal-head">
+      <button type="button" class="day-arrow" data-cal="-1" aria-label="上个月" ${A.calMonth <= oldest ? "disabled" : ""}>${icon("chevron")}</button>
+      <b>${y} 年 ${+m} 月</b>
+      <button type="button" class="day-arrow next" data-cal="1" aria-label="下个月" ${A.calMonth >= monthOf(today) ? "disabled" : ""}>${icon("chevron")}</button>
+    </div>
+    <div class="cal-grid cal-week">${[..."一二三四五六日"].map((w) => `<span>${w}</span>`).join("")}</div>
+    <div class="cal-grid">${cells}</div>
+    <div class="cal-legend"><span><i class="has"></i>成功</span><span><i class="bad"></i>失败</span></div>`;
+}
+
+function setDay(day) {
+  A.day = day;
+  A.calMonth = monthOf(day);
+  closeDropdowns();
+  renderDay();
+  attempt(() => load());
 }
 
 async function load(keepRun) {
-  const params = new URLSearchParams({ day: $("#f-day").value });
-  // 下拉的值："" 全部；JSON [应用] 这个应用的全部流程；JSON [应用, 流程名] 这一个流程（没认出应用的旧记录，应用是 ""）
-  const pick = $("#f-flow").value && JSON.parse($("#f-flow").value);
+  const params = new URLSearchParams({ day: A.day });
+  // 没认出应用的旧记录，应用是 ""
+  const pick = A.pick && JSON.parse(A.pick);
   if (pick) {
     params.set("platform", pick[0]);
     if (pick.length > 1) params.set("flow", pick[1]);
@@ -115,7 +188,7 @@ async function load(keepRun) {
   A.entries = data.entries;
   buildGroups();
   buildRows();
-  renderReport(data.report);
+  A.report = data.report;
   renderFlows();
   const g = keepRun && A.groups.find((x) => x.es[0].run_id === keepRun);
   A.selected = g ? A.entries.indexOf(g.top) : firstSelection();
@@ -132,21 +205,33 @@ function buildGroups() {
   A.groups = [...by.values()].map((es) => {
     es.sort((x, y) => x.id - y.id);
     const bad = es.find(isBad);
-    const top = bad || es.reduce((m, e) => (e.suspicion > m.suspicion ? e : m), es[es.length - 1]);
+    // 时间线上不放延迟（不碰窗口、没有截图，一半的圆点都是它）；延迟本身出了问题（急停在等待中、失败、待看）才放
+    const shown = es.filter((e) => e.action !== "wait" || isBad(e) || pending(e) || e.status === "cancelled");
+    const top = bad || shown.reduce((m, e) => (e.suspicion > m.suspicion ? e : m), shown[shown.length - 1] || es[es.length - 1]);
     const { platform, platform_title: platformTitle, flow_id: flowId, flow } = es[0];
-    return { es, top, bad, at: es[0].at, flow, platform, platformTitle, flowId, dry: es[0].dry_run };
+    return { es, shown, top, bad, at: es[0].at, flow, platform, platformTitle, flowId, dry: es[0].dry_run };
   });
   A.groups.sort((x, y) => y.top.suspicion - x.top.suspicion || y.at.localeCompare(x.at));
 }
 
-const tone = (g) => (g.bad ? "bad" : g.es.some(pending) ? "warn" : "ok");
+// 人为打断的运行（急停、你在用电脑）是灰色：没跑完，不能是绿色的「正常」；但流程没毛病，也不是红色的失败
+const stopped = (g) => g.es.find((e) => e.status === "cancelled" || userStop(e));
+const tone = (g) => (g.bad ? "bad" : stopped(g) ? "stop" : g.es.some(pending) ? "warn" : "ok");
 
 function summary(g) {
   if (g.bad) return `${stepNo(g.bad) ? `第 ${stepNo(g.bad)} 步：` : ""}${human(g.bad.detail) || STATUS_TEXT[g.bad.status]}`;
+  const stop = stopped(g);
+  if (stop && userStop(stop)) return `${stepNo(stop) ? `第 ${stepNo(stop)} 步：` : ""}${human(stop.detail)}`;
+  if (stop) {
+    const done = g.es.filter((e) => e.id < stop.id && stepNo(e) && e.status !== "cancelled").pop();
+    return done ? `急停：做完第 ${stepNo(done)} 步后停下` : "急停：还没开始做就停下";
+  }
+  // 「N 步」只数真正的步骤（s01、s02…），不数延迟和找窗口，和编辑器里的「N 步」一样
+  const steps = g.es.filter((e) => stepNo(e)).length;
   const k = g.es.filter(pending).length;
-  if (k) return `${g.es.length} 步，有 ${k} 步待看`;
+  if (k) return `${steps} 步，有 ${k} 步待看`;
   if (g.es.some((e) => e.status === "skipped")) return "全部正常，空跑到「发送」前停下";
-  return `${g.es.length} 步全部成功`;
+  return `${steps} 步全部成功`;
 }
 
 // 列表上的行：按筛选留下的运行；连着的「同一个流程、同样失败」合成一行
@@ -168,46 +253,105 @@ const rowOf = (g) => A.rows.find((r) => r.groups.includes(g));
 // ---------------- 渲染 ----------------
 
 function render() {
+  renderReport();
+  renderTabs();
   renderList();
   renderViewer();
 }
 
-function renderReport(r) {
+// 卡片和下面的标签用同一套数：都按「运行」数（复核是一次运行一次运行看的），点「看过了」两边一起变。
+// 以前卡片的「待审」是后台按步骤数的失败 / 中止，和标签对不上
+function counts() {
+  return { all: A.groups.length, pending: A.groups.filter((g) => g.es.some(pending)).length,
+    bad: A.groups.filter((g) => g.bad).length, fix: A.groups.filter(flagged).length };
+}
+
+// 统计卡片只是看的（筛选在下面的标签上）
+function renderReport() {
+  const r = A.report || {};
+  const n = counts();
   const rate = r.success_rate == null ? "—" : `${Math.round(r.success_rate * 100)}%`;
-  const bad = A.groups.filter((g) => g.bad).length;
-  $("#report").innerHTML = `
-    <div class="stat"><div class="v">${r.runs}</div><div class="k">运行次数</div></div>
-    <div class="stat"><div class="v">${rate}</div><div class="k">成功率</div></div>
-    <div class="stat ${bad ? "bad" : ""}"><div class="v">${bad}</div><div class="k">失败</div></div>
-    <div class="stat ${r.suspicious_unreviewed ? "alert" : ""}"><div class="v">${r.suspicious_unreviewed}</div><div class="k">待审</div></div>`;
+  const tile = (value, label, cls = "") => `<div class="stat ${cls}"><div class="v">${value}</div><div class="k">${label}</div></div>`;
+  $("#report").innerHTML = tile(n.all, "运行次数") + tile(rate, "成功率")
+    + tile(n.bad, "失败", n.bad ? "bad" : "") + tile(n.pending, "待审", n.pending ? "alert" : "");
+}
+
+function setShow(v) {
+  A.show = v;
+  $$("#f-show button").forEach((x) => x.classList.toggle("on", x.dataset.v === v));
+  buildRows();
+  if (!rowOf(selectedGroup())) A.selected = firstSelection();
+  render();
 }
 
 // 「全部 QQ 的流程」「全部微信的流程」：英文名两边空一格
 const allOf = (title) => (/^[A-Za-z0-9]|[A-Za-z0-9]$/.test(title) ? `全部 ${title} 的流程` : `全部${title}的流程`);
 
-// 流程筛选：按应用分组，每组先是「全部 QQ 的流程」，再是一个个流程；同名的流程在不同应用里也分得清
+// 流程筛选：自己画的下拉（浏览器自带的 <select> 改不了样式）。按应用分组，组头带头像，点组头 =
+// 「这个应用的全部流程」；每个流程后面是这天跑了几次；同名的流程在不同应用里也分得清
 function renderFlows() {
-  const sel = $("#f-flow");
-  const current = sel.value;
+  const current = A.pick;
   const groups = new Map();
   A.flows.forEach((m) => {
     const k = m.platform || "";
-    if (!groups.has(k)) groups.set(k, { title: m.platform_title || "其他", names: [] });
-    groups.get(k).names.push(m.flow);
+    if (!groups.has(k)) groups.set(k, { title: m.platform_title || "其他", flows: [] });
+    groups.get(k).flows.push(m);
   });
-  const opt = (value, text) => `<option value="${escapeHtml(value)}" ${value === current ? "selected" : ""}>${escapeHtml(text)}</option>`;
-  let html = opt("", "全部流程");
+  const item = (value, label, n, cls = "") => `
+    <button type="button" class="ctx-item dd-item ${cls} ${value === current ? "on" : ""}" role="option"
+      aria-selected="${value === current}" data-pick="${escapeHtml(value)}"><span>${label}</span>${
+      value === current ? icon("check") : n != null ? `<i>${n}</i>` : ""}</button>`;
+  let html = item("", "全部流程", null);
   for (const [platform, g] of groups) {
-    html += `<optgroup label="${escapeHtml(g.title)}">${
-      g.names.length > 1 ? opt(JSON.stringify([platform]), allOf(g.title)) : ""}${
-      g.names.map((n) => opt(JSON.stringify([platform, n]), n)).join("")}</optgroup>`;
+    const total = g.flows.reduce((t, m) => t + m.runs, 0);
+    html += `<div class="menu-sep"></div>${item(JSON.stringify([platform]),
+      `${platform ? avatar(platform, "xs", g.title) : ""}<b>${escapeHtml(g.title)}</b>`, `全部 ${total}`, "dd-group")}`;
+    html += g.flows.map((m) => item(JSON.stringify([platform, m.flow]), escapeHtml(m.flow), m.runs, "dd-sub")).join("");
   }
-  // 选中的流程这一天没有记录了（换了日期）：留着它，别悄悄变成「全部」
-  if (current && !html.includes(`value="${escapeHtml(current)}"`)) {
-    const p = JSON.parse(current);
-    html += opt(current, p.length > 1 ? p[1] : allOf(p[0]));
-  }
-  sel.innerHTML = html;
+  $("#flow-menu").innerHTML = html;
+  // 选中的流程这一天没有记录了（换了日期）：照样显示它，别悄悄变成「全部」
+  const p = current && JSON.parse(current);
+  const title = p && (A.flows.find((m) => (m.platform || "") === p[0])?.platform_title || p[0] || "其他");
+  $("#flow-label").textContent = !p ? "全部流程" : p.length > 1 ? p[1] : allOf(title);
+  fitFlowWidth();
+}
+
+// 按钮和展开的列表一样宽，以列表要的宽度为准：最宽的一项再留出名字和数量之间的空隙，至少 220px
+// （菜单的常规宽度；只按字算太挤），按钮上的字更长就以按钮为准，最多 320px
+function fitFlowWidth() {
+  const dd = $("#f-flow"), menu = $("#flow-menu"), btn = $("#flow-btn");
+  dd.style.removeProperty("--flow-w");
+  const hidden = menu.hidden;
+  Object.assign(menu.style, { visibility: "hidden", width: "max-content", right: "auto" });
+  menu.hidden = false;
+  const listW = menu.getBoundingClientRect().width;
+  menu.hidden = hidden;
+  Object.assign(menu.style, { visibility: "", width: "", right: "" });
+  Object.assign(btn.style, { width: "max-content" });
+  const btnW = btn.getBoundingClientRect().width;
+  btn.style.width = "";
+  dd.style.setProperty("--flow-w", `${Math.ceil(Math.min(320, Math.max(220, listW + 32, btnW)))}px`);
+}
+
+// 全部 / 待审 / 失败 / 要修 后面直接带数量
+function renderTabs() {
+  const n = counts();
+  $$("#f-show [data-n]").forEach((el) => {
+    el.textContent = n[el.dataset.n];
+    el.classList.toggle("zero", !n[el.dataset.n]);
+  });
+}
+
+function closeDropdowns() {
+  $$(".dd-pop").forEach((m) => (m.hidden = true));
+  $$("[aria-haspopup]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+}
+function toggleDropdown(btn, menu) {
+  const open = menu.hidden;
+  closeDropdowns();
+  menu.hidden = !open;
+  btn.setAttribute("aria-expanded", String(open));
+  if (open) menu.querySelector(".on")?.scrollIntoView({ block: "nearest" });
 }
 
 // 哪个应用：头像 + 「QQ › 群聊天」；认不出应用（流程名在好几个应用里都有的旧记录）只写流程名
@@ -249,12 +393,14 @@ function renderViewer() {
     return;
   }
   const twins = (rowOf(g)?.groups || []).filter((x) => x !== g);
-  const status = g.bad ? STATUS_TEXT[g.bad.status] : tone(g) === "warn" ? "待看" : "正常";
+  const stop = stopped(g);
+  const status = g.bad ? STATUS_TEXT[g.bad.status] : stop ? (userStop(stop) ? "已停下" : "已急停")
+    : tone(g) === "warn" ? "待看" : "正常";
   const reason = human(e.detail);
   const score = e.page_score == null ? "" : `，得分 ${e.page_score.toFixed(2)}`;
   const id = g.flowId;
   const fixStep = g.bad || g.top;
-  const advice = isBad(e) ? advise(e) : weakTarget(e) || movedAnchor(e);
+  const advice = isBad(e) || userStop(e) ? advise(e) : weakTarget(e) || movedAnchor(e);
   v.innerHTML = `
     <div class="card-head viewer-head">
       <span class="pill ${tone(g)}">${status}</span>
@@ -264,14 +410,14 @@ function renderViewer() {
       ${twins.length ? `<span class="muted twins">同样的还有 ${twins.map((t) =>
         `<button type="button" class="link" data-run="${escapeHtml(t.es[0].run_id)}">${t.at.slice(11, 16)}</button>`).join(" ")}</span>` : ""}
     </div>
-    <ol class="timeline" aria-label="这次运行的步骤">${g.es.map((x) => `
+    <ol class="timeline" aria-label="这次运行的步骤">${g.shown.map((x) => `
       <li><button type="button" class="tl ${x === e ? "on" : ""}" data-i="${A.entries.indexOf(x)}" title="${escapeHtml(human(x.detail) || STATUS_TEXT[x.status] || "")}">
-        <span class="dot ${isBad(x) ? "bad" : pending(x) ? "warn" : x.status === "ok" ? "ok" : ""}"></span>${escapeHtml(stepName(x))}
+        <span class="dot ${userStop(x) ? "" : isBad(x) ? "bad" : pending(x) ? "warn" : x.status === "ok" ? "ok" : ""}"></span>${escapeHtml(stepName(x))}
       </button></li>`).join("")}
     </ol>
     <div class="scroller viewer-body">
-      <div class="reason ${isBad(e) ? "bad" : pending(e) ? "warn" : ""}">
-        <b>${escapeHtml(stepName(e))}：${escapeHtml(STATUS_TEXT[e.status] || e.status)}${e.spot_check ? ` <span class="badge warn">抽查</span>` : ""}</b>
+      <div class="reason ${isBad(e) ? "bad" : userStop(e) ? "" : pending(e) ? "warn" : ""}">
+        <b>${escapeHtml(stepName(e))}：${escapeHtml(userStop(e) ? "已停下" : STATUS_TEXT[e.status] || e.status)}${e.spot_check ? ` <span class="badge warn">抽查</span>` : ""}</b>
         ${reason ? `<span>${escapeHtml(reason)}</span>` : ""}
         <small>${e.expected_page ? `执行前核对页面「${escapeHtml(e.expected_page)}」${score}`
           : /没有声明 expected_page|没有 pages\.yaml/.test(e.detail || "") ? "这一步还没设页面" : "这一步不用核对页面"}${
@@ -341,13 +487,13 @@ function moveRow(delta, refilter = false) {
   $("#list .run-row.on")?.scrollIntoView({ block: "nearest" });
 }
 
-// ← →：这次运行的上一步 / 下一步（到头就停住）
+// ← →：这次运行的上一步 / 下一步（跳过时间线上没放的延迟，到头就停住）
 function moveStep(delta) {
   const g = selectedGroup();
   if (!g) return;
-  const i = g.es.indexOf(A.entries[A.selected]) + delta;
-  if (i < 0 || i >= g.es.length) return;
-  A.selected = A.entries.indexOf(g.es[i]);
+  const i = g.shown.indexOf(A.entries[A.selected]) + delta;
+  if (i < 0 || i >= g.shown.length) return;
+  A.selected = A.entries.indexOf(g.shown[i]);
   renderViewer();
   $("#viewer .tl.on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
@@ -376,18 +522,48 @@ $("#viewer").addEventListener("click", (e) => {
 });
 $("#f-show").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-v]");
-  if (!b) return;
-  A.show = b.dataset.v;
-  $$("#f-show button").forEach((x) => x.classList.toggle("on", x === b));
-  buildRows();
-  if (!rowOf(selectedGroup())) A.selected = firstSelection();
-  render();
+  if (b) setShow(b.dataset.v);
 });
-["#f-day", "#f-flow"].forEach((s) => $(s).addEventListener("change", () => attempt(() => load())));
+$("#day-btn").addEventListener("click", (e) => {
+  if ($("#day-menu").hidden) {
+    A.calMonth = monthOf(A.day); // 每次打开都从正在看的那个月开始
+    renderCalendar();
+  }
+  toggleDropdown(e.currentTarget, $("#day-menu"));
+});
+$("#flow-btn").addEventListener("click", (e) => toggleDropdown(e.currentTarget, $("#flow-menu")));
+$("#day-prev").addEventListener("click", () => setDay(A.days[A.days.findIndex((d) => d.day === A.day) + 1].day));
+$("#day-next").addEventListener("click", () => setDay(A.days[A.days.findIndex((d) => d.day === A.day) - 1].day));
+$("#day-menu").addEventListener("click", (e) => {
+  const nav = e.target.closest("[data-cal]");
+  if (nav) {
+    A.calMonth = shiftMonth(A.calMonth, +nav.dataset.cal);
+    return renderCalendar();
+  }
+  const b = e.target.closest("[data-day]");
+  if (b) setDay(b.dataset.day);
+});
+$("#flow-menu").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-pick]");
+  if (!b) return;
+  A.pick = b.dataset.pick;
+  closeDropdowns();
+  attempt(() => load());
+});
+// 点下拉外面、按 Esc 收起
+document.addEventListener("click", (e) => {
+  if (!e.composedPath().some((el) => el.classList?.contains("dd"))) closeDropdowns();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $$(".dd-pop").some((m) => !m.hidden)) {
+    closeDropdowns();
+    e.stopPropagation();
+  }
+}, true);
 $("#btn-clear-day").addEventListener("click", (e) => {
   const btn = e.currentTarget;
-  const day = $("#f-day").value;
-  const label = $("#f-day").selectedOptions[0]?.textContent || day;
+  const day = A.day;
+  const label = dayLabel(day);
   confirmClick(btn, "确认清空", async () => {
     const r = await attempt(() => api("DELETE", `/api/audit/days/${day}`));
     if (!r) return;
@@ -410,15 +586,15 @@ document.addEventListener("keydown", (e) => {
 // 有新的执行结果时自动刷新（停留在今天时）
 connectEvents((ev) => {
   if (ev.type === "settings") Settings.applyRemote(ev);
-  if (ev.type === "run_state" && ev.state === "done" && $("#f-day").selectedIndex === 0) {
-    attempt(() => load(selectedGroup()?.es[0].run_id));
+  if (ev.type === "run_state" && ev.state === "done" && A.day === dayStr(new Date())) {
+    attempt(async () => { await loadDays(); await load(selectedGroup()?.es[0].run_id); });
   }
 });
 
 function startTour() {
   Tour.start([
     { el: "#report", title: "今天的概况",
-      body: "运行次数、成功率、失败了几次、还有几步待审。空跑正常停在「发送」前也算成功。" },
+      body: "运行次数、成功率、失败了几次、还有几次待审。空跑正常停在「发送」前也算成功。" },
     { el: "#list", title: "一次运行一行，有问题的排最前",
       body: "红点是失败，黄点是还有可疑的步骤没看。连着几次一样的失败合成一行，标着 ×N。↑ ↓ 切换运行。" },
     { el: "#viewer", title: "看截图，下结论",

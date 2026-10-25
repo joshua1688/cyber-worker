@@ -101,3 +101,12 @@ def test_audit_column_first_named_app_becomes_platform(tmp_path):
     conn.close()
 
     assert [(r["run_id"], r["platform"]) for r in SqliteAuditStore(connect(path)).runs()] == [("r1", "qq")]
+
+
+def test_day_summary_counts_runs_and_failures(tmp_path):
+    """日期下拉：每天跑了几次（按运行算，不是按步骤）、几次出了问题，新的一天在前。"""
+    store = SqliteAuditStore(connect(tmp_path / "state.db"))
+    for run, day, status in (("a", 24, StepStatus.OK), ("a", 24, StepStatus.OK), ("b", 24, StepStatus.ABORTED),
+                             ("c", 25, StepStatus.FAILED)):
+        store.write(AuditEntry(run, datetime(2026, 10, day, 9), "chat", "s01", "click", status))
+    assert store.day_summary() == [{"day": "2026-10-25", "runs": 1, "bad": 1}, {"day": "2026-10-24", "runs": 2, "bad": 1}]

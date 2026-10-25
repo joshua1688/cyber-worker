@@ -1310,7 +1310,7 @@ def test_audit_screenshots_are_served_as_webp(client):
         client.post(f"/api/flows/{d['id']}/run", json={"dry_run": True})
         while ws.receive_json().get("state") != "done":
             pass
-    day = client.get("/api/audit/days").json()[0]
+    day = client.get("/api/audit/days").json()[0]["day"]
     rows = client.get(f"/api/audit?day={day}").json()
     url = next(r["screenshot_url"] for r in (rows["entries"] if isinstance(rows, dict) else rows) if r["screenshot_url"])
     r = client.get(url)
@@ -1474,7 +1474,9 @@ def test_audit_says_which_app_each_run_belongs_to(client):
     assert (new["platform"], new["platform_title"], new["flow_id"]) == ("demo", "Demo", sid)
     assert (by_run["old1"]["platform"], by_run["old1"]["platform_title"], by_run["old1"]["flow_id"]) == ("wx", "WeChat", only)
     assert by_run["old2"]["platform"] is None and by_run["old2"]["flow_id"] is None
-    assert {(m["platform"], m["flow"]) for m in data["flows"]} == {("demo", "群聊天"), ("wx", "回复"), (None, "群聊天")}
+    assert {(m["platform"], m["flow"], m["runs"]) for m in data["flows"]} == {
+        ("demo", "群聊天", 1), ("wx", "回复", 1), (None, "群聊天", 1)}
+    assert client.get("/api/audit/days").json() == [{"day": day, "runs": 3, "bad": 0}]
 
     only_demo = client.get(f"/api/audit?day={day}&platform=demo").json()
     assert {e["run_id"] for e in only_demo["entries"]} == {new["run_id"]}

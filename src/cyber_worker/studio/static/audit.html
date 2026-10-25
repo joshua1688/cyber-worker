@@ -31,19 +31,31 @@
     <section class="card">
       <div class="stats" id="report"></div>
       <div class="filters" id="filters">
-        <select id="f-day" class="input" aria-label="日期"></select>
-        <select id="f-flow" class="input" aria-label="流程"><option value="">全部流程</option></select>
-        <div class="seg" id="f-show" role="radiogroup" aria-label="显示哪些运行">
-          <button type="button" data-v="all" class="on">全部</button>
-          <button type="button" data-v="pending">待审</button>
-          <button type="button" data-v="bad">失败</button>
-          <button type="button" data-v="fix">要修</button>
+        <div class="filter-row">
+          <div class="day-step dd" id="f-day">
+            <button type="button" class="day-arrow" id="day-prev" aria-label="前一天" title="前一天"><i data-icon="chevron"></i></button>
+            <button type="button" class="day-btn" id="day-btn" aria-haspopup="dialog" aria-expanded="false" title="选日期">
+              <i data-icon="calendar"></i><span id="day-label">今天</span></button>
+            <button type="button" class="day-arrow next" id="day-next" aria-label="后一天" title="后一天"><i data-icon="chevron"></i></button>
+            <div class="menu dd-pop day-cal" id="day-menu" role="dialog" aria-label="选日期" hidden></div>
+          </div>
+          <div class="dd flow-dd" id="f-flow">
+            <button type="button" class="dd-trigger" id="flow-btn" aria-haspopup="listbox" aria-expanded="false">
+              <span id="flow-label">全部流程</span><i data-icon="chevron"></i></button>
+            <div class="menu dd-pop" id="flow-menu" role="listbox" aria-label="流程" hidden></div>
+          </div>
+          <span class="grow"></span>
+          <span class="day-tools">
+            <button class="icon-btn" id="btn-refresh" title="刷新"><i data-icon="refresh"></i></button>
+            <button class="icon-btn" id="btn-clear-day" title="清空这一天（记录和截图一起删）" aria-label="清空这一天"><i data-icon="trash"></i></button>
+          </span>
         </div>
-        <span class="grow"></span>
-        <span class="day-tools">
-          <button class="icon-btn" id="btn-refresh" title="刷新"><i data-icon="refresh"></i></button>
-          <button class="icon-btn" id="btn-clear-day" title="清空这一天（记录和截图一起删）" aria-label="清空这一天"><i data-icon="trash"></i></button>
-        </span>
+        <div class="show-tabs" id="f-show" role="tablist" aria-label="显示哪些运行">
+          <button type="button" role="tab" data-v="all" class="on">全部 <span class="n" data-n="all"></span></button>
+          <button type="button" role="tab" data-v="pending">待审 <span class="n warn" data-n="pending"></span></button>
+          <button type="button" role="tab" data-v="bad">失败 <span class="n bad" data-n="bad"></span></button>
+          <button type="button" role="tab" data-v="fix">要修 <span class="n" data-n="fix"></span></button>
+        </div>
       </div>
       <div class="scroller" style="flex:1">
         <ol class="run-list" id="list"></ol>

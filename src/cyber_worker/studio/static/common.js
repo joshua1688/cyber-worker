@@ -8,6 +8,7 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const ICON_PATHS = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  calendar: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   pointer: '<path d="M5 3l6.5 17 2.4-7.1L21 10.5z"/>',
   scroll: '<path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/>',

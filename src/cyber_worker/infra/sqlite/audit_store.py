@@ -109,6 +109,18 @@ class SqliteAuditStore:
             ).fetchall()
         return [r["d"] for r in rows]
 
+    def day_summary(self, limit: int = 30) -> list[dict]:
+        """最近有记录的几天，新的在前：每天跑了几次、几次出了问题（中止 / 出错）。审计页的日期下拉用。"""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT d, COUNT(*) AS runs, SUM(bad) AS bad FROM
+                     (SELECT substr(MIN(at), 1, 10) AS d, MAX(status IN ('failed', 'aborted')) AS bad
+                      FROM audit_log GROUP BY run_id)
+                   GROUP BY d ORDER BY d DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [{"day": r["d"], "runs": r["runs"], "bad": r["bad"] or 0} for r in rows]
+
     def delete_day(self, day: date) -> int:
         """删掉这一天的全部记录，返回删了几条。截图由调用方删（ScreenshotStorage.remove_day）。"""
         with self._lock, self._conn:

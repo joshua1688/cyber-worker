@@ -22,7 +22,8 @@ class Mark(BaseModel):
 @router.get("/days")
 def days(request: Request):
     app = studio(request).app
-    return app.audit.days(limit=app.config.audit.keep_days + 1)  # 保留期内的每一天都能选
+    # 保留期内的每一天都能选；每天带上跑了几次、几次出了问题（日期下拉里显示）
+    return app.audit.day_summary(limit=app.config.audit.keep_days + 1)
 
 
 @router.get("")
@@ -38,8 +39,10 @@ def entries(request: Request, day: date | None = None, platform: str | None = No
         r["platform"] = r.get("platform") or owners.get(r["flow"])
         r["platform_title"] = titles.get(r["platform"], r["platform"])  # 应用删了（在回收站里）：显示目录名
         r["flow_id"] = ids.get((r["platform"], r["flow"]))
-    # 下拉里的选项：这一天出现过的应用和流程，不受当前筛选影响（选了一个流程，别的还能切回去）
-    flows = sorted({(r["platform"] or "", r["platform_title"] or "", r["flow"]) for r in rows})
+    # 下拉里的选项：这一天出现过的应用和流程、各跑了几次，不受当前筛选影响（选了一个流程，别的还能切回去）
+    runs: dict[tuple[str, str, str], set[str]] = {}
+    for r in rows:
+        runs.setdefault((r["platform"] or "", r["platform_title"] or "", r["flow"]), set()).add(r["run_id"])
     if platform is not None:
         rows = [r for r in rows if (r["platform"] or "") == platform and (flow is None or r["flow"] == flow)]
     elif flow:
@@ -51,7 +54,8 @@ def entries(request: Request, day: date | None = None, platform: str | None = No
     for r in ranked:
         r["spot_check"] = r["id"] in spot_ids
     return {"report": daily_report(rows), "entries": ranked,
-            "flows": [{"platform": a or None, "platform_title": t or None, "flow": m} for a, t, m in flows]}
+            "flows": [{"platform": a or None, "platform_title": t or None, "flow": m, "runs": len(ids)}
+                      for (a, t, m), ids in sorted(runs.items())]}
 
 
 @router.delete("/days/{day}")
