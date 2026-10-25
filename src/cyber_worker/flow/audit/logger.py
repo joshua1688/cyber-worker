@@ -29,7 +29,7 @@ class AuditEntry:
     page_score: float | None = None
     dry_run: bool = False
     detail: str = ""
-    app: str | None = None  # 流程所在的应用（平台目录名）：流程名只在同一个应用里不重复，审计靠它分清是哪个应用
+    platform: str | None = None  # 流程所在的平台（界面上叫应用）：流程名只在同一个应用里不重复，审计靠它分清是哪个应用
     suspicious: bool = field(init=False)
 
     def __post_init__(self) -> None:

@@ -101,7 +101,7 @@ def cmd_run(args) -> int:
     pages = PageBook.load(flow.pages_path) if flow.pages_path else None
     variables = dict(v.split("=", 1) for v in args.var)
     path = Path(args.flow).resolve()
-    app_name = path.parent.parent.name if path.parent.name == "flows" else None  # 流程库里的流程：<应用>/flows/
+    platform = path.parent.parent.name if path.parent.name == "flows" else None  # 流程库里的流程：<应用>/flows/
 
     app = build(args.config)
     dry_run = args.dry_run or app.config.executor.dry_run
@@ -115,7 +115,7 @@ def cmd_run(args) -> int:
     print(f"执行 {flow.name}{'（空跑）' if dry_run else ''}，急停：{hotkey}")
     fut = app.executor.submit(
         lambda gate: app.runner.run(flow, pages=pages, variables=variables,
-                                    dry_run=dry_run, gate=gate, app=app_name)
+                                    dry_run=dry_run, gate=gate, platform=platform)
     )
     try:
         result = fut.result()

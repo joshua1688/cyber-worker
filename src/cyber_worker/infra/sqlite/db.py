@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     suspicious    INTEGER NOT NULL,
     detail        TEXT NOT NULL DEFAULT '',
     reviewed      INTEGER NOT NULL DEFAULT 0,
-    app           TEXT
+    platform      TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_log_run ON audit_log (run_id);
 """
@@ -45,6 +45,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "script" in cols and "flow" not in cols:  # 「宏 / 脚本」改叫「流程」以前的库：列名跟着改
         with conn:
             conn.execute("ALTER TABLE audit_log RENAME COLUMN script TO flow")
-    if "app" not in cols:  # 以前只记流程名，不知道是哪个应用的：旧记录留空，显示时按流程名去找
+    if "app" in cols and "platform" not in cols:  # 这一列起初叫 app，和 Window.app（程序名）撞名
         with conn:
-            conn.execute("ALTER TABLE audit_log ADD COLUMN app TEXT")
+            conn.execute("ALTER TABLE audit_log RENAME COLUMN app TO platform")
+    elif "platform" not in cols:  # 以前只记流程名，不知道是哪个平台的：旧记录留空，显示时按流程名去找
+        with conn:
+            conn.execute("ALTER TABLE audit_log ADD COLUMN platform TEXT")

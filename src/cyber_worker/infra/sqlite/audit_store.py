@@ -20,7 +20,7 @@ class SqliteAuditStore:
             self._conn.execute(
                 """INSERT INTO audit_log
                    (run_id, at, flow, step_id, action, status, screenshot,
-                    expected_page, page_score, dry_run, suspicious, detail, app)
+                    expected_page, page_score, dry_run, suspicious, detail, platform)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry.run_id,
@@ -35,7 +35,7 @@ class SqliteAuditStore:
                     int(entry.dry_run),
                     int(entry.suspicious),
                     entry.detail,
-                    entry.app,
+                    entry.platform,
                 ),
             )
 
@@ -74,7 +74,7 @@ class SqliteAuditStore:
         出了问题的，带上第一处出问题的步骤和原因（应用首页的卡片上显示）。"""
         with self._lock:
             rows = self._conn.execute(
-                """SELECT run_id, flow, MAX(app) AS app, MIN(at) AS at, MAX(dry_run) AS dry,
+                """SELECT run_id, flow, MAX(platform) AS platform, MIN(at) AS at, MAX(dry_run) AS dry,
                           MAX(status IN ('failed', 'aborted')) AS bad
                    FROM audit_log GROUP BY run_id ORDER BY MIN(id)"""
             ).fetchall()
@@ -85,18 +85,18 @@ class SqliteAuditStore:
         out = []
         for r in rows:
             b = first_bad.get(r["run_id"])
-            out.append({"run_id": r["run_id"], "flow": r["flow"], "app": r["app"], "at": r["at"], "dry_run": bool(r["dry"]),
+            out.append({"run_id": r["run_id"], "flow": r["flow"], "platform": r["platform"], "at": r["at"], "dry_run": bool(r["dry"]),
                         "bad": bool(r["bad"]), "step_id": b["step_id"] if b else None,
                         "detail": b["detail"] if b else ""})
         return out
 
-    def rename_flow(self, old: str, new: str, app: str | None = None) -> int:
+    def rename_flow(self, old: str, new: str, platform: str | None = None) -> int:
         """流程改了名：以前的记录跟着改名（记录按流程名对应流程，不改的话卡片上「最近一次」和审计历史都对不上）。
-        给了 app 就只改这个应用的（加上没记应用的旧记录），别的应用里同名的流程不受影响。"""
+        给了 platform 就只改这个平台的（加上没记应用的旧记录），别的应用里同名的流程不受影响。"""
         sql, args = "UPDATE audit_log SET flow = ? WHERE flow = ?", [new, old]
-        if app is not None:
-            sql += " AND (app = ? OR app IS NULL)"
-            args.append(app)
+        if platform is not None:
+            sql += " AND (platform = ? OR platform IS NULL)"
+            args.append(platform)
         with self._lock, self._conn:
             cur = self._conn.execute(sql, args)
         return cur.rowcount

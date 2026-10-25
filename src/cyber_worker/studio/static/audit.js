@@ -9,7 +9,7 @@ const A = {
   rows: [],      // 列表上的行：一行 = 连着几次同样结果的运行（通常就一次）
   show: "all",   // all | pending | bad | fix
   selected: -1,  // A.entries 的下标（右边正在看的那一步）
-  flows: [],    // 这一天出现过的 {app, app_title, flow}：流程筛选下拉按应用分组
+  flows: [],    // 这一天出现过的 {platform, platform_title, flow}：流程筛选下拉按应用分组
 };
 const TYPE_TEXT = { click: "点击", type: "输入", key: "按键", scroll: "滚动", wait: "延迟", drag: "拖动",
   hover: "悬停", wait_page: "等待页面", start: "开始", calibrate: "找窗口" };
@@ -107,7 +107,7 @@ async function load(keepRun) {
   // 下拉的值："" 全部；JSON [应用] 这个应用的全部流程；JSON [应用, 流程名] 这一个流程（没认出应用的旧记录，应用是 ""）
   const pick = $("#f-flow").value && JSON.parse($("#f-flow").value);
   if (pick) {
-    params.set("app", pick[0]);
+    params.set("platform", pick[0]);
     if (pick.length > 1) params.set("flow", pick[1]);
   }
   const data = await api("GET", `/api/audit?${params}`);
@@ -133,8 +133,8 @@ function buildGroups() {
     es.sort((x, y) => x.id - y.id);
     const bad = es.find(isBad);
     const top = bad || es.reduce((m, e) => (e.suspicion > m.suspicion ? e : m), es[es.length - 1]);
-    const { app, app_title: appTitle, flow_id: flowId, flow } = es[0];
-    return { es, top, bad, at: es[0].at, flow, app, appTitle, flowId, dry: es[0].dry_run };
+    const { platform, platform_title: platformTitle, flow_id: flowId, flow } = es[0];
+    return { es, top, bad, at: es[0].at, flow, platform, platformTitle, flowId, dry: es[0].dry_run };
   });
   A.groups.sort((x, y) => y.top.suspicion - x.top.suspicion || y.at.localeCompare(x.at));
 }
@@ -155,7 +155,7 @@ function buildRows() {
   A.rows = [];
   for (const g of A.groups.filter(keep)) {
     const last = A.rows[A.rows.length - 1];
-    const key = `${g.app}|${g.flow}|${g.dry}|${summary(g)}`;
+    const key = `${g.platform}|${g.flow}|${g.dry}|${summary(g)}`;
     if (g.bad && last?.key === key) last.groups.push(g);
     else A.rows.push({ key, groups: [g] });
   }
@@ -191,16 +191,16 @@ function renderFlows() {
   const current = sel.value;
   const groups = new Map();
   A.flows.forEach((m) => {
-    const k = m.app || "";
-    if (!groups.has(k)) groups.set(k, { title: m.app_title || "其他", names: [] });
+    const k = m.platform || "";
+    if (!groups.has(k)) groups.set(k, { title: m.platform_title || "其他", names: [] });
     groups.get(k).names.push(m.flow);
   });
   const opt = (value, text) => `<option value="${escapeHtml(value)}" ${value === current ? "selected" : ""}>${escapeHtml(text)}</option>`;
   let html = opt("", "全部流程");
-  for (const [app, g] of groups) {
+  for (const [platform, g] of groups) {
     html += `<optgroup label="${escapeHtml(g.title)}">${
-      g.names.length > 1 ? opt(JSON.stringify([app]), allOf(g.title)) : ""}${
-      g.names.map((n) => opt(JSON.stringify([app, n]), n)).join("")}</optgroup>`;
+      g.names.length > 1 ? opt(JSON.stringify([platform]), allOf(g.title)) : ""}${
+      g.names.map((n) => opt(JSON.stringify([platform, n]), n)).join("")}</optgroup>`;
   }
   // 选中的流程这一天没有记录了（换了日期）：留着它，别悄悄变成「全部」
   if (current && !html.includes(`value="${escapeHtml(current)}"`)) {
@@ -212,10 +212,10 @@ function renderFlows() {
 
 // 哪个应用：头像 + 「QQ › 群聊天」；认不出应用（流程名在好几个应用里都有的旧记录）只写流程名
 function appName(g, link) {
-  if (!g.app) return `<b>${escapeHtml(g.flow)}</b>`;
-  const title = escapeHtml(g.appTitle || g.app);
-  return `${avatar(g.app, "xs", g.appTitle || g.app)}${link
-    ? `<a class="app-link" href="/apps?app=${encodeURIComponent(g.app)}" title="打开这个应用">${title}</a>`
+  if (!g.platform) return `<b>${escapeHtml(g.flow)}</b>`;
+  const title = escapeHtml(g.platformTitle || g.platform);
+  return `${avatar(g.platform, "xs", g.platformTitle || g.platform)}${link
+    ? `<a class="app-link" href="/apps?app=${encodeURIComponent(g.platform)}" title="打开这个应用">${title}</a>`
     : `<span class="app-name">${title}</span>`}<span class="sep">›</span><b>${escapeHtml(g.flow)}</b>`;
 }
 

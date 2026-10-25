@@ -80,10 +80,24 @@ def test_old_database_is_upgraded(tmp_path):
 
     store = SqliteAuditStore(connect(path))
     at = datetime(2026, 10, 25, 10)
-    store.write(AuditEntry("r1", at, "chat", "s01", "click", StepStatus.OK, app="qq"))
-    store.write(AuditEntry("r2", at, "chat", "s01", "click", StepStatus.OK, app="wx"))
-    assert [(r["run_id"], r["app"]) for r in store.runs()] == [("r0", None), ("r1", "qq"), ("r2", "wx")]
+    store.write(AuditEntry("r1", at, "chat", "s01", "click", StepStatus.OK, platform="qq"))
+    store.write(AuditEntry("r2", at, "chat", "s01", "click", StepStatus.OK, platform="wx"))
+    assert [(r["run_id"], r["platform"]) for r in store.runs()] == [("r0", None), ("r1", "qq"), ("r2", "wx")]
 
     assert store.rename_flow("chat", "群聊天", "qq") == 2
     assert [(r["run_id"], r["flow"]) for r in store.runs()] == [("r0", "群聊天"), ("r1", "群聊天"), ("r2", "chat")]
 
+
+def test_audit_column_first_named_app_becomes_platform(tmp_path):
+    """记平台的那一列起初叫 app（和 Window.app 程序名撞名）：打开时改名成 platform，数据还在。"""
+    import sqlite3
+
+    path = tmp_path / "state.db"
+    store = SqliteAuditStore(connect(path))
+    store.write(AuditEntry("r1", datetime(2026, 10, 25, 10), "chat", "s01", "click", StepStatus.OK, platform="qq"))
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE audit_log RENAME COLUMN platform TO app")  # 装成改名以前的库
+    conn.commit()
+    conn.close()
+
+    assert [(r["run_id"], r["platform"]) for r in SqliteAuditStore(connect(path)).runs()] == [("r1", "qq")]

@@ -1471,16 +1471,16 @@ def test_audit_says_which_app_each_run_belongs_to(client):
     data = client.get(f"/api/audit?day={day}").json()
     by_run = {e["run_id"]: e for e in data["entries"]}
     new = next(e for e in data["entries"] if e["run_id"] not in ("old1", "old2"))
-    assert (new["app"], new["app_title"], new["flow_id"]) == ("demo", "Demo", sid)
-    assert (by_run["old1"]["app"], by_run["old1"]["app_title"], by_run["old1"]["flow_id"]) == ("wx", "WeChat", only)
-    assert by_run["old2"]["app"] is None and by_run["old2"]["flow_id"] is None
-    assert {(m["app"], m["flow"]) for m in data["flows"]} == {("demo", "群聊天"), ("wx", "回复"), (None, "群聊天")}
+    assert (new["platform"], new["platform_title"], new["flow_id"]) == ("demo", "Demo", sid)
+    assert (by_run["old1"]["platform"], by_run["old1"]["platform_title"], by_run["old1"]["flow_id"]) == ("wx", "WeChat", only)
+    assert by_run["old2"]["platform"] is None and by_run["old2"]["flow_id"] is None
+    assert {(m["platform"], m["flow"]) for m in data["flows"]} == {("demo", "群聊天"), ("wx", "回复"), (None, "群聊天")}
 
-    only_demo = client.get(f"/api/audit?day={day}&app=demo").json()
+    only_demo = client.get(f"/api/audit?day={day}&platform=demo").json()
     assert {e["run_id"] for e in only_demo["entries"]} == {new["run_id"]}
     assert len(only_demo["flows"]) == 3  # 下拉的选项不受筛选影响
-    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&app=wx&flow=回复").json()["entries"]} == {"old1"}
-    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&app=&flow=群聊天").json()["entries"]} == {"old2"}
+    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&platform=wx&flow=回复").json()["entries"]} == {"old1"}
+    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&platform=&flow=群聊天").json()["entries"]} == {"old2"}
 
     apps = {a["platform"]: a for a in client.get("/api/apps").json()}
     assert apps["demo"]["flows"][0]["last"] is not None and apps["demo"]["today"]["runs"] == 1

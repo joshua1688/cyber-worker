@@ -204,10 +204,10 @@ class Studio:
         flow.dump(path)
         return {"name": flow.name, "description": flow.description}
 
-    def rename_runs(self, old: str, new: str, app: str | None = None) -> None:
+    def rename_runs(self, old: str, new: str, platform: str | None = None) -> None:
         """流程改名后，审计里以前的记录跟着改名（只改这个应用的）。"""
         if old != new and hasattr(self.app.audit, "rename_flow"):
-            self.app.audit.rename_flow(old, new, app)
+            self.app.audit.rename_flow(old, new, platform)
 
     def _library(self) -> list[tuple[str, str, list[tuple[Path, Flow]]]]:
         """流程库里的每个应用：(平台目录名, 显示名, [(流程文件, 流程)])。显示名是主窗口标题里最常见的那个
@@ -251,8 +251,8 @@ class Studio:
         owners = self._owners(library)
         runs = self.app.audit.runs() if hasattr(self.app.audit, "runs") else []
         for r in runs:
-            r["app"] = r.get("app") or owners.get(r["flow"])
-        last = {(r["app"], r["flow"]): r for r in runs}  # 按先后排的，后面的覆盖前面的：留下的就是最近一次
+            r["platform"] = r.get("platform") or owners.get(r["flow"])
+        last = {(r["platform"], r["flow"]): r for r in runs}  # 按先后排的，后面的覆盖前面的：留下的就是最近一次
         today_runs = [r for r in runs if r["at"][:10] == today.isoformat()]
         out = []
         for platform, title, entries in library:
@@ -265,7 +265,7 @@ class Studio:
                     "seconds": round(sum(st.seconds if isinstance(st, Wait) else st.delay_after for st in s.steps), 1),
                     "last": run and {k: run[k] for k in ("at", "dry_run", "bad", "step_id", "detail")},
                 })
-            mine = [r for r in today_runs if r["app"] == platform]
+            mine = [r for r in today_runs if r["platform"] == platform]
             runs_at = [m["last"]["at"] for m in flows if m["last"]]
             out.append({"platform": platform, "title": title,
                         "flows": flows, "last_at": max(runs_at, default=None),  # 「最近用过」排序用

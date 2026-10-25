@@ -112,7 +112,7 @@ class Runner:
         dry_run: bool = False,
         gate: Gate | None = None,
         observer: Callable[[AuditEntry], None] | None = None,
-        app: str | None = None,
+        platform: str | None = None,
     ) -> RunResult:
         """observer 在每条审计写入后被调用（studio 用来实时推送进度）。app：流程所在的应用，记进审计。"""
         variables = variables or {}
@@ -122,7 +122,7 @@ class Runner:
         def log(step_id: str, action: str, status: StepStatus, **kw) -> None:
             entry = AuditEntry(
                 run_id=run_id, at=self.now(), flow=flow.name, step_id=step_id,
-                action=action, status=status, dry_run=dry_run, app=app, **kw,
+                action=action, status=status, dry_run=dry_run, platform=platform, **kw,
             )
             self.audit.write(entry)
             if observer:

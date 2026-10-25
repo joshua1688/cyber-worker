@@ -26,22 +26,22 @@ def days(request: Request):
 
 
 @router.get("")
-def entries(request: Request, day: date | None = None, app: str | None = None, flow: str | None = None,
+def entries(request: Request, day: date | None = None, platform: str | None = None, flow: str | None = None,
             unreviewed: bool = False, spot_check: int = 5):
-    """app / flow 筛选：只给 app 是这个应用的全部流程，两个都给是这个应用里的这个流程。
-    每条记录带上 app（没记应用的旧记录按流程名认，认不出是 None）、app_title 和 flow_id（流程已删除是 None）。"""
+    """platform / flow 筛选：只给 platform 是这个平台（应用）的全部流程，两个都给是这个应用里的这个流程。
+    每条记录带上 platform（没记应用的旧记录按流程名认，认不出是 None）、platform_title 和 flow_id（流程已删除是 None）。"""
     st = studio(request)
     titles, ids, owners = st.audit_apps()
     # 按天看时不设上限：截断了的话概况（成功率、失败数）会算错，而且不会有任何提示
     rows = st.app.audit.entries(day=day, unreviewed_only=unreviewed, limit=None if day is not None else 1000)
     for r in rows:
-        r["app"] = r.get("app") or owners.get(r["flow"])
-        r["app_title"] = titles.get(r["app"], r["app"])  # 应用删了（在回收站里）：显示目录名
-        r["flow_id"] = ids.get((r["app"], r["flow"]))
+        r["platform"] = r.get("platform") or owners.get(r["flow"])
+        r["platform_title"] = titles.get(r["platform"], r["platform"])  # 应用删了（在回收站里）：显示目录名
+        r["flow_id"] = ids.get((r["platform"], r["flow"]))
     # 下拉里的选项：这一天出现过的应用和流程，不受当前筛选影响（选了一个流程，别的还能切回去）
-    flows = sorted({(r["app"] or "", r["app_title"] or "", r["flow"]) for r in rows})
-    if app is not None:
-        rows = [r for r in rows if (r["app"] or "") == app and (flow is None or r["flow"] == flow)]
+    flows = sorted({(r["platform"] or "", r["platform_title"] or "", r["flow"]) for r in rows})
+    if platform is not None:
+        rows = [r for r in rows if (r["platform"] or "") == platform and (flow is None or r["flow"] == flow)]
     elif flow:
         rows = [r for r in rows if r["flow"] == flow]
     for r in rows:
@@ -51,7 +51,7 @@ def entries(request: Request, day: date | None = None, app: str | None = None, f
     for r in ranked:
         r["spot_check"] = r["id"] in spot_ids
     return {"report": daily_report(rows), "entries": ranked,
-            "flows": [{"app": a or None, "app_title": t or None, "flow": m} for a, t, m in flows]}
+            "flows": [{"platform": a or None, "platform_title": t or None, "flow": m} for a, t, m in flows]}
 
 
 @router.delete("/days/{day}")

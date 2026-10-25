@@ -71,14 +71,14 @@ def start_run(st, flow_id: str, *, dry_run: bool, variables: dict[str, str]) -> 
     body = RunRequest(dry_run=dry_run, variables=variables)
     flow = st.load(flow_id)
     pages = PageBook.load(flow.pages_path) if flow.pages_path else None
-    app = st.flow_path(flow_id).parent.parent.name  # <应用>/flows/<流程>.yaml
+    platform = st.flow_path(flow_id).parent.parent.name  # <平台>/flows/<流程>.yaml
 
     def job(gate):
         # 执行器在调用 job 之前会先等用户松开键鼠；能走到这里就是真正开始了
         st.hub.publish({"type": "run_state", "flow_id": flow_id, "state": "running",
                         "dry_run": body.dry_run})
         return st.app.runner.run(
-            flow, pages=pages, variables=body.variables, dry_run=body.dry_run, gate=gate, app=app,
+            flow, pages=pages, variables=body.variables, dry_run=body.dry_run, gate=gate, platform=platform,
             observer=lambda e: st.hub.publish({"type": "run_entry", "flow_id": flow_id,
                                                "entry": entry_json(st, e)}),
         )
