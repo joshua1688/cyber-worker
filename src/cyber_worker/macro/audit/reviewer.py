@@ -7,6 +7,7 @@
 - ok 且没有做页面校验               0.2（点击、滚动这类没声明页面的步骤，最容易「点歪了还以为成功」）
 - ok 且页面得分很高                 0.05
 - ok 但按图找的得分离门槛很近（< 0.85）、又没能自动记住新样子  至少 0.5（下次可能就找不到）
+- ok 但页面锚点挪了位置（界面布局变了，在整个窗口里才找到）  至少 0.45（看一眼截图，确认做在了对的地方）
 - skipped 空跑跳过 / cancelled 急停  0.0（你自己知道发生了什么）
 """
 
@@ -38,8 +39,13 @@ def suspicion(entry: Mapping) -> float:
         return 0.0
     page = _page_suspicion(entry)
     target = target_score(entry)
-    learned = "已自动记住新样子" in (entry.get("detail") or "")  # runner.LEARNED_NOTE：已经自己修好了
-    return max(page, 0.5) if target is not None and target < TARGET_WEAK and not learned else page
+    detail = entry.get("detail") or ""
+    learned = "已自动记住新样子" in detail  # runner.LEARNED_NOTE：已经自己修好了
+    if target is not None and target < TARGET_WEAK and not learned:
+        page = max(page, 0.5)
+    if "页面锚点挪了位置" in detail:  # runner.SHIFT_NOTE
+        page = max(page, 0.45)
+    return page
 
 
 def _page_suspicion(entry: Mapping) -> float:

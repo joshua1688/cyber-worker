@@ -69,29 +69,68 @@ class PageMatch:
     page: str
     matched: bool
     score: float  # 各锚点得分的最小值
+    shift: tuple[float, float] | None = None  # 有锚点挪了位置（界面布局变了）：挪了多少点；都在原处是 None
+
+
+@dataclass(frozen=True)
+class AnchorHit:
+    score: float
+    dx: float = 0.0  # 锚点离录制时的位置挪了多少（点）。只有在原位置附近找不到、换成在整个窗口里找到时才不是 0
+    dy: float = 0.0
+
+    @property
+    def moved(self) -> bool:
+        return bool(self.dx or self.dy)
+
+
+UNIQUE_GAP = 0.05  # 整个窗口里找时，第二像的地方得分离门槛不到这么多：有两处都像，认不准，不认
 
 
 def _gray(img: np.ndarray) -> np.ndarray:
     return img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 
-def match_anchor(book: PageBook, anchor: Anchor, shot: np.ndarray, scale: float) -> float:
+def _scores(region: np.ndarray, ref: np.ndarray) -> np.ndarray | None:
+    if region.shape[0] < ref.shape[0] or region.shape[1] < ref.shape[1]:
+        return None
+    return np.nan_to_num(cv2.matchTemplate(region, ref, cv2.TM_CCOEFF_NORMED), nan=0.0)
+
+
+def locate_anchor(book: PageBook, anchor: Anchor, shot: np.ndarray, scale: float) -> AnchorHit:
+    """先在锚点区域外扩 margin 的范围内找（容忍轻微偏移）。找不到再在整个窗口里找：界面布局变了
+    （QQ 多开一个会话，左边多出一栏，聊天内容整体右移），锚点还在、只是挪了位置。整个窗口里找的结果
+    门槛不降，而且窗口里只能有一处像它：页面核对是防止把字打错地方的，宁可不认，不能认错。"""
     ref = _gray(book.reference(anchor))
     if anchor.scale != scale:
         f = scale / anchor.scale
         ref = cv2.resize(ref, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+    gray = _gray(shot)
 
-    # 在锚点区域外扩 margin 的范围内找参考图
     x0 = max(0, int((anchor.x - anchor.margin) * scale))
     y0 = max(0, int((anchor.y - anchor.margin) * scale))
-    x1 = min(shot.shape[1], int((anchor.x + anchor.w + anchor.margin) * scale))
-    y1 = min(shot.shape[0], int((anchor.y + anchor.h + anchor.margin) * scale))
-    region = _gray(shot)[y0:y1, x0:x1]
-    if region.shape[0] < ref.shape[0] or region.shape[1] < ref.shape[1]:
-        return 0.0
-    result = cv2.matchTemplate(region, ref, cv2.TM_CCOEFF_NORMED)
-    score = float(result.max())
-    return score if np.isfinite(score) else 0.0
+    x1 = min(gray.shape[1], int((anchor.x + anchor.w + anchor.margin) * scale))
+    y1 = min(gray.shape[0], int((anchor.y + anchor.h + anchor.margin) * scale))
+    near = _scores(gray[y0:y1, x0:x1], ref)
+    near_score = float(near.max()) if near is not None else 0.0
+    if near_score >= anchor.threshold:
+        return AnchorHit(near_score)
+
+    whole = _scores(gray, ref)
+    if whole is None:
+        return AnchorHit(near_score)
+    _, best, _, (bx, by) = cv2.minMaxLoc(whole)
+    if best < anchor.threshold:
+        return AnchorHit(near_score)
+    h, w = ref.shape[:2]
+    others = whole.copy()
+    others[max(0, by - h // 2):by + h // 2 + 1, max(0, bx - w // 2):bx + w // 2 + 1] = 0  # 抹掉找到的那一处
+    if float(others.max()) >= anchor.threshold - UNIQUE_GAP:
+        return AnchorHit(near_score)
+    return AnchorHit(float(best), round(bx / scale - anchor.x), round(by / scale - anchor.y))
+
+
+def match_anchor(book: PageBook, anchor: Anchor, shot: np.ndarray, scale: float) -> float:
+    return locate_anchor(book, anchor, shot, scale).score
 
 
 def match_page(book: PageBook, page: str, shot: np.ndarray, scale: float) -> PageMatch:
@@ -99,6 +138,7 @@ def match_page(book: PageBook, page: str, shot: np.ndarray, scale: float) -> Pag
     if fp is None or not fp.anchors:
         # 没定义的页面一律视为不匹配：宁可不发
         return PageMatch(page, False, 0.0)
-    scores = [(match_anchor(book, a, shot, scale), a.threshold) for a in fp.anchors]
-    score = min(s for s, _ in scores)
-    return PageMatch(page, all(s >= t for s, t in scores), score)
+    hits = [(locate_anchor(book, a, shot, scale), a.threshold) for a in fp.anchors]
+    score = min(h.score for h, _ in hits)
+    moved = next(((h.dx, h.dy) for h, _ in hits if h.moved), None)
+    return PageMatch(page, all(h.score >= t for h, t in hits), score, moved)

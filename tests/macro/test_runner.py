@@ -212,3 +212,13 @@ def test_closing_click_keeps_the_frame_before_it(env):
     assert r.status is RunStatus.OK
     (e,) = audit.entries
     assert e.status is StepStatus.OK and e.screenshot and CLOSED_NOTE in e.detail
+
+
+def test_type_step_on_a_shifted_page_runs_and_notes_it(env):
+    """输入前核对页面：锚点挪了位置也认得出来，照常输入，记一笔「页面锚点挪了位置」。"""
+    io, audit, runner, book = env
+    io.screen = lambda: screen_with(pattern(), at=(250, 40))
+    r = runner.run(script(), pages=book, variables={"comment_draft": "好看"})
+    assert r.status is RunStatus.OK and io.typed() == "好看"
+    typed = next(e for e in audit.entries if e.step_id == "s02")
+    assert "页面锚点挪了位置（+200, +0）" in typed.detail

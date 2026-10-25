@@ -163,7 +163,8 @@ class Runner:
                     ok, reason, shot_path, page_score, waited = self._wait_page(
                         step.id, step.page, geo, pages, gate, step.timeout)
                     status = StepStatus.OK if ok else StepStatus.ABORTED
-                    detail = (f"页面「{step.page}」出现了" + (f"（等了 {waited:.1f} 秒）" if waited else "")) if ok else reason
+                    detail = ((f"页面「{step.page}」出现了" + (f"（等了 {waited:.1f} 秒）" if waited else "")
+                               + (f"，{reason}" if reason else "")) if ok else reason)
                     log(step.id, step.action, status, screenshot=shot_path, expected_page=step.page,
                         page_score=page_score, detail=detail)
                     if not ok:
@@ -171,6 +172,7 @@ class Runner:
                     done += 1
                     continue
 
+                page_note = ""
                 if needs_page_check(step):
                     ok, reason, shot_path, page_score, _ = self._wait_page(
                         step.id, step.expected_page, geo, pages, gate, PAGE_WAIT)
@@ -178,6 +180,7 @@ class Runner:
                         log(step.id, step.action, StepStatus.ABORTED, screenshot=shot_path,
                             expected_page=step.expected_page, page_score=page_score, detail=reason)
                         return RunResult(run_id, RunStatus.ABORTED, done, reason)
+                    page_note = reason
                 else:
                     page_score = None
 
@@ -209,7 +212,7 @@ class Runner:
                 else:
                     self.sleep(step.delay_after)
                     shot = self._after_shot(geo, step)
-                    detail = _found_text(where) if where else ""
+                    detail = "，".join(x for x in (page_note, _found_text(where) if where else "") if x)
                     if where is not None and self._learn(script, step, where, before, geo.scale):
                         detail += f"，{LEARNED_NOTE}"
                     if shot is None and before is not None:
@@ -311,7 +314,9 @@ class Runner:
         if not m.matched:
             return (False, f"页面不符：期望 {page}，得分 {m.score:.2f}"
                     + (f"（等了 {waited:.1f} 秒还没出现）" if timeout else ""), path, m.score, waited)
-        return True, "", path, m.score, round(waited, 1) if waited >= 0.05 else 0.0
+        # 对上了，但锚点挪了位置（界面布局变了）：照常执行，记一笔，审计里会提醒看一眼
+        note = f"{SHIFT_NOTE}（{m.shift[0]:+g}, {m.shift[1]:+g}）" if m.shift else ""
+        return True, note, path, m.score, round(waited, 1) if waited >= 0.05 else 0.0
 
     def _find_target(self, step: Click | Hover, geo: WindowGeometry, script: Script, gate: Gate, cache: dict):
         """在窗口里找这一步的目标图；返回 (定位结果, 截图路径, 最后一次截的画面)。找不到时截图留给审计。"""
@@ -390,6 +395,7 @@ class Runner:
 
 
 CLOSED_NOTE = "点完窗口就关了，截图是点之前的画面"
+SHIFT_NOTE = "页面锚点挪了位置"  # 页面对上了，但锚点不在录制时的地方（界面布局变了）；审计里会进「待看」
 LEARN_BELOW = 0.9  # 按图找的得分低于这个（但过了门槛）：按钮样子变了一点，自动记住新样子
 LEARNED_NOTE = "按钮样子变了，已自动记住新样子"
 

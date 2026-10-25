@@ -48,3 +48,8 @@ def test_weak_target_match_needs_a_look():
     weak = {**e(1, "ok"), "detail": "按图找到目标，位置没变（得分 0.81）"}
     strong = {**e(2, "ok"), "detail": "按图找到目标，位置偏了 +0, -320（得分 0.97）"}
     assert suspicion(weak) >= 0.5 > suspicion(strong) == suspicion(e(3, "ok"))
+
+
+def test_page_found_after_a_layout_shift_needs_a_look():
+    moved = {**e(1, "ok", 0.99), "detail": "页面锚点挪了位置（+195, +0）"}
+    assert suspicion(moved) >= 0.3 > suspicion(e(2, "ok", 0.99))

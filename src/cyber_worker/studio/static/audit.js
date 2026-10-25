@@ -86,6 +86,13 @@ function weakTarget(e) {
     + `点「去修改」，在右边「目标」旁点「重新框选」，框一块只有它才有的区域。` };
 }
 
+// 成功了、但页面锚点挪了位置（runner.SHIFT_NOTE）：界面布局变了，程序在整个窗口里找到了它。提醒看一眼，不用改宏
+function movedAnchor(e) {
+  if (e.status !== "ok" || !/页面锚点挪了位置/.test(e.detail || "")) return null;
+  return { edit: false, text: "窗口里的界面挪了位置（比如左边多出一栏会话列表），程序在整个窗口里找到了这个页面，照常执行了。"
+    + "看一眼截图，确认这一步做在了对的地方；没问题就点「看过了」。" };
+}
+
 // ---------------- 数据 ----------------
 
 async function loadDays() {
@@ -213,7 +220,7 @@ function renderViewer() {
   const score = e.page_score == null ? "" : `，得分 ${e.page_score.toFixed(2)}`;
   const id = A.scripts[g.script];
   const fixStep = g.bad || g.top;
-  const advice = isBad(e) ? advise(e) : weakTarget(e);
+  const advice = isBad(e) ? advise(e) : weakTarget(e) || movedAnchor(e);
   v.innerHTML = `
     <div class="card-head viewer-head">
       <span class="pill ${tone(g)}">${status}</span>
