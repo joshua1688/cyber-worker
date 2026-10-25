@@ -8,7 +8,7 @@
 - ok 且页面得分很高                 0.05
 - ok 但按图找的得分离门槛很近（< 0.85）、又没能自动记住新样子  至少 0.5（下次可能就找不到）
 - ok 但页面锚点挪了位置（界面布局变了，在整个窗口里才找到）  至少 0.45（看一眼截图，确认做在了对的地方）
-- skipped 空跑跳过 / cancelled 急停  0.0（你自己知道发生了什么）
+- skipped 空跑跳过 / cancelled 急停 / 执行时你动了键鼠被打断  0.0（你自己知道发生了什么，程序也没做出会错的事）
 """
 
 from __future__ import annotations
@@ -16,6 +16,8 @@ from __future__ import annotations
 import random
 import re
 from collections.abc import Iterable, Mapping
+
+from cyber_worker.flow.audit.reporter import outcome
 
 HIGH_CONFIDENCE = 0.95  # 页面得分高于这个值视为确定在正确页面
 LOW_PASS = 0.85  # 锚点默认阈值
@@ -30,7 +32,7 @@ def target_score(entry: Mapping) -> float | None:
 
 
 def suspicion(entry: Mapping) -> float:
-    status = entry["status"]
+    status = outcome(entry)  # 「你在用电脑」的中止按急停算
     if status == "failed":
         return 1.0
     if status == "aborted":

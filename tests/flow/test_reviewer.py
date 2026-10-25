@@ -43,6 +43,15 @@ def test_daily_report():
     assert r["suspicious_unreviewed"] == 1
 
 
+def test_you_using_the_computer_counts_like_panic_not_a_failure():
+    """执行时你动了键鼠、程序让给你（记成 aborted）：和急停一样不算失败，不进成功率分母和失败排行。"""
+    rows = [e(1, "ok", run="a"), {**e(2, "aborted", run="b", step="s03"), "detail": "检测到你在用电脑，已中止当前步骤"}]
+    r = daily_report(rows)
+    assert r["run_status"] == {"ok": 1, "cancelled": 1}
+    assert r["success_rate"] == 1.0 and r["top_failures"] == []
+    assert r["suspicious_unreviewed"] == 0 and suspicion(rows[1]) == 0.0  # 也不用审：没有要判断对错的东西
+
+
 def test_weak_target_match_needs_a_look():
     """按图找到了、但得分离门槛很近：进「待看」，下次可能就找不到了。"""
     weak = {**e(1, "ok"), "detail": "按图找到目标，位置没变（得分 0.81）"}
