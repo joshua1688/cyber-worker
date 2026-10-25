@@ -358,8 +358,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   top: calc(100% + 6px);
   left: 0;
   z-index: 40;
-  width: 100%;  /* 和触发按钮一样宽，不溢出 */
-  min-width: 300px;
+  width: 100%;  /* 和触发按钮一样宽，不溢出（以前还有 min-width: 300px，选择框窄时就伸到画布上了） */
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
@@ -412,6 +411,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   white-space: nowrap;
   cursor: pointer;
 }
+.mp-foot button span { overflow: hidden; text-overflow: ellipsis; }
 .mp-foot button + button { border-left: 1px solid var(--border); }
 .mp-foot button:hover { background: var(--hover); }
 .mp-group { align-items: center; }

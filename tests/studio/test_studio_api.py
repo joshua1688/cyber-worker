@@ -76,7 +76,7 @@ def test_new_flow_is_a_draft_until_saved(client, tmp_path):
     assert d["frames"]["reference"]["main"]["url"].startswith("/api/file?path=drafts/demo/flows/comment.png")
     assert client.get(d["frames"]["reference"]["main"]["url"]).status_code == 200
     assert client.get("/api/flows").json() == [
-        {"id": d["id"], "platform": "demo", "name": "comment", "draft": True}]
+        {"id": d["id"], "platform": "demo", "platform_title": "demo", "name": "comment", "draft": True}]
     assert not (tmp_path / "user_data/platforms").exists()  # 流程库里还没有
     # 重名不报错，自动加序号
     again = new_flow(client)
@@ -130,7 +130,7 @@ def test_chinese_name_and_auto_platform(client):
     saved = client.post(f"/api/flows/{d['id']}/commit").json()
     assert saved["id"] == "wechat/flows/朋友圈_评论.yaml"
     assert client.get("/api/flows").json() == [
-        {"id": saved["id"], "platform": "wechat", "name": "朋友圈 评论", "draft": False}]
+        {"id": saved["id"], "platform": "wechat", "platform_title": "WeChat.exe", "name": "朋友圈 评论", "draft": False}]
     again = client.post("/api/flows", json={"name": "朋友圈 评论", "app": "WeChat.exe",
                                               "width": 400, "height": 300}).json()
     assert again["flow"]["name"] == "朋友圈 评论-2"

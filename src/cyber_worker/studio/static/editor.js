@@ -927,25 +927,26 @@ function renderPickerTrigger() {
 
 function renderPickerList() {
   const q = MP.q.trim().toLowerCase();
-  const hits = S.list.filter((x) => !q || x.name.toLowerCase().includes(q) || x.platform.toLowerCase().includes(q));
+  const hits = S.list.filter((x) => !q || [x.name, x.platform, x.platform_title || ""].some((t) => t.toLowerCase().includes(q)));
   const groups = [];
   const drafts = hits.filter((x) => x.draft);
   if (drafts.length) groups.push(["未保存", drafts]);
   const byPlatform = {};
   hits.filter((x) => !x.draft).forEach((x) => (byPlatform[x.platform] ||= []).push(x));
-  Object.keys(byPlatform).sort().forEach((p) => groups.push([p, byPlatform[p]]));
+  // 分组标题用应用的显示名（QQ），不是目录名（qq）；导出还是按目录名
+  Object.keys(byPlatform).sort().forEach((p) => groups.push([byPlatform[p][0].platform_title || p, byPlatform[p]]));
 
   MP.items = groups.flatMap(([, xs]) => xs);
   MP.active = Math.min(MP.active, Math.max(0, MP.items.length - 1));
   let i = 0;
   $("#mp-list").innerHTML = MP.items.length ? groups.map(([title, xs]) => `
     <div class="mp-group"><span>${escapeHtml(title)}</span><span class="mp-group-r">${xs.length}${xs[0].draft ? ""
-      : `<button type="button" class="btn sm mp-export" data-export="${escapeHtml(title)}" title="把这个应用的所有流程导出成一个 .cwpack 文件，别人导入后就能直接使用">${icon("download")}导出</button>`}</span></div>
+      : `<button type="button" class="btn sm mp-export" data-export="${escapeHtml(xs[0].platform)}" title="把这个应用的所有流程导出成一个 .cwpack 文件，别人导入后就能直接使用">${icon("download")}导出</button>`}</span></div>
     ${xs.map((x) => {
       const idx = i++;
       return `<button type="button" class="mp-item ${idx === MP.active ? "active" : ""}" data-mp="${idx}"
           role="option" aria-selected="${x.id === S.id}">
-        ${avatar(x.platform, "sm")}
+        ${avatar(x.platform, "sm", x.platform_title || x.platform)}
         <span class="t">${highlight(x.name, MP.q.trim())}</span>
         ${x.id === S.id ? `<span class="ok">${icon("check")}</span>` : ""}
       </button>`;

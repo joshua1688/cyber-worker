@@ -177,12 +177,16 @@ class Studio:
         return path.relative_to(self.root.resolve()).as_posix()
 
     def list_flows(self) -> list[dict]:
+        """带上应用的显示名（和应用页一样，QQ 而不是目录名 qq）：选择器按它分组。"""
+        titles = {platform: title for platform, title, _ in self._library()}
         out = []
         for root, draft in ((self.drafts, True), (self.root, False)):
             for p in sorted(root.glob("*/flows/*.yaml")):
                 if p.name.endswith(".pages.yaml"):  # 流程自己的页面锚点文件，不是流程
                     continue
-                out.append({"id": self.flow_id(p), "platform": p.parent.parent.name,
+                platform = p.parent.parent.name
+                out.append({"id": self.flow_id(p), "platform": platform,
+                            "platform_title": titles.get(platform, platform),
                             "name": _display_name(p), "draft": draft})
         return out
 
