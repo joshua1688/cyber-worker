@@ -29,6 +29,8 @@ dry_run = false                 # 空跑：完整执行但跳过最后的「发�
 # record_append = false         # 重新录制时接在已有步骤后面；默认替换旧步骤
 # run_idle_sec = 2.0            # 在 studio 里点空跑 / 执行后，等键鼠停下几秒才开始
 # pack_screenshots = true       # 导出平台包时带上录制时的窗口截图（导入的人能看到每一步在哪操作；可能含聊天内容）
+# record_chime = true           # 开始 / 停止录制时响一声提示音
+# run_chime = true              # 点空跑 / 执行时响一声提示音
 
 [audit]
 # keep_days = 30                # 审计记录和截图保留多少天，更早的在启动时自动删掉（studio ⚙ 设置里也能改）

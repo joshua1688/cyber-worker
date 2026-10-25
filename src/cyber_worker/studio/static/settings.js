@@ -43,7 +43,6 @@ const Settings = (() => {
   async function update(patch) {
     try {
       apply(await api("PATCH", "/api/settings", patch));
-      flashSaved();
     } catch (e) {
       toast(e.message, true);
     }
@@ -65,7 +64,6 @@ const Settings = (() => {
         <section class="set-main">
           <header class="set-head">
             <h3 id="set-title"></h3>
-            <span class="set-saved" id="set-saved">${icon("check")}已保存</span>
             <span class="grow"></span>
             <button type="button" class="icon-btn" id="set-close" title="关闭 (Esc)">${icon("x")}</button>
           </header>
@@ -116,14 +114,6 @@ const Settings = (() => {
     dlg.querySelectorAll("[data-sec]").forEach((b) => b.classList.toggle("on", b.dataset.sec === section));
     dlg.querySelector("#set-title").textContent = SECTIONS.find((x) => x[0] === section)[2];
     dlg.querySelector("#set-body").innerHTML = { general, hotkeys, run, about }[section]();
-  }
-
-  function flashSaved() {
-    const el = dlg?.querySelector("#set-saved");
-    if (!el) return;
-    el.classList.remove("show");
-    void el.offsetWidth; // 重新触发动画
-    el.classList.add("show");
   }
 
   const row = (title, desc, control, cls = "") => `
@@ -283,7 +273,6 @@ const Settings = (() => {
       hk.msgs = {};
       if (name) hk.msgs[name] = { status: "ok", text: hint || "已生效" };
       announce(r);
-      flashSaved();
     } catch (e) {
       toast(e.message, true);
     }
@@ -310,11 +299,16 @@ const Settings = (() => {
       <div class="set-group">
         <div class="set-group-head"><b>执行</b></div>
         ${row("显示操作效果", "执行和空跑时，在屏幕上画出每一下点击（双击两圈、右键橙色）、长按、拖动轨迹、滚动和按键 / 输入的内容，看得清它在做什么。只是画出来，点不到也截不进截图，不影响执行", sw("show_effects"))}
-        ${row("操作音效", "执行和空跑时给操作配上声音：单击、双击是鼠标按键声，滚轮「咔咔」，打字是青轴机械键盘声，Enter 是键盘回车大键。晚上无人值守时可以只关声音、保留画面效果", sw("play_sounds"))}
         ${row("开始前等你停手", "在 studio 里点空跑 / 执行后，等键盘鼠标停下这么久才开始，免得跟你抢鼠标", secs("run_idle_sec", 0, 60, 0.5))}
         ${row("你在用电脑时暂停", "无人值守执行时，检测到你在用键盘鼠标就先停下，等你离开再继续", sw("pause_on_user_input"))}
         ${row("空闲多久后继续", "暂停后，键盘鼠标停下这么久才继续执行", secs("resume_after_idle_sec", 0, 3600, 5),
           data.pause_on_user_input ? "" : "disabled")}
+      </div>
+      <div class="set-group">
+        <div class="set-group-head"><b>声音</b></div>
+        ${row("录制提示音", "开始、停止录制时「叮」一声，用快捷键录制时能听出按成功了没有", sw("record_chime"))}
+        ${row("执行提示音", "点空跑 / 执行（或按空跑快捷键）时「叮」一声，表示已经排上队", sw("run_chime"))}
+        ${row("操作音效", "执行和空跑时给操作配上声音：单击、双击是鼠标按键声，滚轮「咔咔」，打字是青轴机械键盘声，Enter 是键盘回车大键。晚上无人值守时可以只关声音、保留画面效果", sw("play_sounds"))}
       </div>
       <div class="set-group">
         <div class="set-group-head"><b>审计</b></div>

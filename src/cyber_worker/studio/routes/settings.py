@@ -20,6 +20,8 @@ FIELDS = {
     "record_append": ("studio", "record_append"),
     "run_idle_sec": ("studio", "run_idle_sec"),
     "pack_screenshots": ("studio", "pack_screenshots"),
+    "record_chime": ("studio", "record_chime"),
+    "run_chime": ("studio", "run_chime"),
     "pause_on_user_input": ("executor", "pause_on_user_input"),
     "resume_after_idle_sec": ("executor", "resume_after_idle_sec"),
     "audit_keep_days": ("audit", "keep_days"),
@@ -34,6 +36,8 @@ class SettingsPatch(BaseModel):
     record_append: bool | None = None
     run_idle_sec: float | None = Field(None, ge=0, le=60)
     pack_screenshots: bool | None = None
+    record_chime: bool | None = None
+    run_chime: bool | None = None
     pause_on_user_input: bool | None = None
     resume_after_idle_sec: float | None = Field(None, ge=0, le=3600)
     audit_keep_days: int | None = Field(None, ge=1, le=3650)

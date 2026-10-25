@@ -85,7 +85,8 @@ def start_run(st, script_id: str, *, dry_run: bool, variables: dict[str, str]) -
     # 先发「排队」再提交：避免任务立刻开始时「开始」比「排队」先到
     st.hub.publish({"type": "run_state", "script_id": script_id, "state": "queued",
                     "dry_run": body.dry_run, "idle_sec": st.run_idle_sec})
-    st.app.io.chime("start")
+    if st.app.config.studio.run_chime:
+        st.app.io.chime("start")
     fut = st.app.executor.submit(
         job, resume_after_idle_sec=st.run_idle_sec,
         # 等你停手期间推剩余秒数：界面显示倒计时，你一动就回到满值

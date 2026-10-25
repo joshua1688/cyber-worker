@@ -216,7 +216,8 @@ def _start(st, script_id: str, record_delays: bool, append: bool) -> None:
     rec.hover_thread.start()
     st.recording = rec
     st.hub.publish({"type": "record_state", "recording": True, "script_id": script_id})
-    st.app.io.chime("start")
+    if st.app.config.studio.record_chime:
+        st.app.io.chime("start")
 
 
 def stop_recording(st) -> dict:
@@ -239,7 +240,8 @@ def _stop(st) -> dict:
     rec = st.recording
     rec.stop.set()
     # 后面要等线程、挑目标图、选锚点，要好几秒：先让人知道已经在停了
-    st.app.io.chime("stop")
+    if st.app.config.studio.record_chime:
+        st.app.io.chime("stop")
     st.hub.publish({"type": "record_state", "recording": True, "stopping": True, "script_id": rec.script_id})
     rec.thread.join(timeout=5)
     if rec.sampler:

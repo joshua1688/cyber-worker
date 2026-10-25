@@ -1234,3 +1234,29 @@ def test_record_reports_steps_it_could_not_give_a_page(client):
     assert typed["id"] in r["auto_anchor"]["missing"] and not typed.get("expected_page")
     bad = client.post(f"/api/scripts/{r['id']}/auto-page", json={"step_id": typed["id"]})
     assert bad.status_code == 400 and "我自己框" in bad.json()["detail"]
+
+
+def test_chimes_can_be_switched_off(client, tmp_path):
+    """设置里关掉「录制提示音」「执行提示音」：录制开始 / 停止、空跑都不再响；立即生效，写进 config.toml。"""
+    r = client.patch("/api/settings", json={"record_chime": False, "run_chime": False}).json()
+    assert r["record_chime"] is False and r["run_chime"] is False
+    assert "record_chime = false" in (tmp_path / "config.toml").read_text(encoding="utf-8")
+
+    d = new_script(client)
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    client.post("/api/record/stop")
+    with client.websocket_connect(WS) as ws:
+        client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
+        while ws.receive_json().get("state") != "done":
+            pass
+    assert [c for c in client.io.calls if c[0] == "chime"] == []
+
+    # 只开回录制提示音：录制响，空跑照样不响
+    client.patch("/api/settings", json={"record_chime": True})
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    client.post("/api/record/stop")
+    with client.websocket_connect(WS) as ws:
+        client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
+        while ws.receive_json().get("state") != "done":
+            pass
+    assert [c for c in client.io.calls if c[0] == "chime"] == [("chime", "start"), ("chime", "stop")]
