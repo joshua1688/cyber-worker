@@ -481,11 +481,11 @@ cyber-worker/
     │   │   └── new_moments.png     # Top of the content area
     │   └── douyin/
     │       └── new_message.png
-    ├── screenshots/                # Runtime screenshots (one per action, kept 30 days by default; configurable in settings)
+    ├── screenshots/                # Runtime screenshots (one per action, lossless WebP, kept 30 days by default; configurable in settings)
     │   └── 2026-10-22/             # Partitioned by date
-    │       ├── 091203_s03_like.png          # Like: after action
-    │       ├── 092015_s04_scroll.png        # Scroll: after action
-    │       └── 093022_s05_publish.png       # Publish: after action
+    │       ├── 091203_s03_like.webp         # Like: after action
+    │       ├── 092015_s04_scroll.webp       # Scroll: after action
+    │       └── 093022_s05_publish.webp      # Publish: after action
     ├── logs/                       # Runtime logs
     │   ├── runner.log
     │   └── studio.log
@@ -498,8 +498,8 @@ cyber-worker/
 | :---: | :--- |
 | 🚧 | `macro/` minimal loop (record + window calibration + page verification + execute + post-action screenshot + dry run): verified on Windows, pending on macOS |
 | 🚧 | Global executor (mutual exclusion, pause while you use the computer, panic stop): verified on Windows, pending on macOS |
-| 🚧 | Audit page (suspicion ranking, spot checks, daily report) |
-| 🚧 | `studio/` macro editor (create + record + edit + anchors + find-by-image clicks + wait-for-page + dry run / run + dark / light appearance + settings center + onboarding tour) |
+| ✅ | Audit page (suspicion ranking, spot checks, daily report; failed steps come with a "how to fix" note and a button straight to the fix) |
+| ✅ | `studio/` macro editor (create + record + edit + anchors + find-by-image clicks + wait-for-page + dry run / run + dark / light appearance + settings center + onboarding tour; every problem comes with a one-click fix) |
 | ✅ | Platform pack export / import (one-click `.cwpack` export, drop onto the page to import, easy to share with others) |
 | ⬜ | Find-by-text clicks (OCR, `locator/text.py` + `vision/ocr.py`) |
 | ⬜ | Platform pack format + generic `ScreenAdapter`, validated on WeChat Moments |
