@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -30,6 +31,17 @@ FAVICON_SVG = (
     'dominant-baseline="central" font-size="86" '
     "font-family=\"'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif\">🤖</text></svg>"
 )
+
+
+def build_id(static: Path = STATIC) -> str:
+    """前端文件的指纹（文件名 + 修改时间 + 大小）。页面拿它和自己加载时的比，不一样就是旧页面，该刷新了。
+    每次请求现算：改了 JS / CSS 不用重启 studio 也认得出来。"""
+    h = hashlib.sha1()
+    for f in sorted(static.rglob("*")):
+        if f.is_file():
+            st = f.stat()
+            h.update(f"{f.relative_to(static).as_posix()}|{st.st_mtime_ns}|{st.st_size}\n".encode())
+    return h.hexdigest()[:12]
 
 
 def create_app(app: App, *, run_idle_sec: float | None = None) -> FastAPI:
@@ -63,6 +75,10 @@ def create_app(app: App, *, run_idle_sec: float | None = None) -> FastAPI:
     @api.get("/audit")
     def audit_page():
         return FileResponse(STATIC / "audit.html")
+
+    @api.get("/api/build")
+    def build():
+        return {"build": build_id()}
 
     @api.get("/favicon.ico", include_in_schema=False)
     def favicon():

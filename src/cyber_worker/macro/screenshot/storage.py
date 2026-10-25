@@ -21,7 +21,11 @@ def read_image(path: str | Path) -> np.ndarray:
 
 
 def write_image(path: str | Path, img: np.ndarray) -> None:
-    ok, buf = cv2.imencode(".png", img)
+    """按扩展名编码：.webp 存无损 WebP（和 PNG 逐像素一样，小六成左右），其余存 PNG。"""
+    if Path(path).suffix.lower() == ".webp":
+        ok, buf = cv2.imencode(".webp", img, [cv2.IMWRITE_WEBP_QUALITY, 101])  # 质量 > 100 = 无损
+    else:
+        ok, buf = cv2.imencode(".png", img)
     if not ok:
         raise ValueError(f"无法编码图片：{path}")
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -36,12 +40,13 @@ class ScreenshotStorage:
         self.root = Path(root)
 
     def save(self, img: np.ndarray, *, at: datetime, step_id: str, action: str) -> Path:
-        name = f"{at:%H%M%S}_{_SAFE.sub('_', step_id)}_{_SAFE.sub('_', action)}.png"
+        # 审计截图存无损 WebP：每次运行每步一张，PNG 一个月能攒到上 GB
+        name = f"{at:%H%M%S}_{_SAFE.sub('_', step_id)}_{_SAFE.sub('_', action)}.webp"
         path = self.root / f"{at:%Y-%m-%d}" / name
         # 同一秒内重复的步骤（如重试）加序号，避免覆盖
         n = 1
         while path.exists():
-            path = path.with_name(f"{path.stem.split('~')[0]}~{n}.png")
+            path = path.with_name(f"{path.stem.split('~')[0]}~{n}{path.suffix}")
             n += 1
         write_image(path, img)
         return path

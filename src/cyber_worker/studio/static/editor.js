@@ -1873,6 +1873,10 @@ connectEvents((ev) => {
   }
 }, onReconnect);
 
+// 页面旧了也不自动刷新的时候：有没保存的修改、能撤销的历史，或正在录制 / 执行 / 框选
+Build.canReload = () => !S.dirty && !S.undo.length && !S.redo.length && !S.recording && !S.running && !S.anchorMode;
+Build.beforeReload = () => ensureSaved();
+
 // 连上（包括 studio 重启后自动重连）：断线期间的事件都丢了，跟服务端对一次，屏幕上的宏以文件为准
 async function onReconnect() {
   await syncStatus();

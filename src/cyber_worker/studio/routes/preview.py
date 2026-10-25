@@ -10,12 +10,16 @@ from cyber_worker.studio.routes.edit import studio
 router = APIRouter(prefix="/api")
 
 
+IMAGE_TYPES = {".png": "image/png", ".webp": "image/webp"}  # 审计截图是 .webp，宏里的图是 .png
+
+
 @router.get("/file")
 def file(path: str, request: Request):
     st = studio(request)
     target = (st.user_data / path).resolve()
-    if not target.is_relative_to(st.user_data) or target.suffix.lower() != ".png":
+    media = IMAGE_TYPES.get(target.suffix.lower())
+    if not target.is_relative_to(st.user_data) or media is None:
         raise HTTPException(400, "非法路径")
     if not target.exists():
         raise HTTPException(404, "文件不存在")
-    return FileResponse(target, media_type="image/png", headers={"Cache-Control": "no-cache"})
+    return FileResponse(target, media_type=media, headers={"Cache-Control": "no-cache"})

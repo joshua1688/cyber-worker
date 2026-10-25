@@ -1260,3 +1260,58 @@ def test_chimes_can_be_switched_off(client, tmp_path):
         while ws.receive_json().get("state") != "done":
             pass
     assert [c for c in client.io.calls if c[0] == "chime"] == [("chime", "start"), ("chime", "stop")]
+
+
+def test_startup_cleanup_drops_old_latest_frames_and_empty_platforms(client, tmp_path):
+    """启动时：上次留下的「最新截图」都删掉（只记在内存里，重启后没人读）；宏删光后剩下的空平台目录也删掉，有文件的不动。"""
+    st = client.app.state.studio
+    data = tmp_path / "user_data"
+    old = data / "frames" / "qq__templates__已删掉的宏__w7.png"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_bytes(b"png")
+    empty = data / "platforms" / "chrome" / "templates"
+    empty.mkdir(parents=True)
+    kept = data / "platforms" / "qq" / "templates" / "readme.txt"
+    kept.parent.mkdir(parents=True)
+    kept.write_text("x", encoding="utf-8")
+
+    st.latest.clear()  # 刚启动：内存里还没有
+    st.collect_garbage()
+    assert not old.exists()
+    assert not (data / "platforms" / "chrome").exists()
+    assert kept.exists()
+
+    # 用着用着（内存里有最新截图）就不碰 frames 目录
+    d = new_script(client)
+    client.post(f"/api/scripts/{d['id']}/capture")
+    frame = next((data / "frames").glob("*.png"))
+    st.collect_garbage()
+    assert frame.exists()
+
+
+def test_build_id_changes_when_frontend_files_change(tmp_path):
+    """页面靠它认出自己是旧的：前端文件改了指纹就变，没改不变。"""
+    from cyber_worker.studio.server import build_id
+
+    (tmp_path / "app.js").write_text("a", encoding="utf-8")
+    first = build_id(tmp_path)
+    assert build_id(tmp_path) == first
+    (tmp_path / "app.js").write_text("ab", encoding="utf-8")
+    assert build_id(tmp_path) != first
+
+
+def test_audit_screenshots_are_served_as_webp(client):
+    """执行后的截图是 .webp：审计页能直接打开；别的类型照样拒绝。"""
+    d = new_script(client)
+    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    client.post("/api/record/stop")
+    with client.websocket_connect(WS) as ws:
+        client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
+        while ws.receive_json().get("state") != "done":
+            pass
+    day = client.get("/api/audit/days").json()[0]
+    rows = client.get(f"/api/audit?day={day}").json()
+    url = next(r["screenshot_url"] for r in (rows["entries"] if isinstance(rows, dict) else rows) if r["screenshot_url"])
+    r = client.get(url)
+    assert ".webp" in url and r.status_code == 200 and r.headers["content-type"] == "image/webp"
+    assert client.get("/api/file?path=state.db").status_code == 400

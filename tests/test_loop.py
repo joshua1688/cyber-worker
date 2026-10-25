@@ -55,6 +55,6 @@ def test_minimal_loop(tmp_path):
 
     rows = audit.run(live.run_id)
     assert [(r["step_id"], r["status"]) for r in rows] == [("s01", "ok"), ("s02", "ok"), ("s03", "ok")]
-    shots = list((tmp_path / "user_data" / "screenshots" / "2026-10-23").glob("*.png"))
+    shots = list((tmp_path / "user_data" / "screenshots" / "2026-10-23").glob("*.webp"))
     assert shots and all(r["screenshot"] for r in rows)
     executor.shutdown()

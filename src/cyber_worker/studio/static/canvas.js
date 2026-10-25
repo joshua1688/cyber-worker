@@ -4,6 +4,11 @@
 
 // 连线流动：系统设了「减少动态效果」就不动
 const FLOW = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+// 流动动画每秒最多重画这么多次；一分钟没动键鼠、或者浏览器不在前台就停（停着就是一条静止的虚线），一动就接着走
+const FLOW_FPS = 30;
+const FLOW_IDLE_MS = 60_000;
+let lastInput = performance.now();
+const flowing = () => document.hasFocus() && performance.now() - lastInput < FLOW_IDLE_MS;
 
 class Stage {
   constructor(canvas, handlers) {
@@ -23,6 +28,12 @@ class Stage {
     window.addEventListener("mousemove", (e) => this._move(e));
     window.addEventListener("mouseup", (e) => this._up(e));
     canvas.addEventListener("mouseleave", () => this.h.onHover?.(null));
+    const wake = () => {
+      const was = flowing();
+      lastInput = performance.now();
+      if (!was) this.draw();  // 停过：接着流动
+    };
+    ["pointermove", "keydown", "wheel", "focus"].forEach((t) => window.addEventListener(t, wake, { passive: true }));
     new ResizeObserver(() => this.draw()).observe(canvas);
   }
 
@@ -279,8 +290,14 @@ class Stage {
       ctx.lineDashOffset = FLOW ? -((performance.now() * 0.02 * k) % (dash[0] + dash[1])) : 0;
       ctx.stroke();
       ctx.restore();
-      if (FLOW && !this._flow) {  // 有连线才逐帧重画；标签页切到后台时浏览器会自动停掉
-        this._flow = requestAnimationFrame(() => { this._flow = 0; this.draw(); });
+      if (FLOW && !this._flow && flowing()) {  // 有连线才重画；限帧，闲着、不在前台就停
+        const due = performance.now() + 1000 / FLOW_FPS - 4;  // 60 Hz 屏幕上隔一帧画一次
+        const tick = (t) => {
+          if (t < due) return (this._flow = requestAnimationFrame(tick));
+          this._flow = 0;
+          this.draw();
+        };
+        this._flow = requestAnimationFrame(tick);
       }
     }
     for (const m of ms.filter((m) => m.which === "end")) {

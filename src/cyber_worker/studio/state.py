@@ -203,7 +203,9 @@ class Studio:
         return Script.load(self.script_path(script_id))
 
     def collect_garbage(self, now: float | None = None) -> int:
-        """所有宏（含草稿）各清一遍没人用的旧图，返回删了几个文件。studio 启动时调用。"""
+        """所有宏（含草稿）各清一遍没人用的旧图，返回删了几个文件。studio 启动时调用。
+        还会清掉上次留下的「最新截图」（只记在内存里，重启后没人再读它们；删掉的宏、用不到的窗口的也一直留着），
+        以及宏全删光后剩下的空平台目录（里面一个文件都没有才删）。"""
         removed = 0
         for root in (self.drafts, self.root):
             for p in root.glob("*/templates/*.yaml"):
@@ -212,6 +214,14 @@ class Studio:
                         removed += collect_garbage(p, now=now)
                     except Exception:  # noqa: BLE001 —— 一个宏读不出来不影响启动和别的宏
                         continue
+        if not self.latest:
+            for f in (self.user_data / "frames").glob("*.png"):
+                f.unlink(missing_ok=True)
+                removed += 1
+        for root in (self.drafts, self.root):
+            for d in root.glob("*") if root.is_dir() else []:
+                if d.is_dir() and not any(f.is_file() for f in d.rglob("*")):
+                    shutil.rmtree(d, ignore_errors=True)
         return removed
 
     def set_latest(self, script_id: str, key: str | None, img, scale: float) -> None:

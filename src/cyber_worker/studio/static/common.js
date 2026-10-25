@@ -108,7 +108,7 @@ async function api(method, url, body) {
   return data;
 }
 
-function toast(msg, isError = false) {
+function toastBox() {
   let box = $(".toasts");
   if (!box) {
     box = document.createElement("div");
@@ -116,6 +116,11 @@ function toast(msg, isError = false) {
     box.setAttribute("role", "status");
     document.body.append(box);
   }
+  return box;
+}
+
+function toast(msg, isError = false) {
+  const box = toastBox();
   const el = document.createElement("div");
   el.className = "toast" + (isError ? " error" : "");
   el.innerHTML = icon(isError ? "alert" : "check") + `<span>${escapeHtml(msg)}</span>`;
@@ -133,6 +138,41 @@ async function attempt(fn) {
   }
 }
 
+// 页面是不是旧的：studio 的前端文件改过（升级、改了代码）而这个页面没刷新。
+// 第一次问到的指纹当作页面自己的；之后每次连上、切回这个标签页时再问一次，不一样就刷新。
+// canReload()：页面上有要保住的东西（没保存的修改、撤销记录、正在录制 / 执行）时返回 false，改成提示用户自己点；
+// beforeReload()：用户点「刷新」时先做的事（编辑页：把没保存的修改写回）
+const Build = {
+  id: null,
+  canReload: () => true,
+  beforeReload: async () => true,
+  noticed: false,
+  async check() {
+    const r = await fetch("/api/build", { cache: "no-store" }).then((x) => x.json()).catch(() => null);
+    if (!r?.build) return;
+    if (this.id === null) this.id = r.build;
+    if (r.build === this.id) return;
+    if (this.canReload()) return location.reload();
+    if (!this.noticed) {
+      this.noticed = true;
+      reloadNotice();
+    }
+  },
+};
+document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && Build.check());
+
+// 不会自己消失的提示：页面旧了，点一下刷新
+function reloadNotice() {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.innerHTML = `${icon("info")}<span>studio 更新了，这个页面还是旧版本。点「刷新」换成新的（修改会先保存，撤销记录会清空）</span>
+    <button type="button" class="btn sm primary">刷新</button>`;
+  el.querySelector("button").addEventListener("click", async () => {
+    if (await Build.beforeReload()) location.reload();
+  });
+  toastBox().append(el);
+}
+
 // onOpen：每次（重新）连上时调用。断线期间的事件会丢，调用方应借此跟服务端对一次状态
 function connectEvents(onEvent, onOpen) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -142,6 +182,7 @@ function connectEvents(onEvent, onOpen) {
     ws.onmessage = (m) => onEvent(JSON.parse(m.data));
     ws.onopen = () => {
       retry = 500;
+      Build.check();
       onOpen?.();
     };
     ws.onclose = () => setTimeout(open, (retry = Math.min(retry * 2, 8000)));
