@@ -239,10 +239,25 @@ function lastPage(steps, before) {
   return null;
 }
 
+// 新步骤放在画布上正显示的那个窗口、那张画面上（在哪张图上点的「添加」，就加在哪张图上），
+// 默认位置是这个窗口的中心；前面自动垫一个 1 秒延迟（插在最前面、前一行已经是延迟、加的本身就是延迟时不垫）
 function addStep(kind) {
   if (!S.script) return toast("先新建或选择一个宏", true);
-  const { width, height } = S.script.window;
-  const at = S.selected >= 0 ? S.selected + 1 : S.script.steps.length;
+  const shot = S.frame === "reference" && stepShot() ? S.script.steps[S.selected].shot : undefined;
+  let at = S.selected >= 0 ? S.selected + 1 : S.script.steps.length;
+  const base = stepBase(kind, at, S.win || null);
+  if (shot && kind !== "wait" && kind !== "wait_page") base.shot = shot;
+  const pad = kind !== "wait" && at > 0 && S.script.steps[at - 1]?.action !== "wait";
+  mutate((sc) => {
+    if (pad) sc.steps.splice(at++, 0, { id: nextId(sc.steps), action: "wait", seconds: 1 });
+    sc.steps.splice(at, 0, { id: nextId(sc.steps), ...base });
+  });
+  select(at);
+}
+
+// 某种步骤的默认值：位置在窗口 win 的中心；「等待页面」的窗口取它要等的页面所在的窗口，延迟不带窗口
+function stepBase(kind, at, win) {
+  const { width, height } = (win && S.script.windows?.[win]) || S.script.window;
   const base = {
     wait: { action: "wait", seconds: 1 },
     key: { action: "key", combo: "enter" },
@@ -255,10 +270,30 @@ function addStep(kind) {
     wait_page: { action: "wait_page", page: lastPage(S.script.steps, at - 1) || Object.keys(S.detail?.pages || {})[0] || "",
       timeout: 10 },
   }[kind];
-  // 等待页面：窗口就是那个页面锚点所在的窗口，不用用户再选
   if (kind === "wait_page") base.win = pageWindow(base.page);
-  mutate((sc) => sc.steps.splice(at, 0, { id: nextId(sc.steps), ...base }));
-  select(at);
+  else if (kind !== "wait" && win) base.win = win;
+  return base;
+}
+
+// 「换成 ▾」：把选中的这一步就地换成另一种步骤。编号、窗口、那张画面、备注照旧；
+// 位置、所在页面、「发送」标记新类型用得上就沿用（点击换成按键，「发送」还在；换成延迟就都不要了）
+const POSITIONED = new Set(["click", "scroll", "hover", "drag"]);
+function changeStep(i, kind) {
+  const old = S.script.steps[i];
+  const base = stepBase(kind, i, old.win || null);
+  if (kind !== "wait" && kind !== "wait_page") {
+    if (old.shot) base.shot = old.shot;
+    if (old.expected_page) base.expected_page = old.expected_page;
+  }
+  if (POSITIONED.has(kind) && POSITIONED.has(old.action)) {
+    Object.assign(base, { x: old.x, y: old.y });
+    if (kind === "drag") Object.assign(base, old.action === "drag" ? { x2: old.x2, y2: old.y2 } : { x2: old.x + 160, y2: old.y });
+  }
+  if (old.sends && (kind === "click" || kind === "key")) base.sends = true;
+  if (old.note) base.note = old.note;
+  mutate((sc) => (sc.steps[i] = { id: old.id, ...base }));
+  select(i);
+  toast(`${actionNo(S.script.steps, i) ? `第 ${actionNo(S.script.steps, i)} 步` : "这一行"}换成了「${TYPE[kind].name}」，可以撤销`);
 }
 
 function deleteSteps() {
@@ -754,9 +789,16 @@ function renderStepPane() {
       "动作做完等多久再截图留证"],
       ["备注", `<input type="text" class="input" data-f="note" value="${escapeHtml(s.note || "")}" placeholder="可选" style="flex:1">`]);
   }
+  const others = $$("#add-menu .add-item").filter((b) => b.dataset.add !== s.action)
+    .map((b) => b.outerHTML.replace("data-add=", "data-change=")).join("");
   pane.innerHTML = `
     <div class="section-title"><span class="type-ico sm ${s.action}">${icon(t.icon)}</span>${
-      actionNo(S.script.steps, S.selected) ? `第 ${actionNo(S.script.steps, S.selected)} 步 · ` : ""}${t.name}</div>
+      actionNo(S.script.steps, S.selected) ? `第 ${actionNo(S.script.steps, S.selected)} 步 · ` : ""}${t.name}
+      <span class="grow"></span>
+      <span class="change-group">
+        <button type="button" class="btn ghost sm" data-change-open aria-haspopup="menu" title="把这一步换成另一种步骤（窗口、画面、位置能沿用的都沿用）">换成${icon("chevron")}</button>
+        <div class="menu add-menu change-menu" role="menu" hidden>${others}</div>
+      </span></div>
     ${probs.map(problemHtml).join("")}
     ${focusNote(s, S.selected)}
     <div class="fields">${body}</div>
@@ -1063,6 +1105,7 @@ $$("[data-add]").forEach((b) => b.addEventListener("click", () => {
   addStep(b.dataset.add);
 }));
 document.addEventListener("click", (e) => {
+  if (!e.target.closest(".change-group")) $("#pane-step .change-menu")?.setAttribute("hidden", "");
   if (!e.target.closest("#add-group")) setAddMenu(false);
 });
 $("#btn-undo").addEventListener("click", undo);
@@ -1156,6 +1199,16 @@ $("#pane-step").addEventListener("focusout", (e) => {
   e.target.dataset.cursorEnd = e.target.selectionEnd;
 });
 $("#pane-step").addEventListener("click", (e) => {
+  if (e.target.closest("[data-change-open]")) {
+    const menu = $("#pane-step .change-menu");
+    menu.hidden = !menu.hidden;
+    return;
+  }
+  const change = e.target.closest("[data-change]");
+  if (change) {
+    changeStep(S.selected, change.dataset.change);
+    return;
+  }
   const fix = e.target.closest("[data-fix]");
   if (fix) {
     fixProblem(fix.dataset.fix, fix);
@@ -1965,7 +2018,7 @@ function startTour() {
         + "宏用到好几个窗口时，旁边可以切换显示哪个窗口。右边「截图」截一张窗口现在的样子；「框锚点」在画面上拖一块不会变的区域，"
         + "程序靠它认出页面。录制画面截错了，点「截图」旁边的 ▾。" },
     { el: "#panel", title: "参数、宏设置、运行日志",
-      body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错。说明藏在 ⓘ 里，不常用的选项在「更多」里。空跑 / 执行的进度和每一步截图在「运行」里。",
+      body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错。说明藏在 ⓘ 里，不常用的选项在「更多」里；标题旁的「换成」能把这一步就地换成别的类型。空跑 / 执行的进度和每一步截图在「运行」里。",
       before: () => { if (S.script?.steps.length && S.selected < 0) select(0); setTab("step"); } },
     { el: "#btn-panic", title: "随时可以停",
       body: `点「急停」或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.hotkey) || "急停热键")}</kbd> 立刻中止。执行时你一动键鼠，它也会自己停下来。` },

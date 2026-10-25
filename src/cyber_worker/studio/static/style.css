@@ -754,6 +754,9 @@ details.more > .fields { margin-top: 10px; }
 .danger-zone small { display: block; font-size: 12px; color: var(--text-3); }
 .section-title { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 .section-title + .section-title { margin-top: 20px; }
+.change-group { position: relative; }
+.change-group .btn .icon { width: 14px; height: 14px; }
+.change-group .change-menu { left: auto; right: 0; font-weight: 400; }  /* 面板在最右边：往左展开 */
 .problem {
   display: flex;
   gap: 8px;
