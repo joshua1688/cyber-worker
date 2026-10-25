@@ -160,3 +160,21 @@ def test_target_captured_while_hovered_is_found_after_moving_there(tmp_path):
     assert runner.run(script).status is RunStatus.OK
     clicks = [c for c in io.calls if c[0] == "click"]
     assert len(clicks) == 1 and abs(clicks[0][1][0] - 400) <= 1
+
+
+def test_resting_where_you_just_clicked_is_not_a_hover():
+    """双击会话后鼠标停在原处等聊天窗口慢慢打开：冒出来的窗口是那一下点击打开的，不算悬停弹出。
+    点完挪到别处再停、或者停了很久以后，照常算。"""
+    b, clock = recording()
+    clock.t = 10.0
+    b.on_mouse_down(200, 300, "left")
+    b.on_mouse_up(200, 300, "left")
+    clock.t = 10.3
+    b.on_move(205, 302)  # 手抖了一下，还在原处附近
+    assert b.settling_after_click(b.pointer)
+    clock.t = 10.8
+    b.on_move(400, 500)  # 挪到别处停住：可能是真悬停
+    assert not b.settling_after_click(b.pointer)
+    clock.t = 13.0
+    b.on_move(203, 301)  # 回到原处，但已经过了好一会儿
+    assert not b.settling_after_click(b.pointer)

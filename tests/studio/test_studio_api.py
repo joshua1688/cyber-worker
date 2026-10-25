@@ -1374,3 +1374,16 @@ def test_recording_keeps_the_normal_look_of_a_clicked_button():
     assert got is not None and np.array_equal(got, normal[200:230, 300:340])
     # 按钮平时也长这样（没有悬停效果）：不用另存
     assert _normal_look(steps, 2, rec, box, 1.0, normal[200:230, 300:340].copy()) is None
+
+
+def test_window_you_typed_into_is_never_a_popup(client):
+    """以前录的同名窗口带着「悬停弹出的小窗」标记（资料卡也叫 My Sky）：这次在它里面打了字，就不是小窗，标记去掉。
+    小窗执行时不切前台、不改尺寸，聊天窗口要是被当成小窗，字可能打到挡在前面的窗口里。"""
+    first = _record_two_windows(client)
+    sid = first["id"]
+    script = first["script"]
+    script["windows"]["w2"]["popup"] = True
+    client.put(f"/api/scripts/{sid}/detail", json=script)
+    client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+    again = client.post("/api/record/stop").json()
+    assert again["script"]["windows"]["w2"].get("popup", False) is False

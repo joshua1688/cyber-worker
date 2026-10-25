@@ -20,7 +20,19 @@ from cyber_worker.macro.anchors import add_anchor, free_page_name, save_referenc
 from cyber_worker.macro.io.base import CalibrationError
 from cyber_worker.macro.recorder import RecordingBuilder, guess_send_step
 from cyber_worker.macro.io.base import stable_title
-from cyber_worker.macro.schema import MAIN, Click, Drag, Hover, Script, Scroll, Wait, WaitPage, needs_page_check
+from cyber_worker.macro.schema import (
+    MAIN,
+    Click,
+    Drag,
+    Hover,
+    Key,
+    Script,
+    Scroll,
+    TypeText,
+    Wait,
+    WaitPage,
+    needs_page_check,
+)
 from cyber_worker.macro.screenshot.storage import read_image
 from cyber_worker.macro.vision.auto_anchor import pick_stable_region
 from cyber_worker.macro.vision.detect import frame_changed
@@ -108,6 +120,8 @@ def _watch_hover(st, rec: Recording) -> None:
         if p is None or p.seq == seen or b.pressed or time.monotonic() - p.t < REST_SEC:
             continue
         seen = p.seq
+        if b.settling_after_click(p):  # 点完在原处停着等窗口打开：不是悬停
+            continue
         try:
             hit = b.hover_window(io.window_geometry_at(*p.raw), p.x, p.y)
             if hit is None:
@@ -300,9 +314,13 @@ def _stop(st) -> dict:
     script.steps = [*kept, *new]
     script.windows = rec.builder.windows  # 录制中新出现的窗口（如双击会话弹出的聊天窗口）
     # 悬停才弹出来的窗口（资料卡）：执行时只找位置，不抢前台、不改尺寸
+    # 打过字、按过键的窗口一定不是资料卡这种小窗：以前录的同名窗口带过来的标记也去掉
     popped = {(app, stable_title(title)) for *_, pops in rec.hover_info.values() for app, title in pops}
-    for w in script.windows.values():
-        if (w.app.lower(), w.title or "") in popped:
+    typed_in = {s.win for s in [*kept, *new] if isinstance(s, (TypeText, Key))}
+    for key, w in script.windows.items():
+        if key in typed_in:
+            w.popup = False
+        elif (w.app.lower(), w.title or "") in popped:
             w.popup = True
     # 没有步骤、也没有页面锚点再用到的窗口（以前录过的）一并去掉：留着只会在下次录制时被认出来、带进旧尺寸
     used = {s.win for s in script.steps if s.win}

@@ -42,6 +42,10 @@ LONG_PRESS_SEC = 0.5  # 按住超过这么久算长按
 DRAG_SLOP = 6.0  # 按住移动超过这么多点算拖动
 KEY_REPEAT_SEC = 0.6  # 同一个键两次按下间隔不超过这么久，算连按
 HOVER_SLOP = 4.0  # 鼠标停着时手抖这么多点以内，还算停在原处
+# 按下鼠标后这么久之内、在按下处附近停住的，不算悬停：这时冒出来的窗口（双击会话后慢慢打开的聊天窗口）、
+# 变了的画面都是那一下点击引起的
+CLICK_SETTLE_SEC = 2.0
+CLICK_SETTLE_DIST = 12.0
 SCROLL_MERGE_SEC = 1.0
 SCROLL_MERGE_DIST = 60.0
 # studio 所在浏览器窗口的标题里有这些（页面标题是「宏设计 · 赛博打工人」），录制时忽略；旧标题也认
@@ -138,6 +142,7 @@ class RecordingBuilder:
         self.on_press = on_press
         self.on_step = on_step
         self.pointer: Pointer | None = None
+        self.last_press: tuple[float, float, float] | None = None  # 最近一次按下鼠标：(时间, x, y)
         self.events = 0  # 每来一次点击 / 按键 / 滚动加一：悬停期间有别的操作就不算悬停
         self.times: dict[str, tuple[float, float]] = {}  # 步骤编号 → (开始, 结束)，插悬停用
         self.hovers: list[_HoverMark] = []
@@ -242,6 +247,12 @@ class RecordingBuilder:
             return
         self.pointer = Pointer(x, y, raw or (x, y), self.now(), p.seq + 1 if p else 1)
 
+    def settling_after_click(self, p: Pointer) -> bool:
+        """鼠标是刚点完、在点的地方附近停住的：这时的变化算那一下点击的，不算悬停。"""
+        lp = self.last_press
+        return (lp is not None and 0 <= p.t - lp[0] <= CLICK_SETTLE_SEC
+                and math.hypot(p.x - lp[1], p.y - lp[2]) <= CLICK_SETTLE_DIST)
+
     def hover_window(self, where: Where, x: float, y: float) -> tuple[str, float, float, WindowGeometry] | None:
         """鼠标停的地方是目标程序的哪个窗口：(窗口键, 窗口内 x, y, 窗口位置)；不是目标程序返回 None。"""
         if where is None:
@@ -325,6 +336,7 @@ class RecordingBuilder:
         self.focus = key
         self._press_seq += 1
         self._down = _Press(self.now(), pos[0], pos[1], button, _ordered(modifiers), key, self._press_seq)
+        self.last_press = (self._down.t, x, y)
         if self.on_press:
             self.on_press(self._press_seq, key, self.geos[key], pos[0], pos[1])
 
