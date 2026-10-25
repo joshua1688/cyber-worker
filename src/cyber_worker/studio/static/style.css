@@ -292,6 +292,10 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 }
 .subbar > .grow { display: none; }
 .subbar > .run-bar { grid-column: 2 / -1; justify-self: end; }
+/* 录制 / 空跑 / 执行和左边的宏选择框一样高、一样的圆角；录制和它的 ▾ 是一体的，中间相接处保持直角 */
+.subbar .run-bar .btn { height: 44px; border-radius: 10px; }
+.subbar .split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.subbar .split > .btn:nth-child(2) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .macro-picker { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .macro-picker .mp { flex: 1; min-width: 0; }
 /* 宏选择器：可搜索的下拉框（按平台分组、草稿置顶、键盘可用） */
@@ -705,10 +709,12 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   font-size: 13px;
 }
 
-.tabs { display: flex; gap: 2px; padding: 8px 12px 0; border-bottom: 1px solid var(--border); }
+.tabs {
+  /* 和左边两栏的标题栏（.card-head：32px 按钮 + 上下 10px + 1px 底线）一样高：三条底线连成一线，文字中线也对齐 */
+  display: flex; align-items: stretch; gap: 2px; min-height: 53px; padding: 0 12px; border-bottom: 1px solid var(--border);
+}
 .tabs button {
   position: relative;
-  height: 34px;
   padding: 0 12px;
   border: none;
   background: none;
