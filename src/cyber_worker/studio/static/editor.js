@@ -1370,7 +1370,7 @@ $("#win-seg").addEventListener("click", (e) => {
   if (b) setWin(b.dataset.win);
 });
 $("#btn-capture").addEventListener("click", () => capture(false));
-// 截图旁的 ▾：截一张 / 用现在的样子换掉录制画面（录错了时用，只在「录制画面」上能点）
+// 截图旁的 ▾：截一张 / 替换录制画面（录错了时用，只在「录制画面」上能点）
 $("#btn-capture-menu").addEventListener("click", (e) => {
   e.stopPropagation();
   const menu = $("#capture-menu");
@@ -1378,10 +1378,9 @@ $("#btn-capture-menu").addEventListener("click", (e) => {
   if (menu.hidden) return;
   const can = S.frame === "reference" && !!frameOf("reference");
   $("#cap-replace").disabled = !can;
-  $("#cap-replace-hint").textContent = can
-    ? (stepShot() ? `换掉第 ${actionNo(S.script.steps, S.selected)} 步录制时的画面。先把窗口摆成这一步之前的样子；可撤销`
-      : "录制时截错了才用：先把窗口摆成这一步之前的样子。可撤销")
-    : "先切到「录制画面」，再选这一项";
+  $("#cap-replace-title").textContent = can && stepShot()
+    ? `替换第 ${actionNo(S.script.steps, S.selected)} 步的录制画面` : "替换录制画面";
+  $("#cap-replace-hint").textContent = can ? "录错时用，可撤销" : "先切到录制画面";
 });
 $("#cap-now").addEventListener("click", () => {
   $("#capture-menu").hidden = true;
@@ -1840,10 +1839,7 @@ $("#run-log").addEventListener("click", (e) => {
 // 按键步骤：点一下框，按什么就记什么（和设置里录快捷键一样）。存的还是 ctrl+v 这种写法，显示成 Ctrl + V
 const KEY_CHIPS = ["enter", "esc", "tab", "backspace", "ctrl+v", "ctrl+a", "ctrl+c", "space"];
 const KEY_CODES = {
-  Space: "space", Enter: "enter", NumpadEnter: "enter", Tab: "tab", Backspace: "backspace", Delete: "delete", Escape: "esc",
-  Home: "home", End: "end", PageUp: "page_up", PageDown: "page_down",
-  ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
-  Period: ".", Comma: ",", Minus: "-", Equal: "=", Slash: "/", Semicolon: ";", Backquote: "`",
+  ...KEY_CODE_NAMES, NumpadEnter: "enter", Escape: "esc",
   BracketLeft: "[", BracketRight: "]", Backslash: "\\", Quote: "'",
 };
 const KEY_LABELS = {

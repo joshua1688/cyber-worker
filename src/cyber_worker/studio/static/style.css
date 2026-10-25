@@ -694,7 +694,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .coord { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text-3); white-space: nowrap; }
 .frame-note { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* 截图旁的 ▾ */
-.cap-menu { width: 300px; animation: menu-in .12s ease-out; }
+.cap-menu { width: 240px; animation: menu-in .12s ease-out; }
+.cap-menu .menu-text small { white-space: nowrap; }
 .cap-menu .menu-row { width: 100%; border: none; background: none; color: inherit; font: inherit; text-align: left; }
 .cap-menu .menu-row:disabled { opacity: .5; cursor: default; background: none; }
 #btn-anchor-mode.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }

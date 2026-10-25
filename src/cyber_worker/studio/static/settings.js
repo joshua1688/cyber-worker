@@ -5,12 +5,7 @@
 
 const Settings = (() => {
   // KeyboardEvent.code → 后端用的键名（按物理键认：macOS 上 ⌥R 打出来是 ®，code 仍是 KeyR）
-  const CODE_NAMES = {
-    Space: "space", Enter: "enter", Tab: "tab", Backspace: "backspace", Delete: "delete", Insert: "insert",
-    Home: "home", End: "end", PageUp: "page_up", PageDown: "page_down", Pause: "pause", ScrollLock: "scroll_lock",
-    ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
-    Period: ".", Comma: ",", Minus: "-", Equal: "=", Slash: "/", Semicolon: ";", Backquote: "`",
-  };
+  const CODE_NAMES = { ...KEY_CODE_NAMES, Insert: "insert", Pause: "pause", ScrollLock: "scroll_lock" };
   const MOD_KEYS = new Set(["Control", "Shift", "Alt", "Meta", "AltGraph", "OS"]);
   const STATUS_ICON = { ok: "check", unknown: "info", taken: "alert", reserved: "alert", duplicate: "alert", invalid: "alert" };
   const SECTIONS = [

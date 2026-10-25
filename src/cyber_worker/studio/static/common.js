@@ -220,6 +220,14 @@ function confirmClick(btn, text, action) {
 
 // 快捷键显示：Windows 写 Ctrl+Alt+R，macOS 用 ⌃⌥⇧⌘ 符号
 const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
+// 浏览器的 KeyboardEvent.code → 按键名（和 pynput / 配置里的写法一样）。录全局快捷键（settings.js）和录按键步骤（editor.js）共用，
+// 各自再补自己才认的几个键：快捷键多认 Insert、Pause 这些，按键步骤多认 Esc（录快捷键时 Esc 是取消）和括号
+const KEY_CODE_NAMES = {
+  Space: "space", Enter: "enter", Tab: "tab", Backspace: "backspace", Delete: "delete",
+  Home: "home", End: "end", PageUp: "page_up", PageDown: "page_down",
+  ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+  Period: ".", Comma: ",", Minus: "-", Equal: "=", Slash: "/", Semicolon: ";", Backquote: "`",
+};
 function prettyKey(combo) {
   if (!combo) return "";
   const mac = { ctrl: "⌃", alt: "⌥", shift: "⇧", cmd: "⌘" };
