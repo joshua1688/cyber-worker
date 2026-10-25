@@ -240,17 +240,20 @@ function lastPage(steps, before) {
 }
 
 // 新步骤放在画布上正显示的那个窗口、那张画面上（在哪张图上点的「添加」，就加在哪张图上），
-// 默认位置是这个窗口的中心；前面自动垫一个 1 秒延迟（插在最前面、前一行已经是延迟、加的本身就是延迟时不垫）
-function addStep(kind) {
+// 默认位置是这个窗口的中心；前后挨着的不是延迟就各垫一个 1 秒延迟（加的本身就是延迟时不垫）
+function addStep(kind, at = S.script?.steps.length ?? 0) {
   if (!S.script) return toast("先新建或选择一个宏", true);
   const shot = S.frame === "reference" && stepShot() ? S.script.steps[S.selected].shot : undefined;
-  let at = S.selected >= 0 ? S.selected + 1 : S.script.steps.length;
   const base = stepBase(kind, at, S.win || null);
   if (shot && kind !== "wait" && kind !== "wait_page") base.shot = shot;
-  const pad = kind !== "wait" && at > 0 && S.script.steps[at - 1]?.action !== "wait";
+  // 新步骤前后各看一眼：挨着的不是延迟就垫 1 秒（在前面添加时，后面紧挨着的就是原来那一步）
+  const steps = S.script.steps;
+  const padBefore = kind !== "wait" && at > 0 && steps[at - 1]?.action !== "wait";
+  const padAfter = kind !== "wait" && at < steps.length && steps[at]?.action !== "wait";
   mutate((sc) => {
-    if (pad) sc.steps.splice(at++, 0, { id: nextId(sc.steps), action: "wait", seconds: 1 });
+    if (padBefore) sc.steps.splice(at++, 0, { id: nextId(sc.steps), action: "wait", seconds: 1 });
     sc.steps.splice(at, 0, { id: nextId(sc.steps), ...base });
+    if (padAfter) sc.steps.splice(at + 1, 0, { id: nextId(sc.steps), action: "wait", seconds: 1 });
   });
   select(at);
 }
@@ -545,6 +548,7 @@ function renderSteps() {
       </span>
       ${probs.length ? `<span class="badge warn" title="${escapeHtml(probs.map((p) => p.text).join("\n") + "\n点开这一步看怎么修")}">${icon("alert")}${probs.length}</span>` : ""}
       ${mark ? `<span class="run-mark ${mark[1]}" title="${STATUS_TEXT[S.runMarks[s.id]]}">${icon(mark[0])}</span>` : ""}
+      ${rec ? "" : `<button type="button" class="step-more" data-more="${i}" title="添加、换成、复制、删除（也可以右键这一行）" aria-label="${n ? `第 ${n} 步的更多操作` : "这个延迟的更多操作"}">${icon("more")}</button>`}
       ${rec ? "" : `<span class="grip" title="拖动排序">${icon("grip")}</span>`}
     </li>`;
   };
@@ -561,7 +565,7 @@ function renderSteps() {
       <p>录一遍你在目标窗口里的操作就行，其余的会自动处理。</p>
       <div class="actions">
         <button class="btn primary" data-empty="record"><span class="rec-dot" style="background:currentColor"></span>开始录制</button>
-        <button class="btn" data-empty="click">${icon("plus")}添加一次点击</button>
+        <button class="btn" data-empty="add">${icon("plus")}手动添加一步</button>
       </div>
       <ol class="steps-guide">
         <li><b>1</b><span>点「开始录制」或按 ${recKbd()}，到目标窗口里像平时一样操作一遍</span></li>
@@ -789,16 +793,9 @@ function renderStepPane() {
       "动作做完等多久再截图留证"],
       ["备注", `<input type="text" class="input" data-f="note" value="${escapeHtml(s.note || "")}" placeholder="可选" style="flex:1">`]);
   }
-  const others = $$("#add-menu .add-item").filter((b) => b.dataset.add !== s.action)
-    .map((b) => b.outerHTML.replace("data-add=", "data-change=")).join("");
   pane.innerHTML = `
     <div class="section-title"><span class="type-ico sm ${s.action}">${icon(t.icon)}</span>${
-      actionNo(S.script.steps, S.selected) ? `第 ${actionNo(S.script.steps, S.selected)} 步 · ` : ""}${t.name}
-      <span class="grow"></span>
-      <span class="change-group">
-        <button type="button" class="btn ghost sm" data-change-open aria-haspopup="menu" title="把这一步换成另一种步骤（窗口、画面、位置能沿用的都沿用）">换成${icon("chevron")}</button>
-        <div class="menu add-menu change-menu" role="menu" hidden>${others}</div>
-      </span></div>
+      actionNo(S.script.steps, S.selected) ? `第 ${actionNo(S.script.steps, S.selected)} 步 · ` : ""}${t.name}</div>
     ${probs.map(problemHtml).join("")}
     ${focusNote(s, S.selected)}
     <div class="fields">${body}</div>
@@ -1105,7 +1102,6 @@ $$("[data-add]").forEach((b) => b.addEventListener("click", () => {
   addStep(b.dataset.add);
 }));
 document.addEventListener("click", (e) => {
-  if (!e.target.closest(".change-group")) $("#pane-step .change-menu")?.setAttribute("hidden", "");
   if (!e.target.closest("#add-group")) setAddMenu(false);
 });
 $("#btn-undo").addEventListener("click", undo);
@@ -1121,7 +1117,7 @@ $("#select-all").addEventListener("change", (e) => {
 $("#steps-empty").addEventListener("click", (e) => {
   const act = e.target.closest("[data-empty]")?.dataset.empty;
   if (act === "record") $("#btn-record").click();
-  else if (act === "click") addStep("click");
+  else if (act === "add") openEndMenu(e.target.closest("[data-empty]"));
   else if (act === "quick") quickStart();
   else if (act === "tour") startTour();
 });
@@ -1129,6 +1125,14 @@ $("#steps-empty").addEventListener("click", (e) => {
 // 列表：选中 / 勾选 / 拖拽排序
 const list = $("#step-list");
 list.addEventListener("click", (e) => {
+  const more = e.target.closest("[data-more]");
+  if (more) {
+    const i = +more.dataset.more;
+    if (i !== S.selected) select(i);
+    const r = $(`#step-list [data-more="${i}"]`).getBoundingClientRect();
+    openStepMenu(i, r.right - 4, r.bottom + 4);
+    return;
+  }
   const cb = e.target.closest("[data-check]");
   if (cb) {
     const i = +cb.dataset.check;
@@ -1199,16 +1203,6 @@ $("#pane-step").addEventListener("focusout", (e) => {
   e.target.dataset.cursorEnd = e.target.selectionEnd;
 });
 $("#pane-step").addEventListener("click", (e) => {
-  if (e.target.closest("[data-change-open]")) {
-    const menu = $("#pane-step .change-menu");
-    menu.hidden = !menu.hidden;
-    return;
-  }
-  const change = e.target.closest("[data-change]");
-  if (change) {
-    changeStep(S.selected, change.dataset.change);
-    return;
-  }
   const fix = e.target.closest("[data-fix]");
   if (fix) {
     fixProblem(fix.dataset.fix, fix);
@@ -1821,9 +1815,121 @@ $("#run-log").addEventListener("click", (e) => {
   }
 });
 
+// 右键一步：在后面添加 / 在前面添加 / 换成 / 复制一份 / 删除；「添加」「换成」往右弹出 8 种步骤类型。
+// 在列表空白处右键（或空宏里点「手动添加一步」）：直接是类型，加在最后
+const MENU = { i: -1, sub: null };
+const SUB_TITLE = { after: "在后面添加", before: "在前面添加", change: "换成", end: "添加到最后" };
+function typeItems(skip) {
+  return $$("#add-menu .add-item").filter((b) => b.dataset.add !== skip)
+    .map((b) => b.outerHTML.replace("data-add=", "data-pick=")).join("");
+}
+function placeMenu(el, x, y) {
+  el.hidden = false;
+  const r = el.getBoundingClientRect();
+  el.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+  el.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+}
+function closeStepMenus() {
+  $("#step-menu").hidden = $("#step-submenu").hidden = true;
+  MENU.sub = null;
+}
+function openStepMenu(i, x, y) {
+  MENU.i = i;
+  const item = (attr, ico, text, tail = "›", cls = "") =>
+    `<button type="button" class="ctx-item ${cls}" role="menuitem" ${attr}>${icon(ico)}<span>${text}</span><i>${tail}</i></button>`;
+  $("#step-menu").innerHTML = item('data-sub="after"', "plus", "在后面添加")
+    + item('data-sub="before"', "plus", "在前面添加")
+    + item('data-sub="change"', "loop", "换成")
+    + `<div class="menu-sep"></div>`
+    + item('data-act="dup"', "copy", "复制一份", "<kbd>Ctrl+D</kbd>")
+    + item('data-act="del"', "trash", "删除", "<kbd>Del</kbd>", "danger");
+  $("#step-submenu").hidden = true;
+  placeMenu($("#step-menu"), x, y);
+}
+function openSub(kind, anchor) {
+  if (MENU.sub === kind && !$("#step-submenu").hidden) return;
+  MENU.sub = kind;
+  $$("#step-menu [data-sub]").forEach((b) => b.classList.toggle("on", b.dataset.sub === kind));
+  const sub = $("#step-submenu");
+  sub.innerHTML = `<div class="menu-title">${SUB_TITLE[kind]}</div>`
+    + typeItems(kind === "change" ? S.script.steps[MENU.i]?.action : null);
+  sub.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const w = sub.getBoundingClientRect().width;
+  placeMenu(sub, r.right + 4 + w > innerWidth ? r.left - w - 4 : r.right + 4, r.top - 6);
+}
+function openEndMenu(anchor, x, y) {
+  if (!S.script) return;
+  MENU.i = -1;
+  $("#step-menu").hidden = true;
+  MENU.sub = "end";
+  const sub = $("#step-submenu");
+  sub.innerHTML = `<div class="menu-title">${SUB_TITLE.end}</div>${typeItems(null)}`;
+  if (anchor) {
+    const r = anchor.getBoundingClientRect();
+    placeMenu(sub, r.left, r.bottom + 4);
+  } else placeMenu(sub, x, y);
+}
+function duplicateStep(i) {
+  const copy = JSON.parse(JSON.stringify(S.script.steps[i]));
+  if (copy.sends) copy.sends = false;  // 复制出来的不能也是「发送」，不然会发两遍
+  mutate((sc) => sc.steps.splice(i + 1, 0, { ...copy, id: nextId(sc.steps) }));
+  select(i + 1);
+  toast("复制了一份，接在后面");
+}
+$("#step-menu").addEventListener("mouseover", (e) => {
+  const b = e.target.closest("[data-sub]");
+  if (b) openSub(b.dataset.sub, b);
+});
+$("#step-menu").addEventListener("click", (e) => {
+  const sub = e.target.closest("[data-sub]");
+  if (sub) return openSub(sub.dataset.sub, sub);
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  const i = MENU.i;
+  closeStepMenus();
+  if (act === "dup") duplicateStep(i);
+  else if (act === "del") {
+    S.checked.clear();
+    S.selected = i;
+    deleteSteps();
+  }
+});
+$("#step-submenu").addEventListener("click", (e) => {
+  const kind = e.target.closest("[data-pick]")?.dataset.pick;
+  if (!kind) return;
+  const { i, sub } = MENU;
+  closeStepMenus();
+  if (sub === "after") addStep(kind, i + 1);
+  else if (sub === "before") addStep(kind, i);
+  else if (sub === "change") changeStep(i, kind);
+  else addStep(kind);
+});
+list.addEventListener("contextmenu", (e) => {
+  const li = e.target.closest("li");
+  if (!li || li.classList.contains("recording")) return;
+  e.preventDefault();
+  const i = +li.dataset.i;
+  if (i !== S.selected) select(i);
+  openStepMenu(i, e.clientX, e.clientY);
+});
+$("#steps-card").addEventListener("contextmenu", (e) => {
+  if (e.defaultPrevented || e.target.closest("li, .card-head, input, textarea, button") || !S.script || S.recording) return;
+  e.preventDefault();
+  openEndMenu(null, e.clientX, e.clientY);
+});
+document.addEventListener("mousedown", (e) => {
+  if (!e.target.closest("#step-menu, #step-submenu, [data-more], [data-empty]")) closeStepMenus();
+});
+window.addEventListener("resize", closeStepMenus);
+$("#step-list").addEventListener("scroll", closeStepMenus);
+
 // 快捷键
 document.addEventListener("keydown", (e) => {
   if (Tour.els) return;
+  if (e.key === "Escape" && !($("#step-menu").hidden && $("#step-submenu").hidden)) {
+    closeStepMenus();
+    return;
+  }
   const typing = e.target.matches("input, textarea, select");
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === "s") {
@@ -1841,6 +1947,7 @@ document.addEventListener("keydown", (e) => {
   if (typing || $("#new-dialog").open) return;
   if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
+  else if (mod && e.key.toLowerCase() === "d" && S.selected >= 0) { e.preventDefault(); duplicateStep(S.selected); }
   else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteSteps(); }
   else if (e.key === "ArrowDown" && S.script) { e.preventDefault(); select(Math.min(S.selected + 1, S.script.steps.length - 1)); }
   else if (e.key === "ArrowUp" && S.script) { e.preventDefault(); select(Math.max(S.selected - 1, 0)); }
@@ -2009,7 +2116,7 @@ function startTour() {
     { el: "#run-bar", title: "录制 → 空跑 → 执行",
       body: `点「录制」或在任何窗口里按 ${rec}，到目标窗口里像平时一样操作，再按一下就停止。录完点「空跑」（或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.dryHotkey) || "Alt+T")}</kbd>）完整走一遍但不发送；确认没问题再点「执行」，要点两次确认。执行会真的发送，所以没有全局快捷键。` },
     { el: "#steps-card", title: "步骤列表",
-      body: "点一行编辑，拖动排序，勾选后批量删除。「＋ 添加」可以手动插一步，比如「等待页面」：等某个页面出来再往下走，比固定延迟靠谱。黄色 ⚠ 表示这一步还缺东西：点开这一步，右边会说明原因，大多一点按钮就能修好。" },
+      body: "点一行编辑，拖动排序，勾选后批量删除。右键一步（或点它右边的 ⋯）可以在前后添加一步、换成别的类型、复制、删除；顶部的「＋」加在最后。比如「等待页面」：等某个页面出来再往下走，比固定延迟靠谱。黄色 ⚠ 表示这一步还缺东西：点开这一步，右边会说明原因，大多一点按钮就能修好。" },
     { el: "#canvas-area", title: "画面：每一步录制时的样子",
       body: "选中哪一步，就显示那一步动作之前的画面，编号标记是点击位置，可以直接拖。蓝色虚线框是页面锚点，程序靠它认出「现在在哪个页面」；橙色框是按图找的目标图，界面变了也能找到它再点。",
       before: () => setTab("step") },
@@ -2018,7 +2125,7 @@ function startTour() {
         + "宏用到好几个窗口时，旁边可以切换显示哪个窗口。右边「截图」截一张窗口现在的样子；「框锚点」在画面上拖一块不会变的区域，"
         + "程序靠它认出页面。录制画面截错了，点「截图」旁边的 ▾。" },
     { el: "#panel", title: "参数、宏设置、运行日志",
-      body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错。说明藏在 ⓘ 里，不常用的选项在「更多」里；标题旁的「换成」能把这一步就地换成别的类型。空跑 / 执行的进度和每一步截图在「运行」里。",
+      body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错。说明藏在 ⓘ 里，不常用的选项在「更多」里。空跑 / 执行的进度和每一步截图在「运行」里。",
       before: () => { if (S.script?.steps.length && S.selected < 0) select(0); setTab("step"); } },
     { el: "#btn-panic", title: "随时可以停",
       body: `点「急停」或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.hotkey) || "急停热键")}</kbd> 立刻中止。执行时你一动键鼠，它也会自己停下来。` },

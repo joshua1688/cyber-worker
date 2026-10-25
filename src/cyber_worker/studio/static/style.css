@@ -754,9 +754,26 @@ details.more > .fields { margin-top: 10px; }
 .danger-zone small { display: block; font-size: 12px; color: var(--text-3); }
 .section-title { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 .section-title + .section-title { margin-top: 20px; }
-.change-group { position: relative; }
-.change-group .btn .icon { width: 14px; height: 14px; }
-.change-group .change-menu { left: auto; right: 0; font-weight: 400; }  /* 面板在最右边：往左展开 */
+/* 步骤的右键菜单：跟着鼠标出现（fixed），「添加」「换成」往右弹出类型列表 */
+.ctx-menu { position: fixed; top: 0; left: 0; right: auto; min-width: 200px; z-index: 60; animation: menu-in .1s ease-out; }
+#step-submenu { width: 240px; }
+.ctx-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: none; border-radius: 8px;
+  background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.ctx-item:hover, .ctx-item.on, .ctx-item:focus-visible { background: var(--hover); outline: none; }
+.ctx-item .icon { width: 16px; height: 16px; color: var(--text-2); flex: none; }
+.ctx-item span { flex: 1; }
+.ctx-item i { font-style: normal; color: var(--text-3); }
+.ctx-item kbd { font-size: 11px; }
+.ctx-item.danger, .ctx-item.danger .icon { color: var(--danger); }
+.step .step-more {
+  display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
+  border: none; border-radius: 6px; background: none; color: var(--text-3); cursor: pointer; opacity: 0;
+}
+.step:hover .step-more, .step.selected .step-more, .step .step-more:focus-visible { opacity: 1; }
+.step .step-more:hover { background: var(--hover); color: var(--text); }
+.step .step-more .icon { width: 16px; height: 16px; }
 .problem {
   display: flex;
   gap: 8px;
@@ -1264,7 +1281,6 @@ button.link:hover { text-decoration: underline; }
 .step.idle.selected { color: var(--text); }
 
 /* 窄窗口：步骤栏变窄，「＋ 添加」只留「＋」，把位置让给「N 步 · X 秒」 */
-@media (max-width: 1180px) { #btn-add .add-text { display: none; } #btn-add { padding: 0 7px; } }
 
 /* 输入 / 按键打进哪里 */
 .focus-note { display: flex; align-items: center; gap: 6px; margin: -4px 0 12px; font-size: 12px; color: var(--info); }

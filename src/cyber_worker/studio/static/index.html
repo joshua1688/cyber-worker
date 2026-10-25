@@ -95,8 +95,9 @@
         <span class="total" id="total"></span>
         <span class="grow"></span>
         <div class="add-group" id="add-group">
-          <button class="btn sm" id="btn-add" aria-haspopup="menu" aria-expanded="false" title="手动添加一步（插在选中的步骤后面）"><i data-icon="plus"></i><span class="add-text">添加</span></button>
+          <button class="icon-btn" id="btn-add" aria-haspopup="menu" aria-expanded="false" title="添加一步（加在最后）。要插在某一步前后：右键那一步" aria-label="添加一步"><i data-icon="plus"></i></button>
           <div class="menu add-menu" id="add-menu" role="menu" hidden>
+            <div class="menu-title">添加到最后</div>
             <button class="add-item" data-add="click" role="menuitem"><span class="type-ico sm click"><i data-icon="pointer"></i></span><span><b>点击</b><small>点窗口里的某个位置</small></span></button>
             <button class="add-item" data-add="type" role="menuitem"><span class="type-ico sm type"><i data-icon="type"></i></span><span><b>输入文本</b><small>可以用变量</small></span></button>
             <button class="add-item" data-add="key" role="menuitem"><span class="type-ico sm key"><i data-icon="keyboard"></i></span><span><b>按键</b><small>回车、快捷键</small></span></button>
@@ -241,6 +242,9 @@
     <div><i data-icon="upload"></i>松开即可导入平台包</div>
   </div>
 
+  <!-- 步骤的右键菜单（也可以点一行上的 ⋯）和它往右弹出的类型列表 -->
+  <div class="menu ctx-menu" id="step-menu" role="menu" hidden></div>
+  <div class="menu ctx-menu" id="step-submenu" role="menu" hidden></div>
   <script src="/static/common.js"></script>
   <script src="/static/tour.js"></script>
   <script src="/static/settings.js"></script>
