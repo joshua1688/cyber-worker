@@ -43,7 +43,7 @@ def test_runner_tells_io_which_titles_to_avoid(tmp_path):
 
 
 def test_step_that_closes_its_window_still_succeeds(tmp_path):
-    """点 ✕ 把聊天窗口关了：操作后截不到它，这一步照样算成功，只是没有截图。"""
+    """点 ✕ 把聊天窗口关了：操作后截不到它，这一步照样算成功，截图换成点之前的画面。"""
     from cyber_worker.macro.io.base import CalibrationError
 
     io = FakeIO()
@@ -63,4 +63,4 @@ def test_step_that_closes_its_window_still_succeeds(tmp_path):
         "steps": [{"id": "s01", "action": "click", "x": 300, "y": 10}],
     })
     assert runner.run(script).status is RunStatus.OK
-    assert audit.entries[-1].screenshot is None
+    assert audit.entries[-1].screenshot and "点之前的画面" in audit.entries[-1].detail

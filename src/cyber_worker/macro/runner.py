@@ -201,6 +201,8 @@ class Runner:
                         detail="空跑：跳过发送")
                     return RunResult(run_id, RunStatus.DRY_RUN_STOPPED, done)
 
+                if before is None and isinstance(step, (Click, Drag, Key)):
+                    before = self._before_shot(geo)
                 self._perform(step, geo, script, variables, gate, where)
                 if isinstance(step, Wait):
                     log(step.id, step.action, StepStatus.OK)
@@ -210,6 +212,9 @@ class Runner:
                     detail = _found_text(where) if where else ""
                     if where is not None and self._learn(script, step, where, before, geo.scale):
                         detail += f"，{LEARNED_NOTE}"
+                    if shot is None and before is not None:
+                        shot = str(self.storage.save(before, at=self.now(), step_id=step.id, action=step.action))
+                        detail = "，".join(x for x in (detail, CLOSED_NOTE) if x)
                     log(step.id, step.action, StepStatus.OK, screenshot=shot,
                         expected_page=step.expected_page, page_score=page_score, detail=detail)
                 done += 1
@@ -240,6 +245,13 @@ class Runner:
             return learn_look(script.path, step.id, t.image, crop.copy(), scale) is not None
         except Exception:  # noqa: BLE001 —— 记不下来不影响执行
             return False
+
+    def _before_shot(self, geo: WindowGeometry):
+        """动作之前截一张（只留在内存里）；窗口已经没了就算了。"""
+        try:
+            return self.io.capture(geo)
+        except CalibrationError:
+            return None
 
     def _after_shot(self, geo: WindowGeometry, step) -> str | None:
         """操作后截图留证。这一步本身就可能把窗口关掉（点 ✕、最小化），截不到不算失败。"""
@@ -377,6 +389,7 @@ class Runner:
             self.sleep(seconds / n)
 
 
+CLOSED_NOTE = "点完窗口就关了，截图是点之前的画面"
 LEARN_BELOW = 0.9  # 按图找的得分低于这个（但过了门槛）：按钮样子变了一点，自动记住新样子
 LEARNED_NOTE = "按钮样子变了，已自动记住新样子"
 

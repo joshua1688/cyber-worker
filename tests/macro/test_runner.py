@@ -191,3 +191,24 @@ def test_user_input_mid_step_aborts_without_sending(env):
     assert r.status is RunStatus.ABORTED
     assert len([c for c in io.calls if c[0] == "click"]) == 1
     assert audit.entries[-1].status is StepStatus.ABORTED
+
+
+def test_closing_click_keeps_the_frame_before_it(env):
+    """这一下把窗口关了（点「关闭」）：操作后截不到，就把点之前的画面留作证据，审计里照样能点开看。"""
+    from cyber_worker.macro.io.base import CalibrationError
+    from cyber_worker.macro.runner import CLOSED_NOTE
+
+    io, audit, runner, book = env
+    screen = screen_with(pattern())
+
+    def capture():
+        if any(c[0] == "click" for c in io.calls):
+            raise CalibrationError("窗口已经关了或最小化了")
+        return screen
+
+    io.screen = capture
+    s = script(variables=[], steps=[{"id": "s01", "action": "click", "x": 380, "y": 280}])
+    r = runner.run(s, pages=book)
+    assert r.status is RunStatus.OK
+    (e,) = audit.entries
+    assert e.status is StepStatus.OK and e.screenshot and CLOSED_NOTE in e.detail
