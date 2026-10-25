@@ -21,7 +21,7 @@ cyber-worker = "cyber_worker.cli:main"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
+    "httpx2",  # starlette 的 TestClient 用它（用 httpx 会有弃用警告）
     "pytest>=8",
 ]
 
