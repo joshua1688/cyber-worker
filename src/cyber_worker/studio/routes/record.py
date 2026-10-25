@@ -1,4 +1,4 @@
-"""录制控制：录到当前宏的末尾，录制过程中通过 WebSocket 实时推送新步骤。
+"""录制控制：录到当前流程的末尾，录制过程中通过 WebSocket 实时推送新步骤。
 
 在浏览器里点「停止」不会被录进去——点击落在目标窗口之外的输入都会被忽略。
 录制期间后台定时截图；每次鼠标按下时截一块点击处的目标图（按图找）。
@@ -16,28 +16,33 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from cyber_worker.macro.anchors import add_anchor, free_page_name, save_reference, save_shot, save_target_crop
-from cyber_worker.macro.io.base import CalibrationError
-from cyber_worker.macro.recorder import RecordingBuilder, guess_send_step
-from cyber_worker.macro.io.base import stable_title
-from cyber_worker.macro.schema import (
+from cyber_worker.flow.anchors import (
+    add_anchor,
+    free_page_name,
+    save_reference,
+    save_shot,
+    save_target_crop,
+)
+from cyber_worker.flow.io.base import CalibrationError, stable_title
+from cyber_worker.flow.recorder import RecordingBuilder, guess_send_step
+from cyber_worker.flow.schema import (
     MAIN,
     Click,
     Drag,
+    Flow,
     Hover,
     Key,
-    Script,
     Scroll,
     TypeText,
     Wait,
     WaitPage,
     needs_page_check,
 )
-from cyber_worker.macro.screenshot.storage import read_image
-from cyber_worker.macro.vision.auto_anchor import pick_stable_region
-from cyber_worker.macro.vision.detect import frame_changed
-from cyber_worker.macro.vision.template import look_of, pick_target
-from cyber_worker.macro.vision.fingerprint import PageBook, match_page
+from cyber_worker.flow.screenshot.storage import read_image
+from cyber_worker.flow.vision.auto_anchor import pick_stable_region
+from cyber_worker.flow.vision.detect import frame_changed
+from cyber_worker.flow.vision.fingerprint import PageBook, match_page
+from cyber_worker.flow.vision.template import look_of, pick_target
 from cyber_worker.studio.routes.edit import studio
 from cyber_worker.studio.state import Recording, next_step_number
 
@@ -55,7 +60,7 @@ RESTART_COOLDOWN = 1.5  # 秒
 
 
 class StartRecording(BaseModel):
-    script_id: str
+    flow_id: str
     record_delays: bool = True
     record_append: bool | None = None  # 不给就用设置里的（默认替换已有步骤）
 
@@ -176,24 +181,24 @@ class RecordError(Exception):
         self.status = status
 
 
-def start_recording(st, script_id: str, record_delays: bool = True, append: bool | None = None) -> None:
+def start_recording(st, flow_id: str, record_delays: bool = True, append: bool | None = None) -> None:
     """append：录到的步骤接在已有步骤后面；否则（默认）替换掉已有步骤，界面上 Ctrl+Z 能恢复。"""
     if not st.record_lock.acquire(blocking=False):
         raise RecordError(409, "正在开始或停止录制，请稍等")
     try:
-        _start(st, script_id, record_delays, st.record_append if append is None else append)
+        _start(st, flow_id, record_delays, st.record_append if append is None else append)
     finally:
         st.record_lock.release()
 
 
-def _start(st, script_id: str, record_delays: bool, append: bool) -> None:
+def _start(st, flow_id: str, record_delays: bool, append: bool) -> None:
     if st.recording:
         raise RecordError(409, "已经在录制了")
     if st.app.executor.busy:
         raise RecordError(409, "正在执行，稍后再录")
-    script = st.load(script_id)
+    flow = st.load(flow_id)
     try:
-        geo = st.app.io.calibrate(script.window, avoid=script.other_titles(MAIN))
+        geo = st.app.io.calibrate(flow.window, avoid=flow.other_titles(MAIN))
     except CalibrationError as e:
         raise RecordError(400, f"窗口校准失败：{e}") from e
     st.record_delays = record_delays
@@ -216,12 +221,12 @@ def _start(st, script_id: str, record_delays: bool, append: bool) -> None:
         t.start()
 
     builder = RecordingBuilder(geo, on_change=on_change, record_delays=record_delays,
-                               first_id=next_step_number(script.steps) if append else 1,
-                               primary=script.window, windows=script.windows, ignore_combos=hotkeys,
+                               first_id=next_step_number(flow.steps) if append else 1,
+                               primary=flow.window, windows=flow.windows, ignore_combos=hotkeys,
                                on_press=on_press, on_step=on_step)
     stop = threading.Event()
     thread = threading.Thread(target=st.app.listen, args=(builder, stop), daemon=True, name="recorder")
-    rec = Recording(script_id, builder, stop, thread, geo=geo, append=append)
+    rec = Recording(flow_id, builder, stop, thread, geo=geo, append=append)
     _grab(st, rec)  # 第一帧：录制开始时主窗口的样子
     rec.sampler = threading.Thread(target=_sample, args=(st, rec), daemon=True, name="frame-sampler")
     rec.hover_thread = threading.Thread(target=_watch_hover, args=(st, rec), daemon=True, name="hover-watch")
@@ -229,7 +234,7 @@ def _start(st, script_id: str, record_delays: bool, append: bool) -> None:
     rec.sampler.start()
     rec.hover_thread.start()
     st.recording = rec
-    st.hub.publish({"type": "record_state", "recording": True, "script_id": script_id})
+    st.hub.publish({"type": "record_state", "recording": True, "flow_id": flow_id})
     if st.app.config.studio.record_chime:
         st.app.io.chime("start")
 
@@ -256,7 +261,7 @@ def _stop(st) -> dict:
     # 后面要等线程、挑目标图、选锚点，要好几秒：先让人知道已经在停了
     if st.app.config.studio.record_chime:
         st.app.io.chime("stop")
-    st.hub.publish({"type": "record_state", "recording": True, "stopping": True, "script_id": rec.script_id})
+    st.hub.publish({"type": "record_state", "recording": True, "stopping": True, "flow_id": rec.flow_id})
     rec.thread.join(timeout=5)
     if rec.sampler:
         rec.sampler.join(timeout=5)
@@ -267,8 +272,8 @@ def _stop(st) -> dict:
     for t in rec.press_threads:
         t.join(timeout=3)
 
-    path = st.script_path(rec.script_id)
-    script = Script.load(path)
+    path = st.flow_path(rec.flow_id)
+    flow = Flow.load(path)
     # 悬停插到它发生的时间点上，步骤重新编号：按步骤编号记的画面跟着改
     renamed = rec.builder.finish()
     rec.step_frames = {renamed.get(k, k): v for k, v in rec.step_frames.items()}
@@ -283,10 +288,10 @@ def _stop(st) -> dict:
                                                   int(bx * scale):int((bx + bw) * scale)].copy())
     new = rec.builder.steps
     # 默认替换：重新录一遍就是要这一遍，旧步骤不能留在前面看着像重复（界面上 Ctrl+Z 能恢复）
-    kept = script.steps if rec.append else []
-    replaced = len(script.steps) - len(kept)
+    kept = flow.steps if rec.append else []
+    replaced = len(flow.steps) - len(kept)
 
-    # 1. 猜「发送」：只在宏里还没有发送步骤时才猜，免得覆盖用户自己的标记
+    # 1. 猜「发送」：只在流程里还没有发送步骤时才猜，免得覆盖用户自己的标记
     send_id = None
     if not any(getattr(s, "sends", False) for s in kept):
         i = guess_send_step(new)
@@ -311,39 +316,39 @@ def _stop(st) -> dict:
                                                 keep_existing=bool(replaced)).image
             targets += 1
     _save_shots(path, new, rec, keep_existing=bool(replaced))
-    script.steps = [*kept, *new]
-    script.windows = rec.builder.windows  # 录制中新出现的窗口（如双击会话弹出的聊天窗口）
+    flow.steps = [*kept, *new]
+    flow.windows = rec.builder.windows  # 录制中新出现的窗口（如双击会话弹出的聊天窗口）
     # 悬停才弹出来的窗口（资料卡）：执行时只找位置，不抢前台、不改尺寸
     # 打过字、按过键的窗口一定不是资料卡这种小窗：以前录的同名窗口带过来的标记也去掉
     popped = {(app, stable_title(title)) for *_, pops in rec.hover_info.values() for app, title in pops}
     typed_in = {s.win for s in [*kept, *new] if isinstance(s, (TypeText, Key))}
-    for key, w in script.windows.items():
+    for key, w in flow.windows.items():
         if key in typed_in:
             w.popup = False
         elif (w.app.lower(), w.title or "") in popped:
             w.popup = True
     # 没有步骤、也没有页面锚点再用到的窗口（以前录过的）一并去掉：留着只会在下次录制时被认出来、带进旧尺寸
-    used = {s.win for s in script.steps if s.win}
-    if script.pages_path and script.pages_path.exists():
-        used |= {a.win for fp in PageBook.load(script.pages_path).pages.values() for a in fp.anchors if a.win}
-    script.windows = {k: w for k, w in script.windows.items() if k in used}
+    used = {s.win for s in flow.steps if s.win}
+    if flow.pages_path and flow.pages_path.exists():
+        used |= {a.win for fp in PageBook.load(flow.pages_path).pages.values() for a in fp.anchors if a.win}
+    flow.windows = {k: w for k, w in flow.windows.items() if k in used}
     # 每个录到的窗口各存一张参考图：画布上选到哪个窗口的步骤就显示哪个窗口。优先用这个窗口第一步的画面
     # （按下鼠标那一刻截的，窗口一定在）；没有步骤画面的窗口才用后台定时截的第一帧。
     # 追加录制时已有的参考图不动（除非窗口尺寸变了，旧图对不上了）；替换录制就换成这一遍的
     firsts = {**_first_frames(rec.frames), **_first_step_frames(new, rec)}
     shots = _step_frames_by_win(new, rec)  # 下面重新编号后就按步骤编号查不到了，先取出来
     for key, (_, img) in firsts.items():
-        if key != MAIN and key not in script.windows:
+        if key != MAIN and key not in flow.windows:
             continue
-        ref = script.reference_for(key)
-        win = script.window_for(key)
+        ref = flow.reference_for(key)
+        win = flow.window_for(key)
         fits = (ref is not None and ref.exists()
                 and read_image(ref).shape[:2] == (round(win.height * win.scale), round(win.width * win.scale)))
         if not (rec.append and fits):
-            save_reference(path, script, key, img)
+            save_reference(path, flow, key, img)
     # 统一编号：动作 s01、s02…，延迟 d01、d02…（延迟不算「步」）。上面按录制时编号记的画面、目标图都已经存好了
-    send_id = script.renumber().get(send_id, send_id)
-    script.dump(path)
+    send_id = flow.renumber().get(send_id, send_id)
+    flow.dump(path)
 
     # 2. 自动锚点：需要校验页面的步骤还没指定页面时，先沿用同一窗口里还对得上的页面，没有才从录制帧里挑一块新的
     auto = _auto_anchor(path, rec, shots)
@@ -352,7 +357,7 @@ def _stop(st) -> dict:
 
     # 每个窗口的最后一帧当作它的「最新截图」，画面上能直接看到自动选的锚点
     for key, (scale, img) in _first_frames(reversed(rec.frames)).items():
-        st.set_latest(rec.script_id, key, img, scale)
+        st.set_latest(rec.flow_id, key, img, scale)
 
     # 每次录制唯一的编号：界面靠它去重（按钮的响应和推送事件各来一次）。不能用计数器：
     # studio 重启后计数从头来，没刷新的页面会把新结果当成处理过的丢掉，屏幕上一直是旧步骤
@@ -361,15 +366,15 @@ def _stop(st) -> dict:
               "auto_targets": targets,
               # 录制结束时在哪个窗口：画面先显示它
               "last_win": None if not rec.frames or rec.frames[-1][0] == MAIN else rec.frames[-1][0],
-              **st.describe(rec.script_id)}
-    st.hub.publish({"type": "record_state", "recording": False, "script_id": rec.script_id})
+              **st.describe(rec.flow_id)}
+    st.hub.publish({"type": "record_state", "recording": False, "flow_id": rec.flow_id})
     # 用快捷键停止时界面没有发请求，靠这个事件拿到结果
     st.hub.publish({"type": "record_done", **result})
     return result
 
 
 def toggle_recording(st) -> None:
-    """全局快捷键：没在录就开始录当前打开的宏，在录就停止。在快捷键监听线程里调用。"""
+    """全局快捷键：没在录就开始录当前打开的流程，在录就停止。在快捷键监听线程里调用。"""
     if st.record_lock.locked():
         return  # 上一下还在处理（正在开始 / 停止）：连按的这一下不算
     if not st.recording and time.monotonic() - st.stopped_at < RESTART_COOLDOWN:
@@ -380,7 +385,7 @@ def toggle_recording(st) -> None:
         elif st.current_id:
             start_recording(st, st.current_id, st.record_delays, st.record_append)
         else:
-            st.hub.publish({"type": "toast", "error": True, "text": "先在 studio 里选一个宏，再按快捷键录制"})
+            st.hub.publish({"type": "toast", "error": True, "text": "先在 studio 里选一个流程，再按快捷键录制"})
     except RecordError as e:
         st.hub.publish({"type": "toast", "error": True, "text": str(e)})
     except Exception as e:  # noqa: BLE001 —— 快捷键线程里不能抛出去
@@ -390,7 +395,7 @@ def toggle_recording(st) -> None:
 @router.post("/start")
 def start(body: StartRecording, request: Request):
     try:
-        start_recording(studio(request), body.script_id, body.record_delays, body.record_append)
+        start_recording(studio(request), body.flow_id, body.record_delays, body.record_append)
     except RecordError as e:
         raise HTTPException(e.status, str(e)) from e
     return {"recording": True}
@@ -485,11 +490,11 @@ def _auto_anchor(path, rec: Recording, shots: dict | None = None) -> dict | None
     先看这个窗口已有的页面在这次录到的画面里还对不对得上，对得上就沿用；都对不上才从录制帧里挑一块稳定区域新建。
     shots：每个窗口各步骤动作之前的画面（按下鼠标、开始打字那一刻截的，窗口一定在），排在后台定时截的帧前面。
     还是选不出来的步骤放进 missing，界面提示用户自己框。"""
-    script = Script.load(path)
-    needing = [s for s in script.steps if needs_page_check(s) and not s.expected_page]
+    flow = Flow.load(path)
+    needing = [s for s in flow.steps if needs_page_check(s) and not s.expected_page]
     if not needing:
         return None
-    book = PageBook.load(script.pages_path) if script.pages_path and script.pages_path.exists() else PageBook()
+    book = PageBook.load(flow.pages_path) if flow.pages_path and flow.pages_path.exists() else PageBook()
     existing = book.pages
     pages, ids, reused = [], [], []
     for key in dict.fromkeys(s.win or MAIN for s in needing):
@@ -504,7 +509,7 @@ def _auto_anchor(path, rec: Recording, shots: dict | None = None) -> dict | None
         if page is not None:
             reused.append(page)
         else:
-            in_win = [s for s in script.steps if (s.win or MAIN) == key]
+            in_win = [s for s in flow.steps if (s.win or MAIN) == key]
             avoid = [(s.x, s.y) for s in in_win if isinstance(s, (Click, Scroll, Drag)) and s.x is not None]
             avoid += [(s.x2, s.y2) for s in in_win if isinstance(s, Drag)]
             region = pick_stable_region(frames, scale, avoid=avoid)
@@ -513,13 +518,13 @@ def _auto_anchor(path, rec: Recording, shots: dict | None = None) -> dict | None
             page = free_page_name(book, tuple(pages))
             add_anchor(path, page, region, frames[0], scale, key)
         pages.append(page)
-        script = Script.load(path)  # add_anchor 可能刚写入了 pages 字段
-        for s in script.steps:
+        flow = Flow.load(path)  # add_anchor 可能刚写入了 pages 字段
+        for s in flow.steps:
             if (s.win or MAIN) == key and needs_page_check(s) and not s.expected_page:
                 s.expected_page = page
                 ids.append(s.id)
-        script.dump(path)
-    missing = [s.id for s in Script.load(path).steps if needs_page_check(s) and not s.expected_page]
+        flow.dump(path)
+    missing = [s.id for s in Flow.load(path).steps if needs_page_check(s) and not s.expected_page]
     if not pages and not missing:
         return None
     return {"page": "、".join(pages), "pages": pages, "steps": ids, "reused": reused, "missing": missing}
@@ -528,15 +533,15 @@ def _auto_anchor(path, rec: Recording, shots: dict | None = None) -> dict | None
 def _drop_unused_pages(path) -> list[str]:
     """没有步骤再用的页面（核对页面、等待页面都没用到）清出 pages：画面上不再显示。
     锚点图先留着（放进 retired）：Ctrl+Z 撤销这次录制时，旧步骤用到的页面会自动放回来。返回清掉的页面名。"""
-    script = Script.load(path)
-    if not script.pages_path or not script.pages_path.exists():
+    flow = Flow.load(path)
+    if not flow.pages_path or not flow.pages_path.exists():
         return []
-    used = {s.expected_page for s in script.steps} | {s.page for s in script.steps if isinstance(s, WaitPage)}
-    book = PageBook.load(script.pages_path)
+    used = {s.expected_page for s in flow.steps} | {s.page for s in flow.steps if isinstance(s, WaitPage)}
+    book = PageBook.load(flow.pages_path)
     dropped = [name for name in book.pages if name not in used]
     for name in dropped:
         book.retired[name] = book.pages.pop(name)
         book.retired_at[name] = time.time()
     if dropped:
-        book.dump(script.pages_path)
+        book.dump(flow.pages_path)
     return dropped

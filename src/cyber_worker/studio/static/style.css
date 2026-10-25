@@ -282,7 +282,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 
 /* ---------- 编辑页布局 ---------- */
 .subbar {
-  /* 和下面三栏同一套列宽：宏选择框和步骤列表左右对齐，录制 / 空跑 / 执行和参数面板右边对齐 */
+  /* 和下面三栏同一套列宽：流程选择框和步骤列表左右对齐，录制 / 空跑 / 执行和参数面板右边对齐 */
   flex: none;
   display: grid;
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(300px, 360px);
@@ -292,13 +292,13 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 }
 .subbar > .grow { display: none; }
 .subbar > .run-bar { grid-column: 2 / -1; justify-self: end; }
-/* 录制 / 空跑 / 执行和左边的宏选择框一样高、一样的圆角；录制和它的 ▾ 是一体的，中间相接处保持直角 */
+/* 录制 / 空跑 / 执行和左边的流程选择框一样高、一样的圆角；录制和它的 ▾ 是一体的，中间相接处保持直角 */
 .subbar .run-bar .btn { height: 44px; border-radius: 10px; }
 .subbar .split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .subbar .split > .btn:nth-child(2) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
-.macro-picker { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.macro-picker .mp { flex: 1; min-width: 0; }
-/* 宏选择框左边的「‹」：回到这个应用的首页 */
+.flow-picker { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.flow-picker .mp { flex: 1; min-width: 0; }
+/* 流程选择框左边的「‹」：回到这个应用的首页 */
 .mp-back {
   display: grid; place-items: center; width: 32px; height: 44px; flex: none; border-radius: 10px;
   border: 1px solid var(--border); background: var(--surface); color: var(--text-2); box-shadow: var(--shadow-sm);
@@ -307,7 +307,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .mp-back .icon { transform: rotate(90deg); }
 .mp-app { color: var(--text-2); font-weight: 500; }
 .mp-sep { margin: 0 6px; color: var(--text-3); font-weight: 400; }
-/* 宏选择器：可搜索的下拉框（按平台分组、草稿置顶、键盘可用） */
+/* 流程选择器：可搜索的下拉框（按平台分组、草稿置顶、键盘可用） */
 .mp { position: relative; }
 .mp-trigger {
   display: flex;
@@ -768,7 +768,7 @@ details.more > summary .icon { width: 14px; height: 14px; transform: rotate(-90d
 details.more[open] > summary .icon { transform: none; }
 details.more > summary:hover { color: var(--text); }
 details.more > .fields { margin-top: 10px; }
-/* 宏设置最下面：删除这个宏 */
+/* 流程设置最下面：删除这个流程 */
 .danger-zone {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   margin-top: 24px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius);
@@ -1325,7 +1325,7 @@ button.link:hover { text-decoration: underline; }
 .focus-note { display: flex; align-items: center; gap: 6px; margin: -4px 0 12px; font-size: 12px; color: var(--info); }
 .focus-note .icon { width: 13px; height: 13px; }
 
-/* ---------- 应用页：应用总览（每个应用一张卡片）/ 应用首页（它的宏一张张卡片） ---------- */
+/* ---------- 应用页：应用总览（每个应用一张卡片）/ 应用首页（它的流程一张张卡片） ---------- */
 .apps-page { flex: 1; min-height: 0; overflow: auto; padding: 44px 28px 56px; }
 /* 内容居中、限宽：宽屏上不铺满，两边留白 */
 .apps-inner { width: 100%; max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
@@ -1344,13 +1344,13 @@ button.link:hover { text-decoration: underline; }
 @media (max-width: 900px) { .app-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .app-grid { grid-template-columns: minmax(0, 1fr); } }
 .app-card { min-height: 156px; box-sizing: border-box; border-radius: 16px; }
-.app-card-macros { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.app-card, .macro-card {
+.app-card-flows { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-card, .flow-card {
   display: flex; flex-direction: column; gap: 12px; padding: 18px; border-radius: 14px;
   border: 1px solid var(--border); background: var(--surface); color: var(--text); text-decoration: none;
   transition: border-color .12s, box-shadow .12s;
 }
-.app-card:hover, .macro-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.app-card:hover, .flow-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
 .app-card-head { display: flex; align-items: center; gap: 12px; }
 .app-card-head b { display: block; font-size: 16px; }
 .app-card-head small { display: block; font-size: 12px; color: var(--text-2); }
@@ -1384,43 +1384,43 @@ button.link:hover { text-decoration: underline; }
 .find-box:focus-within { border-color: var(--accent); }
 .find-box .icon { width: 15px; height: 15px; flex: none; }
 .find-box input { flex: 1; min-width: 0; border: none; outline: none; background: none; font: inherit; font-size: 13px; color: var(--text); }
-.macro-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
-.macro-card { gap: 10px; padding: 16px; }
+.flow-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.flow-card { gap: 10px; padding: 16px; }
 /* 同一行的卡片一样高：内容在上，按钮压到底部，几张卡片的按钮对齐 */
-.macro-main { flex: 1; }
-.macro-card { cursor: pointer; }
-.macro-name { font-size: 15px; font-weight: 600; color: var(--text); text-decoration: none; }
-.macro-desc-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.macro-desc-row .macro-desc { min-width: 0; }
+.flow-main { flex: 1; }
+.flow-card { cursor: pointer; }
+.flow-name { font-size: 15px; font-weight: 600; color: var(--text); text-decoration: none; }
+.flow-desc-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.flow-desc-row .flow-desc { min-width: 0; }
 /* 名字、说明旁的小铅笔：鼠标移到卡片上才出现，点了原地编辑 */
 .pencil {
   display: inline-grid; place-items: center; width: 24px; height: 24px; flex: none; padding: 0;
   border: none; border-radius: 6px; background: none; color: var(--text-3); cursor: pointer; opacity: 0;
 }
 .pencil .icon { width: 14px; height: 14px; }
-.macro-card:hover .pencil, .pencil:focus-visible { opacity: 1; }
+.flow-card:hover .pencil, .pencil:focus-visible { opacity: 1; }
 .pencil:hover { background: var(--hover); color: var(--text); }
 .inline-edit { height: 30px; flex: 1; min-width: 0; font-size: 13px; }
 .inline-edit.name { font-size: 15px; font-weight: 600; max-width: 260px; }
-.macro-actions { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
-.macro-card.bad { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
-.macro-main { display: flex; flex-direction: column; gap: 8px; color: inherit; text-decoration: none; }
-.macro-title { display: flex; align-items: center; gap: 8px; }
-.macro-desc { font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.macro-desc-row { min-height: 24px; }
+.flow-actions { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
+.flow-card.bad { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.flow-main { display: flex; flex-direction: column; gap: 8px; color: inherit; text-decoration: none; }
+.flow-title { display: flex; align-items: center; gap: 8px; }
+.flow-desc { font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flow-desc-row { min-height: 24px; }
 /* 没有说明：平时什么都不显示，鼠标移到卡片上才出现「＋ 加一句说明」 */
 .add-desc {
   padding: 0; border: none; background: none; font: inherit; font-size: 12px; color: var(--text-3);
   cursor: pointer; opacity: 0;
 }
-.macro-card:hover .add-desc, .add-desc:focus-visible { opacity: 1; }
+.flow-card:hover .add-desc, .add-desc:focus-visible { opacity: 1; }
 .add-desc:hover { color: var(--accent); }
-.macro-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.flow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
 .run-state { font-size: 12px; white-space: nowrap; }
 .run-state.ok { color: var(--accent); }
 .run-state.bad { color: var(--danger); }
 .run-state.none { color: var(--text-3); }
-.macro-fail { font-size: 12px; color: var(--danger); text-decoration: none; }
-.macro-fail:hover { text-decoration: underline; }
-.macro-actions { display: flex; gap: 8px; }
+.flow-fail { font-size: 12px; color: var(--danger); text-decoration: none; }
+.flow-fail:hover { text-decoration: underline; }
+.flow-actions { display: flex; gap: 8px; }
 a.btn { text-decoration: none; }  /* 跳页面的按钮用 <a>，长得和按钮一样 */

@@ -8,9 +8,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from cyber_worker.macro.audit.logger import AuditEntry
-from cyber_worker.macro.runner import Cancelled
-from cyber_worker.macro.vision.fingerprint import PageBook
+from cyber_worker.flow.audit.logger import AuditEntry
+from cyber_worker.flow.runner import Cancelled
+from cyber_worker.flow.vision.fingerprint import PageBook
 from cyber_worker.studio.routes.edit import studio
 
 router = APIRouter(prefix="/api")
@@ -29,33 +29,33 @@ def entry_json(st, entry: AuditEntry) -> dict:
     return data
 
 
-@router.post("/scripts/{script_id:path}/run")
-def run(script_id: str, body: RunRequest, request: Request):
+@router.post("/flows/{flow_id:path}/run")
+def run(flow_id: str, body: RunRequest, request: Request):
     st = studio(request)
     if st.recording:
         raise HTTPException(409, "正在录制，先停止录制")
-    start_run(st, script_id, dry_run=body.dry_run, variables=body.variables)
+    start_run(st, flow_id, dry_run=body.dry_run, variables=body.variables)
     return {"queued": True}
 
 
 def hotkey_dry_run(st) -> None:
-    """全局快捷键：空跑界面上当前打开的宏。在快捷键线程里调用，出问题只弹提示，不往外抛。"""
+    """全局快捷键：空跑界面上当前打开的流程。在快捷键线程里调用，出问题只弹提示，不往外抛。"""
     def tell(text: str) -> None:
         st.hub.publish({"type": "toast", "error": True, "text": text})
 
     try:
         if not st.current_id:
-            return tell("先在 studio 里选一个宏，再按快捷键空跑")
+            return tell("先在 studio 里选一个流程，再按快捷键空跑")
         if st.recording or st.stopping:
             return tell("正在录制，先停止录制再空跑")
         if st.app.executor.busy:
             return tell("正在执行，等这一次跑完再空跑")  # 连按两下也只跑一次
         if st.current_dirty and st.hub.clients:
             # 页面上有没保存的修改：让那个页面自己跑，它会先写回、检查变量，和点「空跑」按钮一样（响铃在它开跑时）
-            return st.hub.publish({"type": "dry_run_request", "script_id": st.current_id,
+            return st.hub.publish({"type": "dry_run_request", "flow_id": st.current_id,
                                    "page": st.current_page})
-        script = st.load(st.current_id)
-        missing = script.missing_variables(st.current_vars)
+        flow = st.load(st.current_id)
+        missing = flow.missing_variables(st.current_vars)
         if missing:
             return tell(f"先在 studio 里填变量：{', '.join(missing)}")
         start_run(st, st.current_id, dry_run=True, variables=st.current_vars)
@@ -65,33 +65,33 @@ def hotkey_dry_run(st) -> None:
         tell(f"空跑出错：{e}")
 
 
-def start_run(st, script_id: str, *, dry_run: bool, variables: dict[str, str]) -> None:
+def start_run(st, flow_id: str, *, dry_run: bool, variables: dict[str, str]) -> None:
     """交给执行器排队；进度、结果都通过 run_state / run_entry 事件推给界面。
     空跑、执行，按钮、快捷键都走这里：一律响一声，人在目标窗口里也知道开始了。"""
     body = RunRequest(dry_run=dry_run, variables=variables)
-    script = st.load(script_id)
-    pages = PageBook.load(script.pages_path) if script.pages_path else None
-    app = st.script_path(script_id).parent.parent.name  # <应用>/templates/<宏>.yaml
+    flow = st.load(flow_id)
+    pages = PageBook.load(flow.pages_path) if flow.pages_path else None
+    app = st.flow_path(flow_id).parent.parent.name  # <应用>/flows/<流程>.yaml
 
     def job(gate):
         # 执行器在调用 job 之前会先等用户松开键鼠；能走到这里就是真正开始了
-        st.hub.publish({"type": "run_state", "script_id": script_id, "state": "running",
+        st.hub.publish({"type": "run_state", "flow_id": flow_id, "state": "running",
                         "dry_run": body.dry_run})
         return st.app.runner.run(
-            script, pages=pages, variables=body.variables, dry_run=body.dry_run, gate=gate, app=app,
-            observer=lambda e: st.hub.publish({"type": "run_entry", "script_id": script_id,
+            flow, pages=pages, variables=body.variables, dry_run=body.dry_run, gate=gate, app=app,
+            observer=lambda e: st.hub.publish({"type": "run_entry", "flow_id": flow_id,
                                                "entry": entry_json(st, e)}),
         )
 
     # 先发「排队」再提交：避免任务立刻开始时「开始」比「排队」先到
-    st.hub.publish({"type": "run_state", "script_id": script_id, "state": "queued",
+    st.hub.publish({"type": "run_state", "flow_id": flow_id, "state": "queued",
                     "dry_run": body.dry_run, "idle_sec": st.run_idle_sec})
     if st.app.config.studio.run_chime:
         st.app.io.chime("start")
     fut = st.app.executor.submit(
         job, resume_after_idle_sec=st.run_idle_sec,
         # 等你停手期间推剩余秒数：界面显示倒计时，你一动就回到满值
-        on_wait=lambda remaining: st.hub.publish({"type": "run_wait", "script_id": script_id,
+        on_wait=lambda remaining: st.hub.publish({"type": "run_wait", "flow_id": flow_id,
                                                   "remaining": round(remaining, 2), "total": st.run_idle_sec}),
     )
 
@@ -106,7 +106,7 @@ def start_run(st, script_id: str, *, dry_run: bool, variables: dict[str, str]) -
             r = f.result()
             result = {"status": r.status.value, "reason": r.reason, "run_id": r.run_id,
                       "steps_done": r.steps_done}
-        st.hub.publish({"type": "run_state", "script_id": script_id, "state": "done", **result})
+        st.hub.publish({"type": "run_state", "flow_id": flow_id, "state": "done", **result})
 
     fut.add_done_callback(done)
 
@@ -122,7 +122,7 @@ def status(request: Request):
     st = studio(request)
     return {
         "busy": st.app.executor.busy,
-        "recording": st.recording.script_id if st.recording else None,
+        "recording": st.recording.flow_id if st.recording else None,
         "stopping": st.stopping,  # 正在停止录制、保存步骤
         # 实际生效的键（配置的被占用时会自动换成备选），以及换了的说明
         "panic_hotkey": st.app.hotkeys.effective("panic"),
@@ -133,17 +133,17 @@ def status(request: Request):
 
 
 class Current(BaseModel):
-    script_id: str | None
-    variables: dict[str, str] = {}  # 界面上给这个宏填的变量
+    flow_id: str | None
+    variables: dict[str, str] = {}  # 界面上给这个流程填的变量
     dirty: bool = False  # 页面上有没保存的修改
     page: str | None = None  # 报告的是哪个页面（标签页）
 
 
 @router.post("/current")
 def set_current(body: Current, request: Request):
-    """界面切换宏、改变量、有了 / 没了未保存的修改时告诉服务端：按录制 / 空跑快捷键时用的就是它。"""
+    """界面切换流程、改变量、有了 / 没了未保存的修改时告诉服务端：按录制 / 空跑快捷键时用的就是它。"""
     st = studio(request)
-    st.current_id = body.script_id
+    st.current_id = body.flow_id
     st.current_vars = body.variables
     st.current_dirty = body.dirty
     st.current_page = body.page

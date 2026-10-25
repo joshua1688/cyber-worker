@@ -1,4 +1,4 @@
-"""studio 的共享状态：脚本目录、最新截图帧、录制会话。路由只通过这里访问文件系统。"""
+"""studio 的共享状态：流程目录、最新截图帧、录制会话。路由只通过这里访问文件系统。"""
 
 from __future__ import annotations
 
@@ -16,16 +16,33 @@ from fastapi import HTTPException
 
 from cyber_worker.adapters import pack
 from cyber_worker.bootstrap import App
-from cyber_worker.macro.anchors import anchors_dir, default_pages_ref, refs_dir, shots_dir, targets_dir
-from cyber_worker.macro.io.base import stable_title
-from cyber_worker.macro.recorder import RecordingBuilder
-from cyber_worker.macro.schema import MAIN, Click, Hover, Script, Step, TypeText, Wait, WaitPage, needs_page_check
-from cyber_worker.macro.vision.fingerprint import PageBook
-from cyber_worker.macro.screenshot.storage import write_image
+from cyber_worker.flow.anchors import (
+    anchors_dir,
+    default_pages_ref,
+    refs_dir,
+    shots_dir,
+    targets_dir,
+)
+from cyber_worker.flow.io.base import stable_title
+from cyber_worker.flow.recorder import RecordingBuilder
+from cyber_worker.flow.schema import (
+    MAIN,
+    Click,
+    Flow,
+    Hover,
+    Step,
+    TypeText,
+    Wait,
+    WaitPage,
+    needs_page_check,
+)
+from cyber_worker.flow.screenshot.storage import write_image
+from cyber_worker.flow.vision.fingerprint import PageBook
 from cyber_worker.studio.ws import Hub
 
 _NAME = re.compile(r"^[\w\-]+$")
-DRAFT = "_draft/"  # 草稿宏 id 的前缀
+LEGACY_DIR = "templates"  # 流程目录以前的名字
+DRAFT = "_draft/"  # 草稿流程 id 的前缀
 _VAR_USE = re.compile(r"\{(\w+)\}")
 
 
@@ -40,9 +57,9 @@ _UNSAFE = re.compile(r'[\\/:*?"<>|#%&\s]+')
 
 
 def safe_stem(name: str) -> str:
-    """用户起的宏名（可以是中文、带空格）→ 文件名。"""
+    """用户起的流程名（可以是中文、带空格）→ 文件名。"""
     stem = _UNSAFE.sub("_", name.strip()).strip("._")
-    return stem[:60] or "macro"
+    return stem[:60] or "flow"
 
 
 # 「文档名 - 程序名」这类标题：前半截跟着打开的文件、网页变，按它认窗口以后会对不上
@@ -50,7 +67,7 @@ _CHANGING_TITLE = re.compile(r" [-–—|] ")
 
 
 def window_json(w, shared_apps: set[str]) -> dict:
-    """窗口 → 前端需要的一切，包括替用户想好的宏名和用来认窗口的标题。"""
+    """窗口 → 前端需要的一切，包括替用户想好的流程名和用来认窗口的标题。"""
     title = stable_title(w.title)
     shared = w.app.lower() in shared_apps
     return {
@@ -89,7 +106,7 @@ class Frame:
 
 @dataclass
 class Recording:
-    script_id: str
+    flow_id: str
     builder: RecordingBuilder
     stop: threading.Event
     thread: threading.Thread
@@ -114,11 +131,11 @@ class Studio:
     hub: Hub = field(default_factory=Hub)
     # studio 里手动点「执行」后只需空闲这么久就开始（默认配置是 120 秒，面向无人值守）
     run_idle_sec: float = 2.0  # 设置里可改（[studio] run_idle_sec）
-    latest: dict[str, dict[str, Frame]] = field(default_factory=dict)  # 宏 → 窗口键 → 这个窗口最新的一帧
+    latest: dict[str, dict[str, Frame]] = field(default_factory=dict)  # 流程 → 窗口键 → 这个窗口最新的一帧
     recording: Recording | None = None
-    current_id: str | None = None  # 界面上当前打开的宏：按录制 / 空跑快捷键时用的就是它
+    current_id: str | None = None  # 界面上当前打开的流程：按录制 / 空跑快捷键时用的就是它
     current_vars: dict[str, str] = field(default_factory=dict)  # 界面上给它填的变量（空跑快捷键用）
-    # 报告当前宏的那个页面（每个标签页一个随机编号）、它有没有没保存的修改：
+    # 报告当前流程的那个页面（每个标签页一个随机编号）、它有没有没保存的修改：
     # 有的话空跑快捷键交给那个页面去跑（先写回再跑，和点按钮一样），不然跑的是磁盘上的旧版本
     current_page: str | None = None
     current_dirty: bool = False
@@ -141,122 +158,123 @@ class Studio:
     def drafts(self) -> Path:
         return self.user_data / "drafts"
 
-    # ---- 脚本 ----
+    # ---- 流程 ----
 
-    def script_path(self, script_id: str) -> Path:
-        root, rel = (self.drafts, script_id[len(DRAFT):]) if script_id.startswith(DRAFT) else (self.root, script_id)
+    def flow_path(self, flow_id: str) -> Path:
+        flow_id = flow_id.replace(f"/{LEGACY_DIR}/", "/flows/")  # 改名以前的链接（qq/templates/群聊天.yaml）
+        root, rel = (self.drafts, flow_id[len(DRAFT):]) if flow_id.startswith(DRAFT) else (self.root, flow_id)
         path = (root / rel).resolve()
         if not path.is_relative_to(root.resolve()) or path.suffix != ".yaml":
-            raise HTTPException(400, "非法的脚本路径")
+            raise HTTPException(400, "非法的流程路径")
         if not path.exists():
-            raise HTTPException(404, f"脚本不存在：{script_id}")
+            raise HTTPException(404, f"流程不存在：{flow_id}")
         return path
 
-    def script_id(self, path: Path) -> str:
+    def flow_id(self, path: Path) -> str:
         path = path.resolve()
         if path.is_relative_to(self.drafts.resolve()):
             return DRAFT + path.relative_to(self.drafts.resolve()).as_posix()
         return path.relative_to(self.root.resolve()).as_posix()
 
-    def list_scripts(self) -> list[dict]:
+    def list_flows(self) -> list[dict]:
         out = []
         for root, draft in ((self.drafts, True), (self.root, False)):
-            for p in sorted(root.glob("*/templates/*.yaml")):
-                if p.name.endswith(".pages.yaml"):  # 宏自己的页面锚点文件，不是宏
+            for p in sorted(root.glob("*/flows/*.yaml")):
+                if p.name.endswith(".pages.yaml"):  # 流程自己的页面锚点文件，不是流程
                     continue
-                out.append({"id": self.script_id(p), "platform": p.parent.parent.name,
+                out.append({"id": self.flow_id(p), "platform": p.parent.parent.name,
                             "name": _display_name(p), "draft": draft})
         return out
 
-    def update_meta(self, script_id: str, *, name: str | None = None, description: str | None = None) -> dict:
-        """应用首页卡片上改名、写说明。名字和同一个应用里的别的宏重了就加 -2（和新建时一样，不弹窗），
+    def update_meta(self, flow_id: str, *, name: str | None = None, description: str | None = None) -> dict:
+        """应用首页卡片上改名、写说明。名字和同一个应用里的别的流程重了就加 -2（和新建时一样，不弹窗），
         改了名把以前的审计记录也改过来。返回改完的名字和说明。"""
-        path = self.script_path(script_id)
-        script = Script.load(path)
+        path = self.flow_path(flow_id)
+        flow = Flow.load(path)
         if description is not None:
-            script.description = description.strip()
-        if name is not None and name.strip() and name.strip() != script.name:
+            flow.description = description.strip()
+        if name is not None and name.strip() and name.strip() != flow.name:
             taken = {_display_name(p) for p in path.parent.glob("*.yaml")
                      if p != path and not p.name.endswith(".pages.yaml")}
             new, n = name.strip(), 2
             while new in taken:
                 new, n = f"{name.strip()}-{n}", n + 1
-            self.rename_runs(script.name, new, path.parent.parent.name)
-            script.name = new
-        script.dump(path)
-        return {"name": script.name, "description": script.description}
+            self.rename_runs(flow.name, new, path.parent.parent.name)
+            flow.name = new
+        flow.dump(path)
+        return {"name": flow.name, "description": flow.description}
 
     def rename_runs(self, old: str, new: str, app: str | None = None) -> None:
-        """宏改名后，审计里以前的记录跟着改名（只改这个应用的）。"""
-        if old != new and hasattr(self.app.audit, "rename_script"):
-            self.app.audit.rename_script(old, new, app)
+        """流程改名后，审计里以前的记录跟着改名（只改这个应用的）。"""
+        if old != new and hasattr(self.app.audit, "rename_flow"):
+            self.app.audit.rename_flow(old, new, app)
 
-    def _library(self) -> list[tuple[str, str, list[tuple[Path, Script]]]]:
-        """宏库里的每个应用：(平台目录名, 显示名, [(宏文件, 宏)])。显示名是主窗口标题里最常见的那个
-        （Windows PowerShell），没有标题用程序名，一个宏都没有用目录名。读不出来的宏跳过，别的照样显示。"""
+    def _library(self) -> list[tuple[str, str, list[tuple[Path, Flow]]]]:
+        """流程库里的每个应用：(平台目录名, 显示名, [(流程文件, 流程)])。显示名是主窗口标题里最常见的那个
+        （Windows PowerShell），没有标题用程序名，一个流程都没有用目录名。读不出来的流程跳过，别的照样显示。"""
         out = []
         for d in sorted(p for p in self.root.glob("*") if p.is_dir()):
-            macros, titles = [], Counter()
-            for p in sorted(d.glob("templates/*.yaml")):
+            flows, titles = [], Counter()
+            for p in sorted(d.glob("flows/*.yaml")):
                 if p.name.endswith(".pages.yaml"):
                     continue
                 try:
-                    s = Script.load(p)
-                except Exception:  # noqa: BLE001, S112 —— 一个宏读不出来，别的照样显示
+                    s = Flow.load(p)
+                except Exception:  # noqa: BLE001, S112 —— 一个流程读不出来，别的照样显示
                     continue
                 titles[s.window.title or s.window.app] += 1
-                macros.append((p, s))
-            out.append((d.name, titles.most_common(1)[0][0] if titles else d.name, macros))
+                flows.append((p, s))
+            out.append((d.name, titles.most_common(1)[0][0] if titles else d.name, flows))
         return out
 
     @staticmethod
     def _owners(library) -> dict[str, str]:
-        """宏名 → 应用，只收只在一个应用里出现的名字：没记应用的旧审计记录靠它认应用，重名的不猜。"""
+        """流程名 → 应用，只收只在一个应用里出现的名字：没记应用的旧审计记录靠它认应用，重名的不猜。"""
         seen: dict[str, set[str]] = {}
-        for platform, _, macros in library:
-            for _, s in macros:
+        for platform, _, flows in library:
+            for _, s in flows:
                 seen.setdefault(s.name, set()).add(platform)
         return {name: next(iter(ps)) for name, ps in seen.items() if len(ps) == 1}
 
     def audit_apps(self) -> tuple[dict[str, str], dict[tuple[str, str], str], dict[str, str]]:
-        """审计页要的：应用显示名 {平台: 名字}、宏 id {(平台, 宏名): id}（「去修改」用）、旧记录认应用用的 {宏名: 平台}。"""
+        """审计页要的：应用显示名 {平台: 名字}、流程 id {(平台, 流程名): id}（「去修改」用）、旧记录认应用用的 {流程名: 平台}。"""
         library = self._library()
         titles = {platform: title for platform, title, _ in library}
-        ids = {(platform, s.name): self.script_id(p) for platform, _, macros in library for p, s in macros}
+        ids = {(platform, s.name): self.flow_id(p) for platform, _, flows in library for p, s in flows}
         return titles, ids, self._owners(library)
 
     def apps(self, today: date) -> list[dict]:
-        """应用总览 / 应用首页要的东西：每个应用（宏库里的一个平台目录）和它的宏，宏带上说明、几步、大概多久、
+        """应用总览 / 应用首页要的东西：每个应用（流程库里的一个平台目录）和它的流程，流程带上说明、几步、大概多久、
         最近一次运行的结果（卡片上只放要紧的：变量、窗口这些细节进了编辑器再看）；应用带上今天运行了几次、几次出了问题。
-        运行记录按（应用, 宏名）对；没记应用的旧记录按宏名认（名字只在一个应用里有才算）。草稿不算：打开就会存进宏库。"""
+        运行记录按（应用, 流程名）对；没记应用的旧记录按流程名认（名字只在一个应用里有才算）。草稿不算：打开就会存进流程库。"""
         library = self._library()
         owners = self._owners(library)
         runs = self.app.audit.runs() if hasattr(self.app.audit, "runs") else []
         for r in runs:
-            r["app"] = r.get("app") or owners.get(r["script"])
-        last = {(r["app"], r["script"]): r for r in runs}  # 按先后排的，后面的覆盖前面的：留下的就是最近一次
+            r["app"] = r.get("app") or owners.get(r["flow"])
+        last = {(r["app"], r["flow"]): r for r in runs}  # 按先后排的，后面的覆盖前面的：留下的就是最近一次
         today_runs = [r for r in runs if r["at"][:10] == today.isoformat()]
         out = []
-        for platform, title, scripts in library:
-            macros = []
-            for p, s in scripts:
+        for platform, title, entries in library:
+            flows = []
+            for p, s in entries:
                 run = last.get((platform, s.name))
-                macros.append({
-                    "id": self.script_id(p), "name": s.name, "description": s.description,
+                flows.append({
+                    "id": self.flow_id(p), "name": s.name, "description": s.description,
                     "steps": sum(not isinstance(st, Wait) for st in s.steps),
                     "seconds": round(sum(st.seconds if isinstance(st, Wait) else st.delay_after for st in s.steps), 1),
                     "last": run and {k: run[k] for k in ("at", "dry_run", "bad", "step_id", "detail")},
                 })
             mine = [r for r in today_runs if r["app"] == platform]
-            runs_at = [m["last"]["at"] for m in macros if m["last"]]
+            runs_at = [m["last"]["at"] for m in flows if m["last"]]
             out.append({"platform": platform, "title": title,
-                        "macros": macros, "last_at": max(runs_at, default=None),  # 「最近用过」排序用
+                        "flows": flows, "last_at": max(runs_at, default=None),  # 「最近用过」排序用
                         "today": {"runs": len(mine), "bad": sum(r["bad"] for r in mine)}})
         return out
 
     def unique_stem(self, platform: str, stem: str) -> str:
-        """在宏库和草稿里都不重名。"""
-        taken = lambda s: any((r / platform / "templates" / f"{s}.yaml").exists()  # noqa: E731
+        """在流程库和草稿里都不重名。"""
+        taken = lambda s: any((r / platform / "flows" / f"{s}.yaml").exists()  # noqa: E731
                               for r in (self.root, self.drafts))
         if stem.endswith(".pages"):  # 会和页面文件同名
             stem += "_"
@@ -265,27 +283,27 @@ class Studio:
             out, n = f"{stem}-{n}", n + 1
         return out
 
-    def commit(self, script_id: str) -> str:
-        """把草稿搬进宏库（连同参考图、页面锚点），返回新的 id。"""
-        src = self.script_path(script_id)
-        if not script_id.startswith(DRAFT):
-            raise HTTPException(400, "这个宏已经在宏库里了")
+    def commit(self, flow_id: str) -> str:
+        """把草稿搬进流程库（连同参考图、页面锚点），返回新的 id。"""
+        src = self.flow_path(flow_id)
+        if not flow_id.startswith(DRAFT):
+            raise HTTPException(400, "这个流程已经在流程库里了")
         platform = src.parent.parent.name
-        dst_dir = self.root / platform / "templates"
+        dst_dir = self.root / platform / "flows"
         stem = src.stem
-        while (dst_dir / f"{stem}.yaml").exists():  # 草稿期间别处建了同名宏
+        while (dst_dir / f"{stem}.yaml").exists():  # 草稿期间别处建了同名流程
             stem = self.unique_stem(platform, src.stem)
-        dst = relocate_macro(src, dst_dir, stem)
-        new_id = self.script_id(dst)
-        if script_id in self.latest:
-            self.latest[new_id] = self.latest.pop(script_id)
+        dst = relocate_flow(src, dst_dir, stem)
+        new_id = self.flow_id(dst)
+        if flow_id in self.latest:
+            self.latest[new_id] = self.latest.pop(flow_id)
         return new_id
 
-    def delete(self, script_id: str) -> None:
-        """删除宏及它自己的参考图、页面锚点（共用的页面文件不动）。"""
-        path = self.script_path(script_id)
-        _remove_macro_files(path)
-        self.latest.pop(script_id, None)
+    def delete(self, flow_id: str) -> None:
+        """删除流程及它自己的参考图、页面锚点（共用的页面文件不动）。"""
+        path = self.flow_path(flow_id)
+        _remove_flow_files(path)
+        self.latest.pop(flow_id, None)
 
     # ---- 删除应用：整个挪进回收站，能撤销 ----
 
@@ -300,23 +318,23 @@ class Studio:
         return d
 
     def delete_app(self, platform: str, now: datetime | None = None) -> dict:
-        """删除一个应用（它的全部宏、锚点、截图）：整个目录挪进 user_data/.trash/<平台>-<时间>，
+        """删除一个应用（它的全部流程、锚点、截图）：整个目录挪进 user_data/.trash/<平台>-<时间>，
         撤销就原样挪回来；过了 TRASH_DAYS 天的在 studio 启动时清掉。审计记录不动。"""
         d = self.app_dir(platform)
-        if self.recording and self.script_path(self.recording.script_id).is_relative_to(d):
-            raise HTTPException(409, "正在录制这个应用里的宏，先停止录制")
+        if self.recording and self.flow_path(self.recording.flow_id).is_relative_to(d):
+            raise HTTPException(409, "正在录制这个应用里的流程，先停止录制")
         if self.app.executor.busy:
             raise HTTPException(409, "正在执行，稍后再删")
-        macros = [p for p in d.glob("templates/*.yaml") if not p.name.endswith(".pages.yaml")]
+        flows = [p for p in d.glob("flows/*.yaml") if not p.name.endswith(".pages.yaml")]
         name = f"{platform}-{(now or datetime.now()):%Y%m%d-%H%M%S}"
         self.trash.mkdir(parents=True, exist_ok=True)
         shutil.move(str(d), str(self.trash / name))
         for sid in [k for k in self.latest if k.startswith(f"{platform}/")]:
             self.latest.pop(sid, None)
-        return {"trash": name, "platform": platform, "macros": len(macros)}
+        return {"trash": name, "platform": platform, "flows": len(flows)}
 
     def restore_app(self, trash: str) -> str:
-        """撤销删除：把回收站里的应用挪回宏库。宏库里已经又有同名的应用了就不覆盖。返回平台名。"""
+        """撤销删除：把回收站里的应用挪回流程库。流程库里已经又有同名的应用了就不覆盖。返回平台名。"""
         src = (self.trash / trash).resolve()
         if src.parent != self.trash.resolve() or not src.is_dir():
             raise HTTPException(404, "回收站里没有这个应用了")
@@ -336,20 +354,38 @@ class Studio:
             if when is None or (now - when).days >= TRASH_DAYS:
                 shutil.rmtree(d, ignore_errors=True)
 
-    def load(self, script_id: str) -> Script:
-        return Script.load(self.script_path(script_id))
+    def load(self, flow_id: str) -> Flow:
+        return Flow.load(self.flow_path(flow_id))
+
+    def migrate_layout(self) -> int:
+        """「宏」改叫「流程」以前，每个应用的流程放在 templates/ 下：挪成 flows/（宏库、草稿、回收站里的都挪）。
+        flows/ 已经有了就一个个挪过去，同名的留在 templates/ 里不覆盖。返回挪了几个目录。studio 启动时调用。"""
+        moved = 0
+        for root in (self.drafts, self.root, self.trash):
+            for old in root.glob(f"*/{LEGACY_DIR}") if root.is_dir() else []:
+                new = old.parent / "flows"
+                if not new.exists():
+                    old.rename(new)
+                else:
+                    for child in old.iterdir():
+                        if not (new / child.name).exists():
+                            child.rename(new / child.name)
+                    if not any(old.iterdir()):
+                        old.rmdir()
+                moved += 1
+        return moved
 
     def collect_garbage(self, now: float | None = None) -> int:
-        """所有宏（含草稿）各清一遍没人用的旧图，返回删了几个文件。studio 启动时调用。
-        还会清掉上次留下的「最新截图」（只记在内存里，重启后没人再读它们；删掉的宏、用不到的窗口的也一直留着），
-        以及宏全删光后剩下的空平台目录（里面一个文件都没有才删）。"""
+        """所有流程（含草稿）各清一遍没人用的旧图，返回删了几个文件。studio 启动时调用。
+        还会清掉上次留下的「最新截图」（只记在内存里，重启后没人再读它们；删掉的流程、用不到的窗口的也一直留着），
+        以及流程全删光后剩下的空平台目录（里面一个文件都没有才删）。"""
         removed = 0
         for root in (self.drafts, self.root):
-            for p in root.glob("*/templates/*.yaml"):
+            for p in root.glob("*/flows/*.yaml"):
                 if not p.name.endswith(".pages.yaml"):
                     try:
                         removed += collect_garbage(p, now=now)
-                    except Exception:  # noqa: BLE001 —— 一个宏读不出来不影响启动和别的宏
+                    except Exception:  # noqa: BLE001 —— 一个流程读不出来不影响启动和别的流程
                         continue
         if not self.latest:
             for f in (self.user_data / "frames").glob("*.png"):
@@ -362,27 +398,27 @@ class Studio:
         self._purge_trash(datetime.fromtimestamp(now) if now is not None else datetime.now())
         return removed
 
-    def set_latest(self, script_id: str, key: str | None, img, scale: float) -> None:
+    def set_latest(self, flow_id: str, key: str | None, img, scale: float) -> None:
         """记下某个窗口的「最新截图」：每个窗口各一张，截别的窗口不会把它覆盖掉。"""
         key = key or MAIN
-        name = script_id.replace("/", "__").removesuffix(".yaml") + ("" if key == MAIN else f"__{key}")
+        name = flow_id.replace("/", "__").removesuffix(".yaml") + ("" if key == MAIN else f"__{key}")
         out = self.user_data / "frames" / f"{name}.png"
         write_image(out, img)
-        self.latest.setdefault(script_id, {})[key] = Frame(out, scale, None if key == MAIN else key)
+        self.latest.setdefault(flow_id, {})[key] = Frame(out, scale, None if key == MAIN else key)
 
     # ---- 平台包 ----
 
     def export_pack(self, platform: str, *, screenshots: bool = True) -> bytes:
-        """宏库里的一个平台 → .cwpack（草稿不算）。"""
+        """流程库里的一个平台 → .cwpack（草稿不算）。"""
         path = (self.root / platform).resolve()
         if not path.is_relative_to(self.root.resolve()) or path == self.root.resolve():
             raise HTTPException(400, "非法的平台名")
-        if not any(pack.is_macro(p.relative_to(path).as_posix()) for p in path.glob("templates/*.yaml")):
-            raise HTTPException(404, f"平台 {platform} 里还没有保存的宏")
+        if not any(pack.is_flow(p.relative_to(path).as_posix()) for p in path.glob("flows/*.yaml")):
+            raise HTTPException(404, f"平台 {platform} 里还没有保存的流程")
         return pack.export_pack(path, screenshots=screenshots)
 
     def import_pack(self, data: bytes) -> dict:
-        """导入 .cwpack：先解压到临时目录，再一个个宏搬进宏库，重名的自动加 -2，不问用户。"""
+        """导入 .cwpack：先解压到临时目录，再一个个流程搬进流程库，重名的自动加 -2，不问用户。"""
         self.user_data.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=".import-", dir=self.user_data))
         try:
@@ -393,12 +429,12 @@ class Studio:
             platform = manifest.platform
             dst = self.root / platform
             ids = []
-            for src in sorted(staging.glob("templates/*.yaml")):
+            for src in sorted(staging.glob("flows/*.yaml")):
                 if src.name.endswith(".pages.yaml"):
                     continue
                 stem = self.unique_stem(platform, src.stem)
-                ids.append(self.script_id(relocate_macro(src, dst / "templates", stem)))
-            # 宏自己的文件已经跟着搬走了；剩下的是平台级文件，本机已有的不覆盖
+                ids.append(self.flow_id(relocate_flow(src, dst / "flows", stem)))
+            # 流程自己的文件已经跟着搬走了；剩下的是平台级文件，本机已有的不覆盖
             for p in sorted(staging.rglob("*")):
                 target = dst / p.relative_to(staging)
                 if p.is_file() and not target.exists():
@@ -417,52 +453,52 @@ class Studio:
             return None
         return f"/api/file?path={quote(rel)}&v={path.stat().st_mtime_ns}"
 
-    def describe(self, script_id: str) -> dict:
-        """前端需要的一切：脚本、页面锚点、参考图、问题列表。"""
-        script = self.load(script_id)
-        if script.renumber():  # 以前的宏延迟也占「步」号：打开时统一改成 动作 s01…、延迟 d01…
-            script.dump(self.script_path(script_id))
-        book = PageBook.load(script.pages_path) if script.pages_path else PageBook()
+    def describe(self, flow_id: str) -> dict:
+        """前端需要的一切：流程、页面锚点、参考图、问题列表。"""
+        flow = self.load(flow_id)
+        if flow.renumber():  # 以前的流程延迟也占「步」号：打开时统一改成 动作 s01…、延迟 d01…
+            flow.dump(self.flow_path(flow_id))
+        book = PageBook.load(flow.pages_path) if flow.pages_path else PageBook()
         pages = {
             name: [
-                {**a.model_dump(), "url": self.file_url(script.pages_path.parent / a.image)}
+                {**a.model_dump(), "url": self.file_url(flow.pages_path.parent / a.image)}
                 for a in fp.anchors
             ]
             for name, fp in book.pages.items()
         }
         # 画面：每个窗口各有参考图和最新截图，键是窗口键（主窗口 = "main"）
         refs = {}
-        for key, win in [(MAIN, script.window), *script.windows.items()]:
-            ref = script.shown_reference(key)
+        for key, win in [(MAIN, flow.window), *flow.windows.items()]:
+            ref = flow.shown_reference(key)
             if ref is not None and ref.exists():
                 refs[key] = {"url": self.file_url(ref), "scale": win.scale}
         latest = {key: {"url": self.file_url(f.path), "scale": f.scale}
-                  for key, f in self.latest.get(script_id, {}).items() if f.path.exists()}
+                  for key, f in self.latest.get(flow_id, {}).items() if f.path.exists()}
         return {
-            "id": script_id,
-            "draft": script_id.startswith(DRAFT),
-            "script": script.model_dump(mode="json"),
+            "id": flow_id,
+            "draft": flow_id.startswith(DRAFT),
+            "flow": flow.model_dump(mode="json"),
             "pages": pages,
             "frames": {"reference": refs, "latest": latest},
             # 每一步录制时的画面：步骤编号 → 图（选中这一步时画布显示它）
             "shots": {
-                s.id: {"url": self.file_url(script.base_dir / s.shot), "scale": script.window_for(s.win).scale}
-                for s in script.steps if s.shot and (script.base_dir / s.shot).exists()
+                s.id: {"url": self.file_url(flow.base_dir / s.shot), "scale": flow.window_for(s.win).scale}
+                for s in flow.steps if s.shot and (flow.base_dir / s.shot).exists()
             },
-            "problems": problems(script, {name: {a.win for a in fp.anchors} for name, fp in book.pages.items()}),
+            "problems": problems(flow, {name: {a.win for a in fp.anchors} for name, fp in book.pages.items()}),
             # 按图找的目标图：步骤编号 → 图片地址（步骤参数里显示缩略图）
             "targets": {
-                s.id: self.file_url(script.base_dir / s.target.image)
-                for s in script.steps if isinstance(s, (Click, Hover)) and s.target is not None
+                s.id: self.file_url(flow.base_dir / s.target.image)
+                for s in flow.steps if isinstance(s, (Click, Hover)) and s.target is not None
             },
         }
 
 
-def _own_files(path: Path, script: Script) -> tuple[Path | None, Path | None, Path | None]:
-    """宏自己的参考图、页面文件、锚点目录（页面文件是平台共用的就返回 None）。"""
-    ref = script.reference_path
-    own_pages = script.pages == default_pages_ref(path)
-    pages = script.pages_path if own_pages else None
+def _own_files(path: Path, flow: Flow) -> tuple[Path | None, Path | None, Path | None]:
+    """流程自己的参考图、页面文件、锚点目录（页面文件是平台共用的就返回 None）。"""
+    ref = flow.reference_path
+    own_pages = flow.pages == default_pages_ref(path)
+    pages = flow.pages_path if own_pages else None
     anchors = path.parent / anchors_dir(path) if own_pages else None
     return ref, pages, anchors
 
@@ -473,17 +509,17 @@ GARBAGE_AGE = 3 * 24 * 3600  # 秒：没人用的旧图过了这么久才删（�
 
 
 def collect_garbage(path: Path, *, now: float | None = None, min_age: float = GARBAGE_AGE) -> int:
-    """删掉这个宏目录里没有任何地方引用、而且很久没动过的图片：重新录制、替换录制画面时为了能撤销留下的旧图
+    """删掉这个流程目录里没有任何地方引用、而且很久没动过的图片：重新录制、替换录制画面时为了能撤销留下的旧图
     （s01-2.png、main-3.png…），以及录制清出去很久的页面和它们的锚点图。刚产生的不删，撤销还要用。返回删了几个文件。"""
     import time
 
     now = time.time() if now is None else now
-    script = Script.load(path)
+    flow = Flow.load(path)
     base = path.parent
-    refs = {script.reference, *(w.reference for w in script.windows.values()), *(s.shot for s in script.steps)}
-    refs |= {img for s in script.steps if isinstance(s, (Click, Hover)) and s.target is not None
+    refs = {flow.reference, *(w.reference for w in flow.windows.values()), *(s.shot for s in flow.steps)}
+    refs |= {img for s in flow.steps if isinstance(s, (Click, Hover)) and s.target is not None
              for img in s.target.images()}
-    _, pages, anchors = _own_files(path, script)
+    _, pages, anchors = _own_files(path, flow)
     dirs = [base / targets_dir(path), base / refs_dir(path), base / shots_dir(path)]
     if pages is not None and pages.exists():
         book = PageBook.load(pages)
@@ -507,10 +543,10 @@ def collect_garbage(path: Path, *, now: float | None = None, min_age: float = GA
     return removed
 
 
-def _remove_macro_files(path: Path) -> None:
-    script = Script.load(path)
-    ref, pages, anchors = _own_files(path, script)
-    # <宏名>.png 也删：参考图换过（存到 .refs/ 里）以后，它就不再是 script.reference 了
+def _remove_flow_files(path: Path) -> None:
+    flow = Flow.load(path)
+    ref, pages, anchors = _own_files(path, flow)
+    # <流程名>.png 也删：参考图换过（存到 .refs/ 里）以后，它就不再是 flow.reference 了
     for f in (ref, pages, path.with_suffix(".png")):
         if f is not None:
             f.unlink(missing_ok=True)
@@ -520,18 +556,18 @@ def _remove_macro_files(path: Path) -> None:
     path.unlink()
 
 
-def relocate_macro(src: Path, dst_dir: Path, stem: str) -> Path:
-    """把宏连同自己的参考图、页面锚点搬到 dst_dir 下、改名为 stem，修正文件里的引用。"""
-    from cyber_worker.macro.vision.fingerprint import PageBook
+def relocate_flow(src: Path, dst_dir: Path, stem: str) -> Path:
+    """把流程连同自己的参考图、页面锚点搬到 dst_dir 下、改名为 stem，修正文件里的引用。"""
+    from cyber_worker.flow.vision.fingerprint import PageBook
 
-    script = Script.load(src)
-    script.name = renamed(script.name, src.stem, stem)
-    ref, pages, anchors = _own_files(src, script)
+    flow = Flow.load(src)
+    flow.name = renamed(flow.name, src.stem, stem)
+    ref, pages, anchors = _own_files(src, flow)
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = dst_dir / f"{stem}.yaml"
     if ref is not None and ref.exists():
         shutil.move(ref, dst_dir / f"{stem}{ref.suffix}")
-        script.reference = f"{stem}{ref.suffix}"
+        flow.reference = f"{stem}{ref.suffix}"
     if pages is not None and pages.exists():
         book = PageBook.load(pages)
         old_dir, new_dir = anchors_dir(src), anchors_dir(dst)
@@ -543,36 +579,36 @@ def relocate_macro(src: Path, dst_dir: Path, stem: str) -> Path:
                     a.image = new_dir + a.image[len(old_dir):]
         book.dump(dst_dir / default_pages_ref(dst))
         pages.unlink()
-        script.pages = default_pages_ref(dst)
+        flow.pages = default_pages_ref(dst)
     old_r, new_r = refs_dir(src), refs_dir(dst)
     if (src.parent / old_r).exists():
         shutil.move(src.parent / old_r, dst_dir / new_r)
-    for win in script.windows.values():
+    for win in flow.windows.values():
         if win.reference and win.reference.startswith(old_r + "/"):
             win.reference = new_r + win.reference[len(old_r):]
     old_s, new_s = shots_dir(src), shots_dir(dst)
     if (src.parent / old_s).exists():
         shutil.move(src.parent / old_s, dst_dir / new_s)
-    for step in script.steps:
+    for step in flow.steps:
         if step.shot and step.shot.startswith(old_s + "/"):
             step.shot = new_s + step.shot[len(old_s):]
     old_t, new_t = targets_dir(src), targets_dir(dst)
     if (src.parent / old_t).exists():
         shutil.move(src.parent / old_t, dst_dir / new_t)
-    for step in script.steps:  # 点击和悬停都可能有目标图，两种样子都要改路径
+    for step in flow.steps:  # 点击和悬停都可能有目标图，两种样子都要改路径
         t = step.target if isinstance(step, (Click, Hover)) else None
         if t is not None:
             t.image = new_t + t.image[len(old_t):] if t.image.startswith(old_t + "/") else t.image
             t.alt = new_t + t.alt[len(old_t):] if t.alt and t.alt.startswith(old_t + "/") else t.alt
-    script.dump(dst)
+    flow.dump(dst)
     src.unlink()
     return dst
 
 
 def _display_name(path: Path) -> str:
-    """列表里显示宏名（脚本里的 name，可能是中文），读不出来就用文件名。"""
+    """列表里显示流程名（流程里的 name，可能是中文），读不出来就用文件名。"""
     try:
-        return Script.load(path).name
+        return Flow.load(path).name
     except Exception:  # noqa: BLE001 —— 坏文件也要能在列表里看到并删除
         return path.stem
 
@@ -588,11 +624,11 @@ def off_target(step: Step) -> bool:
     return not (t.x - m <= step.x <= t.x + t.w + m and t.y - m <= step.y <= t.y + t.h + m)
 
 
-def problems(script: Script, pages: dict[str, set[str | None]]) -> list[dict]:
+def problems(flow: Flow, pages: dict[str, set[str | None]]) -> list[dict]:
     """执行前就能发现的问题；runner 遇到这些也会拒绝执行。pages：页面名 → 它的锚点截自哪些窗口（None = 主窗口）。"""
     out = []
     seen: set[str] = set()
-    for step in script.steps:
+    for step in flow.steps:
         def add(msg: str, sid: str = step.id) -> None:  # 绑定这一步的编号（循环变量不能在闭包里直接用）
             out.append({"step": sid, "message": msg})
 
@@ -611,7 +647,7 @@ def problems(script: Script, pages: dict[str, set[str | None]]) -> list[dict]:
             add(f"录制时开着中文输入法，录到的只是按键「{step.text}」：请改成实际要输入的文字")
         if isinstance(step, TypeText):
             for name in _VAR_USE.findall(step.text):
-                if name not in script.variables:
+                if name not in flow.variables:
                     add(f"{{{name}}} 没有声明为变量，会按原文输入")
         if isinstance(step, WaitPage):
             if not step.page:

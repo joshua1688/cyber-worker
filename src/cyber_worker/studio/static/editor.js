@@ -1,11 +1,11 @@
-// 宏设计页：左「添加步骤」、中步骤列表（勾选 / 拖拽排序 / 撤销重做）、右画布 + 标签页（参数 / 宏设置 / 运行）。
+// 流程设计页：左「添加步骤」、中步骤列表（勾选 / 拖拽排序 / 撤销重做）、右画布 + 标签页（参数 / 流程设置 / 运行）。
 "use strict";
 
 const S = {
   list: [],
   id: null,
   detail: null, // 服务端返回的完整信息（锚点、画面、问题）
-  script: null, // 正在编辑的脚本（本地副本）
+  flow: null, // 正在编辑的流程（本地副本）
   selected: -1, // 选中的步骤下标
   checked: new Set(),
   undo: [],
@@ -21,7 +21,7 @@ const S = {
   recSteps: [],
   running: false, // false | "waiting"（等用户松开键鼠）| "running"
   recHotkey: "", // 开始 / 停止录制的全局快捷键
-  dryHotkey: "", // 空跑当前宏的全局快捷键
+  dryHotkey: "", // 空跑当前流程的全局快捷键
   seenRecIds: new Set(), // 处理过的录制结果：按钮的响应和推送事件可能各来一次
   runMarks: {}, // step_id → 最近一次运行的状态
   hotkey: "",
@@ -64,15 +64,15 @@ document.addEventListener("themechange", () => stage.draw());
 // ---------------- 加载 ----------------
 
 async function loadList(selectId) {
-  S.list = await api("GET", "/api/scripts");
-  // 记住的宏可能已经被删了：按顺序找第一个还存在的
+  S.list = await api("GET", "/api/flows");
+  // 记住的流程可能已经被删了：按顺序找第一个还存在的
   const exists = (x) => x && S.list.some((s) => s.id === x);
   const id = [selectId, S.id, remembered(), S.list[0]?.id].find(exists);
   if (id) {
     await open(id);
   } else {
     S.id = null;
-    S.script = null;
+    S.flow = null;
     S.detail = null;
     reportCurrent();
     render();
@@ -81,12 +81,12 @@ async function loadList(selectId) {
 }
 
 async function open(id) {
-  let d = await api("GET", `/api/scripts/${id}/detail`);
+  let d = await api("GET", `/api/flows/${id}/detail`);
   if (d.draft) {
-    // 不再有「未保存」的草稿：新建的宏一打开就存进宏库，之后的修改自动保存
-    d = await api("POST", `/api/scripts/${id}/commit`);
+    // 不再有「未保存」的草稿：新建的流程一打开就存进流程库，之后的修改自动保存
+    d = await api("POST", `/api/flows/${id}/commit`);
     id = d.id;
-    S.list = await api("GET", "/api/scripts");
+    S.list = await api("GET", "/api/flows");
   }
   S.id = id;
   S.undo = [];
@@ -96,8 +96,8 @@ async function open(id) {
   S.shot = null;
   S.checked.clear();
   $("#run-log").innerHTML = "";
-  try { localStorage.setItem("cw.script", id); } catch {}
-  history.replaceState(null, "", `/?macro=${encodeURIComponent(id)}`);
+  try { localStorage.setItem("cw.flow", id); } catch {}
+  history.replaceState(null, "", `/?flow=${encodeURIComponent(id)}`);
   reportCurrent();
   applyDetail(d);
   S.win = null;
@@ -105,30 +105,33 @@ async function open(id) {
   await showFrame();
 }
 
-// 告诉服务端界面上开着哪个宏、填了哪些变量、有没有没保存的修改：按录制 / 空跑快捷键时用的就是它们
+// 告诉服务端界面上开着哪个流程、填了哪些变量、有没有没保存的修改：按录制 / 空跑快捷键时用的就是它们
 function currentBody(dirty = S.dirty) {
-  return { script_id: S.id, variables: S.id ? savedVars() : {}, dirty: !!S.id && dirty, page: PAGE_ID };
+  return { flow_id: S.id, variables: S.id ? savedVars() : {}, dirty: !!S.id && dirty, page: PAGE_ID };
 }
 function reportCurrent() {
   S.reportedDirty = S.dirty;
   api("POST", "/api/current", currentBody()).catch(() => {});
 }
 
+// 「宏」改叫「流程」以前的链接、本地记录：?macro=、cw.macro，流程 id 里是 templates/（现在是 flows/）
+const fromLegacy = (id) => id && id.replace("/templates/", "/flows/");
+
 function remembered() {
-  try { return localStorage.getItem("cw.script"); } catch { return null; }
+  try { return fromLegacy(localStorage.getItem("cw.flow") || localStorage.getItem("cw.macro")); } catch { return null; }
 }
 
 function applyDetail(d) {
   S.detail = d;
-  S.script = structuredClone(d.script);
+  S.flow = structuredClone(d.flow);
   S.dirty = false;
-  if (S.selected >= S.script.steps.length) S.selected = -1;
+  if (S.selected >= S.flow.steps.length) S.selected = -1;
   render();
 }
 
 // 选中的步骤录制时的画面（这一步在画面上显示的窗口里才算）
 function stepShot() {
-  const s = S.script?.steps[S.selected];
+  const s = S.flow?.steps[S.selected];
   return s && (s.win || null) === S.win ? S.detail?.shots?.[s.id] : undefined;
 }
 
@@ -140,7 +143,7 @@ function frameOf(kind) {
 
 // 框锚点 / 目标图时告诉服务端画面上是哪一张
 function frameParams() {
-  if (S.frame === "reference" && stepShot()) return { frame: "step", step_id: S.script.steps[S.selected].id };
+  if (S.frame === "reference" && stepShot()) return { frame: "step", step_id: S.flow.steps[S.selected].id };
   return { frame: S.frame === "reference" ? "reference" : "latest", win: S.win };
 }
 
@@ -155,8 +158,8 @@ function setWin(win, redraw = true) {
 
 // 只列步骤用到的窗口（以前录过、现在没有步骤在用的不列），再加上画面上正显示的那个；不到两个就不显示
 function renderWinSeg() {
-  const used = new Set([...(S.script?.steps || []).map((s) => s.win || null), S.win]);
-  const keys = [null, ...Object.keys(S.script?.windows || {})].filter((k) => used.has(k));
+  const used = new Set([...(S.flow?.steps || []).map((s) => s.win || null), S.win]);
+  const keys = [null, ...Object.keys(S.flow?.windows || {})].filter((k) => used.has(k));
   const seg = $("#win-seg");
   seg.hidden = keys.length < 2;
   if (seg.hidden) return;
@@ -169,10 +172,10 @@ async function showFrame() {
   const other = S.frame === "reference" ? "latest" : "reference";
   if (S.frame !== "shot" && !frameOf(S.frame) && frameOf(other)) S.frame = other;
   // 选中的是延迟：不操作任何窗口，不显示画面（显示了反而像在哪里做了什么）
-  const sel = S.script?.steps[S.selected];
+  const sel = S.flow?.steps[S.selected];
   const idle = sel?.action === "wait" && S.frame !== "shot";
   const f = idle ? undefined : S.frame === "shot" ? S.shot : frameOf(S.frame);
-  const scale = S.frame === "shot" ? (S.script?.windows?.[S.shot?.win]?.scale ?? S.script?.window.scale) : f?.scale;
+  const scale = S.frame === "shot" ? (S.flow?.windows?.[S.shot?.win]?.scale ?? S.flow?.window.scale) : f?.scale;
   $$("#frame-seg button").forEach((b) => {
     b.classList.toggle("on", b.dataset.frame === S.frame);
     if (b.dataset.frame === "shot") b.hidden = !S.shot;
@@ -183,7 +186,7 @@ async function showFrame() {
   $("#canvas-empty").innerHTML = idle ? `延迟：等 ${escapeHtml(String(sel.seconds))} 秒，不操作窗口，没有画面`
     : `「${escapeHtml(windowLabel(S.win))}」还没有画面<br>打开这个窗口，再点右上角的「截图」`;
   const shot = S.frame === "reference" && f && f === stepShot();
-  $("#frame-note").textContent = shot ? `第 ${actionNo(S.script.steps, S.selected)} 步录制时的画面`
+  $("#frame-note").textContent = shot ? `第 ${actionNo(S.flow.steps, S.selected)} 步录制时的画面`
     : sel?.action === "wait_page" && f ? `等待页面「${sel.page}」：高亮的是它的锚点`
     : S.frame === "reference" && f ? `「${windowLabel(S.win)}」录制时的画面` : "";
   $("#canvas-empty").hidden = !!f;
@@ -198,11 +201,11 @@ async function showFrame() {
 // ---------------- 编辑 ----------------
 
 function mutate(fn) {
-  if (!S.script) return;
-  S.undo.push(JSON.stringify(S.script));
+  if (!S.flow) return;
+  S.undo.push(JSON.stringify(S.flow));
   if (S.undo.length > 200) S.undo.shift();
   S.redo = [];
-  fn(S.script);
+  fn(S.flow);
   S.dirty = true;
   render();
   scheduleSave();
@@ -210,22 +213,22 @@ function mutate(fn) {
 
 function undo() {
   if (!S.undo.length) return;
-  S.redo.push(JSON.stringify(S.script));
-  S.script = JSON.parse(S.undo.pop());
+  S.redo.push(JSON.stringify(S.flow));
+  S.flow = JSON.parse(S.undo.pop());
   afterHistory();
 }
 
 function redo() {
   if (!S.redo.length) return;
-  S.undo.push(JSON.stringify(S.script));
-  S.script = JSON.parse(S.redo.pop());
+  S.undo.push(JSON.stringify(S.flow));
+  S.flow = JSON.parse(S.redo.pop());
   afterHistory();
 }
 
 function afterHistory() {
   S.dirty = true;
   S.checked.clear();
-  if (S.selected >= S.script.steps.length) S.selected = S.script.steps.length - 1;
+  if (S.selected >= S.flow.steps.length) S.selected = S.flow.steps.length - 1;
   render();
   scheduleSave();
 }
@@ -242,13 +245,13 @@ function lastPage(steps, before) {
 
 // 新步骤放在画布上正显示的那个窗口、那张画面上（在哪张图上点的「添加」，就加在哪张图上），
 // 默认位置是这个窗口的中心；前后挨着的不是延迟就各垫一个 1 秒延迟（加的本身就是延迟时不垫）
-function addStep(kind, at = S.script?.steps.length ?? 0) {
-  if (!S.script) return toast("先新建或选择一个宏", true);
-  const shot = S.frame === "reference" && stepShot() ? S.script.steps[S.selected].shot : undefined;
+function addStep(kind, at = S.flow?.steps.length ?? 0) {
+  if (!S.flow) return toast("先新建或选择一个流程", true);
+  const shot = S.frame === "reference" && stepShot() ? S.flow.steps[S.selected].shot : undefined;
   const base = stepBase(kind, at, S.win || null);
   if (shot && kind !== "wait" && kind !== "wait_page") base.shot = shot;
   // 新步骤前后各看一眼：挨着的不是延迟就垫 1 秒（在前面添加时，后面紧挨着的就是原来那一步）
-  const steps = S.script.steps;
+  const steps = S.flow.steps;
   const padBefore = kind !== "wait" && at > 0 && steps[at - 1]?.action !== "wait";
   const padAfter = kind !== "wait" && at < steps.length && steps[at]?.action !== "wait";
   mutate((sc) => {
@@ -261,7 +264,7 @@ function addStep(kind, at = S.script?.steps.length ?? 0) {
 
 // 某种步骤的默认值：位置在窗口 win 的中心；「等待页面」的窗口取它要等的页面所在的窗口，延迟不带窗口
 function stepBase(kind, at, win) {
-  const { width, height } = (win && S.script.windows?.[win]) || S.script.window;
+  const { width, height } = (win && S.flow.windows?.[win]) || S.flow.window;
   const base = {
     wait: { action: "wait", seconds: 1 },
     key: { action: "key", combo: "enter" },
@@ -270,8 +273,8 @@ function stepBase(kind, at, win) {
     hover: { action: "hover", x: Math.round(width / 2), y: Math.round(height / 2), seconds: 1, delay_after: 0 },
     drag: { action: "drag", x: Math.round(width / 2 - 80), y: Math.round(height / 2),
       x2: Math.round(width / 2 + 80), y2: Math.round(height / 2), duration: 0.5 },
-    type: { action: "type", text: "", expected_page: lastPage(S.script.steps, at - 1) },
-    wait_page: { action: "wait_page", page: lastPage(S.script.steps, at - 1) || Object.keys(S.detail?.pages || {})[0] || "",
+    type: { action: "type", text: "", expected_page: lastPage(S.flow.steps, at - 1) },
+    wait_page: { action: "wait_page", page: lastPage(S.flow.steps, at - 1) || Object.keys(S.detail?.pages || {})[0] || "",
       timeout: 10 },
   }[kind];
   if (kind === "wait_page") base.win = pageWindow(base.page);
@@ -283,7 +286,7 @@ function stepBase(kind, at, win) {
 // 位置、所在页面、「发送」标记新类型用得上就沿用（点击换成按键，「发送」还在；换成延迟就都不要了）
 const POSITIONED = new Set(["click", "scroll", "hover", "drag"]);
 function changeStep(i, kind) {
-  const old = S.script.steps[i];
+  const old = S.flow.steps[i];
   const base = stepBase(kind, i, old.win || null);
   if (kind !== "wait" && kind !== "wait_page") {
     if (old.shot) base.shot = old.shot;
@@ -297,7 +300,7 @@ function changeStep(i, kind) {
   if (old.note) base.note = old.note;
   mutate((sc) => (sc.steps[i] = { id: old.id, ...base }));
   select(i);
-  toast(`${actionNo(S.script.steps, i) ? `第 ${actionNo(S.script.steps, i)} 步` : "这一行"}换成了「${TYPE[kind].name}」，可以撤销`);
+  toast(`${actionNo(S.flow.steps, i) ? `第 ${actionNo(S.flow.steps, i)} 步` : "这一行"}换成了「${TYPE[kind].name}」，可以撤销`);
 }
 
 function deleteSteps() {
@@ -324,7 +327,7 @@ function moveStep(from, to) {
 function select(i) {
   S.selected = i;
   if (i >= 0) S.tab = "step";
-  const step = S.script?.steps[i];
+  const step = S.flow?.steps[i];
   // 画面跟着切到这一步所在的窗口；等待页面切到那个页面锚点所在的窗口；延迟不操作窗口，不切
   if (step?.action === "wait_page") setWin(pageWindow(step.page, step.win), false);
   else if (step && step.action !== "wait") setWin(step.win, false);
@@ -348,23 +351,23 @@ function scheduleSave() {
 
 // 把页面上的修改写回。写的这段时间里又改了：页面上的留着，稍后再存一次
 async function writeBack() {
-  const sent = JSON.stringify(S.script);
-  const d = await attempt(() => api("PUT", `/api/scripts/${S.id}/detail`, S.script));
+  const sent = JSON.stringify(S.flow);
+  const d = await attempt(() => api("PUT", `/api/flows/${S.id}/detail`, S.flow));
   if (!d) return d;
-  if (JSON.stringify(S.script) === sent) {
+  if (JSON.stringify(S.flow) === sent) {
     const keep = S.selected;
     applyDetail(d);
-    S.selected = keep < d.script.steps.length ? keep : -1;
+    S.selected = keep < d.flow.steps.length ? keep : -1;
     showFrame(); // 撤销换回了原来的录制画面时，画布跟着换（同一张图不会重新加载）
   } else {
-    S.detail = { ...d, script: S.detail.script };
+    S.detail = { ...d, flow: S.detail.flow };
     scheduleSave();
   }
   render();
   return d;
 }
 
-// 需要服务端读脚本的操作（录制、截图、锚点、执行、切换宏）之前，先把还没写回的修改写回
+// 需要服务端读流程的操作（录制、截图、锚点、执行、切换流程）之前，先把还没写回的修改写回
 async function ensureSaved() {
   clearTimeout(saveTimer);
   if (!S.dirty) return true;
@@ -380,10 +383,10 @@ const PAGE_FIXES = [["自动选一个", "auto-page"], ["我自己框", "frame-an
 
 function localProblems() {
   const out = {};
-  if (!S.script) return out;
+  if (!S.flow) return out;
   const pages = new Set(Object.keys(S.detail?.pages || {}));
   const seen = new Set();
-  for (const s of S.script.steps) {
+  for (const s of S.flow.steps) {
     const add = (text, hint = "", fixes = []) => (out[s.id] ||= []).push({ text, hint, fixes });
     if (seen.has(s.id)) add("步骤编号重复", "保存一下就会重新编号");
     seen.add(s.id);
@@ -409,7 +412,7 @@ function localProblems() {
     if (offTarget(s)) add(...OFF_TARGET);
     if (s.action === "type") {
       for (const v of varsIn(s.text)) {
-        if (!S.script.variables.includes(v)) {
+        if (!S.flow.variables.includes(v)) {
           add(`{${v}} 还不是变量`, `现在会原样打出「{${v}}」这几个字。设为变量后，每次执行前填上这次要打的内容。`,
             [["设为变量", `declare-var:${v}`]]);
         }
@@ -432,7 +435,7 @@ function offTarget(s) {
 // ---------------- 渲染 ----------------
 
 function render() {
-  const has = !!S.script;
+  const has = !!S.flow;
   if (S.id && S.dirty !== S.reportedDirty) reportCurrent();
   renderWinSeg(); // 增删步骤后用到的窗口可能变了
   const busy = S.recording;
@@ -451,7 +454,7 @@ function render() {
   renderTotal();
   renderTabs();
   renderStepPane();
-  renderMacroPane();
+  renderFlowPane();
   renderVars();
   renderStatus();
   syncStage();
@@ -463,8 +466,8 @@ function frameWin() {
 }
 
 function syncStage() {
-  if (!S.script) return stage.setData([], {}, -1);
-  stage.setData([...S.script.steps, ...S.recSteps], S.detail?.pages, S.selected, frameWin());
+  if (!S.flow) return stage.setData([], {}, -1);
+  stage.setData([...S.flow.steps, ...S.recSteps], S.detail?.pages, S.selected, frameWin());
 }
 
 // [1, 2, 3, 5] → "1–3、5"
@@ -479,8 +482,8 @@ function numRanges(nums) {
 }
 
 function windowLabel(key) {
-  if (!key) return S.script?.window.title || S.script?.window.app || "主窗口";
-  const w = S.script?.windows?.[key];
+  if (!key) return S.flow?.window.title || S.flow?.window.app || "主窗口";
+  const w = S.flow?.windows?.[key];
   return w ? (w.title || w.app) : key;
 }
 
@@ -529,7 +532,7 @@ function tags(s) {
 function renderSteps() {
   const list = $("#step-list");
   const empty = $("#steps-empty");
-  const steps = S.script?.steps || [];
+  const steps = S.flow?.steps || [];
   const problems = localProblems();
   const marks = { ok: ["check", "ok"], skipped: ["skip", "skip"], aborted: ["x", "bad"], failed: ["x", "bad"], cancelled: ["stop", "skip"] };
   const all = [...steps, ...S.recSteps];
@@ -560,7 +563,7 @@ function renderSteps() {
   empty.hidden = !isEmpty;
   list.hidden = isEmpty;
   if (isEmpty) {
-    empty.innerHTML = S.script ? `
+    empty.innerHTML = S.flow ? `
       <div class="empty-ico">${icon("sparkles", "lg")}</div>
       <h3>还没有步骤</h3>
       <p>录一遍你在目标窗口里的操作就行，其余的会自动处理。</p>
@@ -587,7 +590,7 @@ function renderSteps() {
 }
 
 function renderTotal() {
-  const steps = S.script?.steps || [];
+  const steps = S.flow?.steps || [];
   const t = steps.reduce((sum, s) => sum + (s.action === "wait" ? s.seconds : s.delay_after ?? 0.5), 0);
   const n = steps.filter((s) => s.action !== "wait").length;  // 延迟不算步，时长照算
   $("#total").textContent = `${n} 步 · ${t.toFixed(1)} 秒`;
@@ -680,7 +683,7 @@ const fmtSec = (s) => (Number.isInteger(s) ? String(s) : s.toFixed(1));
 
 function renderTabs() {
   $$(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === S.tab));
-  ["step", "macro", "run"].forEach((t) => ($(`#pane-${t}`).hidden = S.tab !== t));
+  ["step", "flow", "run"].forEach((t) => ($(`#pane-${t}`).hidden = S.tab !== t));
   $("#tab-run").innerHTML = `${icon("play")}运行${S.running ? `<span class="dot-live"></span>` : ""}`;
 }
 
@@ -717,7 +720,7 @@ function toggle(name, checked, text) {
 
 function renderStepPane() {
   const pane = $("#pane-step");
-  const s = S.script?.steps[S.selected];
+  const s = S.flow?.steps[S.selected];
   if (!s) {
     pane.innerHTML = `<div class="empty" style="padding:16px">
       <div class="empty-ico">${icon("sliders", "lg")}</div>
@@ -753,7 +756,7 @@ function renderStepPane() {
       + field("用时", `${num("duration", s.duration, 0.1)}<span class="muted">秒</span>`);
     more.push(["按键", buttonSelect(s.button)], ["同时按住", modChips(s.modifiers)]);
   } else if (s.action === "type") {
-    const vars = S.script.variables.length ? S.script.variables : ["评论内容"];
+    const vars = S.flow.variables.length ? S.flow.variables : ["评论内容"];
     body += field("内容", `<textarea class="input" data-f="text" rows="3" placeholder="直接写要输入的文字，或点下面插入变量">${escapeHtml(s.text)}</textarea>`)
       + `<div class="var-chips">${vars.map((v) =>
         `<button type="button" data-insert-var="${escapeHtml(v)}" title="插入变量：每次执行时再填内容">+ {${escapeHtml(v)}}</button>`).join("")}</div>`
@@ -785,7 +788,7 @@ function renderStepPane() {
       + field("最多等", `${num("timeout", s.timeout, 1)}<span class="muted">秒，超时就中止</span>`,
         "比固定延迟靠谱：电脑卡的时候多等一会儿，页面出来了马上继续");
   }
-  const wins = Object.keys(S.script.windows || {});
+  const wins = Object.keys(S.flow.windows || {});
   if (wins.length && s.action !== "wait") {  // 延迟不操作窗口
     body += field("窗口", `<select class="input" data-f="win">${[null, ...wins].map((k) =>
       `<option value="${k || ""}" ${(s.win || null) === k ? "selected" : ""}>${escapeHtml(windowLabel(k))}</option>`).join("")}</select>`,
@@ -803,7 +806,7 @@ function renderStepPane() {
   }
   pane.innerHTML = `
     <div class="section-title"><span class="type-ico sm ${s.action}">${icon(t.icon)}</span>${
-      actionNo(S.script.steps, S.selected) ? `第 ${actionNo(S.script.steps, S.selected)} 步 · ` : ""}${t.name}</div>
+      actionNo(S.flow.steps, S.selected) ? `第 ${actionNo(S.flow.steps, S.selected)} 步 · ` : ""}${t.name}</div>
     ${probs.map(problemHtml).join("")}
     ${focusNote(s, S.selected)}
     <div class="fields">${body}</div>
@@ -825,18 +828,18 @@ function problemHtml(p) {
 // 输入、按键打进哪里（画布上也标在那里）
 function focusNote(s, i) {
   if (s.action !== "type" && s.action !== "key") return "";
-  const k = focusClick(S.script.steps, i);
+  const k = focusClick(S.flow.steps, i);
   const what = s.action === "type" ? "打进" : "发到";
   return `<p class="focus-note">${icon("pointer")}${k >= 0
-    ? `${what}第 ${actionNo(S.script.steps, k)} 步点中的地方（画面上圈出来了）`
+    ? `${what}第 ${actionNo(S.flow.steps, k)} 步点中的地方（画面上圈出来了）`
     : `${what}当前有焦点的地方：前面没有点击`}</p>`;
 }
 
-function renderMacroPane() {
-  const pane = $("#pane-macro");
-  const sc = S.script;
+function renderFlowPane() {
+  const pane = $("#pane-flow");
+  const sc = S.flow;
   if (!sc) {
-    pane.innerHTML = `<p class="muted">还没有宏。</p>`;
+    pane.innerHTML = `<p class="muted">还没有流程。</p>`;
     return;
   }
   const pages = S.detail?.pages || {};
@@ -850,25 +853,25 @@ function renderMacroPane() {
   pane.innerHTML = `
     <div class="section-title">${icon("page")}基本信息</div>
     <div class="fields">
-      ${field("宏名", `<input type="text" class="input" data-s="name" value="${escapeHtml(sc.name)}">`)}
+      ${field("流程名", `<input type="text" class="input" data-s="name" value="${escapeHtml(sc.name)}">`)}
       ${field("说明", `<input type="text" class="input" data-s="description" value="${escapeHtml(sc.description || "")}" placeholder="一句话说它是做什么的，比如：在群里发一条消息">`, "显示在应用首页的卡片上")}
       ${field("程序", `<input type="text" class="input" data-s="app" value="${escapeHtml(sc.window.app)}">`)}
       ${field("窗口标题", `<input type="text" class="input" data-s="title" value="${escapeHtml(sc.window.title || "")}" placeholder="可选">`, "同一程序有多个窗口时用")}
-      ${field("窗口尺寸", `${sc.window.width} × ${sc.window.height}<span class="muted">（缩放 ${sc.window.scale}）</span>`, "坐标都相对这个尺寸；要换尺寸请新建宏")}
+      ${field("窗口尺寸", `${sc.window.width} × ${sc.window.height}<span class="muted">（缩放 ${sc.window.scale}）</span>`, "坐标都相对这个尺寸；要换尺寸请新建流程")}
       ${field("变量", `<input type="text" class="input" data-s="variables" value="${escapeHtml(sc.variables.join(", "))}" placeholder="comment_draft" style="flex:1">`, "逗号分隔；在文本里写 {变量名} 使用")}
     </div>
     <div class="section-title" style="margin-top:22px">${icon("scan")}页面锚点</div>
     ${anchors ? `<div class="anchors">${anchors}</div>`
       : `<div class="callout">${icon("info")}<span>还没有锚点。让目标窗口停在要校验的页面，点画面右上角的「截图」，再点旁边的「框锚点」。</span></div>`}
     <div class="danger-zone">
-      <span><b>删除这个宏</b><small>连同它的锚点、目标图和截图一起删除，不能恢复</small></span>
-      <button type="button" class="btn danger-ghost sm" id="btn-delete-macro">${icon("trash")}删除</button>
+      <span><b>删除这个流程</b><small>连同它的锚点、目标图和截图一起删除，不能恢复</small></span>
+      <button type="button" class="btn danger-ghost sm" id="btn-delete-flow">${icon("trash")}删除</button>
     </div>`;
 }
 
 function renderVars() {
   const box = $("#run-vars");
-  const vars = S.script?.variables || [];
+  const vars = S.flow?.variables || [];
   const saved = savedVars();
   box.innerHTML = vars.map((v) => field(`{${escapeHtml(v)}}`,
     `<input type="text" class="input" data-var="${escapeHtml(v)}" value="${escapeHtml(saved[v] || "")}" style="flex:1">`)).join("");
@@ -876,12 +879,15 @@ function renderVars() {
 }
 
 function savedVars() {
-  try { return JSON.parse(localStorage.getItem(`cw.vars.${S.id}`) || "{}"); } catch { return {}; }
+  try {
+    return JSON.parse(localStorage.getItem(`cw.vars.${S.id}`)
+      || localStorage.getItem(`cw.vars.${S.id.replace("/flows/", "/templates/")}`) || "{}");
+  } catch { return {}; }
 }
 
 // ---------------- 事件 ----------------
 
-// ---------------- 宏选择器：可搜索、按平台分组、草稿置顶、键盘可用 ----------------
+// ---------------- 流程选择器：可搜索、按平台分组、草稿置顶、键盘可用 ----------------
 
 const MP = { open: false, q: "", active: 0, items: [] };
 
@@ -901,19 +907,19 @@ function renderPickerTrigger() {
     av.className = "mp-avatar none";
     av.textContent = "+";
     av.style.removeProperty("--h");
-    $("#mp-name").textContent = S.list.length ? "选择一个宏" : "还没有宏";
+    $("#mp-name").textContent = S.list.length ? "选择一个流程" : "还没有流程";
     $("#mp-sub").textContent = S.list.length ? "" : "点这里新建";
     $("#mp-badge").innerHTML = "";
     return;
   }
   av.className = "mp-avatar";
   av.style.setProperty("--h", hueOf(cur.platform));
-  const appName = S.script?.window.title || S.script?.window.app || cur.platform;  // 和应用页一样：窗口标题
+  const appName = S.flow?.window.title || S.flow?.window.app || cur.platform;  // 和应用页一样：窗口标题
   av.textContent = ([...appName][0] || "?").toUpperCase();
-  $("#mp-name").innerHTML = `<span class="mp-app">${escapeHtml(appName)}</span><span class="mp-sep">›</span>${escapeHtml(S.script?.name || cur.name)}`;
+  $("#mp-name").innerHTML = `<span class="mp-app">${escapeHtml(appName)}</span><span class="mp-sep">›</span>${escapeHtml(S.flow?.name || cur.name)}`;
   $("#mp-back").href = `/apps?app=${encodeURIComponent(cur.platform)}`;
   $("#mp-back").title = `回到 ${appName} 的首页`;
-  const w = S.script?.window;
+  const w = S.flow?.window;
   $("#mp-sub").textContent = S.dirty ? "正在保存…" : "已自动保存";
   $("#mp-sub").title = w ? `${w.app}${w.title ? " · " + w.title : ""} · ${w.width} × ${w.height}` : "";
   $("#mp-badge").innerHTML = "";
@@ -934,7 +940,7 @@ function renderPickerList() {
   let i = 0;
   $("#mp-list").innerHTML = MP.items.length ? groups.map(([title, xs]) => `
     <div class="mp-group"><span>${escapeHtml(title)}</span><span class="mp-group-r">${xs.length}${xs[0].draft ? ""
-      : `<button type="button" class="btn sm mp-export" data-export="${escapeHtml(title)}" title="把这个平台的所有宏导出成一个 .cwpack 文件，别人导入后就能直接使用">${icon("download")}导出</button>`}</span></div>
+      : `<button type="button" class="btn sm mp-export" data-export="${escapeHtml(title)}" title="把这个应用的所有流程导出成一个 .cwpack 文件，别人导入后就能直接使用">${icon("download")}导出</button>`}</span></div>
     ${xs.map((x) => {
       const idx = i++;
       return `<button type="button" class="mp-item ${idx === MP.active ? "active" : ""}" data-mp="${idx}"
@@ -944,7 +950,7 @@ function renderPickerList() {
         ${x.id === S.id ? `<span class="ok">${icon("check")}</span>` : ""}
       </button>`;
     }).join("")}`).join("")
-    : `<div class="mp-empty">${q ? `没有找到「${escapeHtml(MP.q.trim())}」` : "还没有宏"}</div>`;
+    : `<div class="mp-empty">${q ? `没有找到「${escapeHtml(MP.q.trim())}」` : "还没有流程"}</div>`;
   $(`#mp-list [data-mp="${MP.active}"]`)?.scrollIntoView({ block: "nearest" });
 }
 
@@ -1029,7 +1035,7 @@ async function importPack(file) {
   if (S.dirty && !(await ensureSaved())) return;
   const r = await attempt(() => api("POST", "/api/packs", file));
   if (!r) return;
-  toast(`已导入 ${r.platform}：${r.ids.length} 个宏`);
+  toast(`已导入 ${r.platform}：${r.ids.length} 个流程`);
   await attempt(() => loadList(r.ids[0]));
 }
 
@@ -1097,7 +1103,7 @@ $("#btn-delete").addEventListener("click", deleteSteps);
 $$(".tabs button").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
 
 $("#select-all").addEventListener("change", (e) => {
-  S.checked = e.target.checked ? new Set(S.script.steps.map((_, i) => i)) : new Set();
+  S.checked = e.target.checked ? new Set(S.flow.steps.map((_, i) => i)) : new Set();
   render();
 });
 
@@ -1173,7 +1179,7 @@ $("#pane-step").addEventListener("change", (e) => {
     }
     // 等待页面换了页面：窗口跟着换成新页面锚点所在的窗口
     if (name === "page" && step.action === "wait_page") step.win = pageWindow(v, step.win);
-    // 文本里用到的变量自动声明，不用再去「宏设置」里填
+    // 文本里用到的变量自动声明，不用再去「流程设置」里填
     if (name === "text") {
       step.typed_with_ime = false; // 用户亲手改过了，不再是输入法的按键
       for (const x of varsIn(v)) if (!sc.variables.includes(x)) sc.variables.push(x);
@@ -1253,22 +1259,22 @@ $("#pane-step").addEventListener("click", (e) => {
 // 问题上的修复按钮
 async function fixProblem(act, btn) {
   const i = S.selected;
-  const s = S.script?.steps[i];
+  const s = S.flow?.steps[i];
   if (!s) return;
   if (act === "auto-page") {
     if (!(await ensureSaved())) return;
     btn.disabled = true;
     btn.textContent = "正在选…";
-    const d = await attempt(() => api("POST", `/api/scripts/${S.id}/auto-page`, { step_id: s.id }));
+    const d = await attempt(() => api("POST", `/api/flows/${S.id}/auto-page`, { step_id: s.id }));
     if (!d) return render();
-    S.undo.push(JSON.stringify(S.script));
+    S.undo.push(JSON.stringify(S.flow));
     S.redo = [];
     applyDetail(d);
     S.selected = i;
     S.frame = "reference";  // 看录制画面：新框的锚点就在上面
     await showFrame();
     render();
-    const nos = d.auto_page.steps.map((id) => actionNo(S.script.steps, S.script.steps.findIndex((x) => x.id === id)));
+    const nos = d.auto_page.steps.map((id) => actionNo(S.flow.steps, S.flow.steps.findIndex((x) => x.id === id)));
     toast(`${d.auto_page.reused ? "沿用" : "自动选好了"}页面「${d.auto_page.page}」，第 ${nos.join("、")} 步执行前会先核对它（画面上的框就是锚点）`);
   } else if (act === "frame-anchor") {
     setWin(s.win, false);
@@ -1293,8 +1299,8 @@ async function fixProblem(act, btn) {
   }
 }
 
-// 宏设置
-$("#pane-macro").addEventListener("change", (e) => {
+// 流程设置
+$("#pane-flow").addEventListener("change", (e) => {
   const el = e.target;
   const name = el.dataset.s;
   if (!name) return;
@@ -1306,26 +1312,26 @@ $("#pane-macro").addEventListener("change", (e) => {
     if (name === "variables") sc.variables = el.value.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
   });
 });
-$("#pane-macro").addEventListener("click", async (e) => {
+$("#pane-flow").addEventListener("click", async (e) => {
   const del = e.target.closest("[data-del-anchor]");
   if (del) {
     if (!(await ensureSaved())) return;
-    const d = await attempt(() => api("DELETE", `/api/scripts/${S.id}/anchors/${del.dataset.delAnchor}/${del.dataset.index}`));
+    const d = await attempt(() => api("DELETE", `/api/flows/${S.id}/anchors/${del.dataset.delAnchor}/${del.dataset.index}`));
     if (d) applyDetail(d);
   }
 });
 
-// 删除宏（在「宏设置」最下面）：点两次确认
-$("#pane-macro").addEventListener("click", (e) => {
-  const btn = e.target.closest("#btn-delete-macro");
+// 删除流程（在「流程设置」最下面）：点两次确认
+$("#pane-flow").addEventListener("click", (e) => {
+  const btn = e.target.closest("#btn-delete-flow");
   if (!btn) return;
   confirmClick(btn, "再点一次，确认删除", async () => {
     await attempt(async () => {
       clearTimeout(saveTimer);
-      await api("DELETE", `/api/scripts/${S.id}/detail`);
+      await api("DELETE", `/api/flows/${S.id}/detail`);
       S.id = null;
       S.dirty = false;
-      try { localStorage.removeItem("cw.script"); } catch {}
+      try { localStorage.removeItem("cw.flow"); } catch {}
       await loadList();
       toast("已删除");
     });
@@ -1360,7 +1366,7 @@ $("#btn-capture-menu").addEventListener("click", (e) => {
   const can = S.frame === "reference" && !!frameOf("reference");
   $("#cap-replace").disabled = !can;
   $("#cap-replace-title").textContent = can && stepShot()
-    ? `替换第 ${actionNo(S.script.steps, S.selected)} 步的录制画面` : "替换录制画面";
+    ? `替换第 ${actionNo(S.flow.steps, S.selected)} 步的录制画面` : "替换录制画面";
   $("#cap-replace-hint").textContent = can ? "录错时用，可撤销" : "先切到录制画面";
 });
 $("#cap-now").addEventListener("click", () => {
@@ -1382,10 +1388,10 @@ async function capture(replace) {
   if (S.win) params.set("win", S.win);
   if (replace) {
     params.set("replace", "true");
-    if (stepShot()) params.set("step_id", S.script.steps[S.selected].id);
+    if (stepShot()) params.set("step_id", S.flow.steps[S.selected].id);
   }
-  const before = JSON.stringify(S.script);
-  const d = await attempt(() => api("POST", `/api/scripts/${S.id}/capture?${params}`));
+  const before = JSON.stringify(S.flow);
+  const d = await attempt(() => api("POST", `/api/flows/${S.id}/capture?${params}`));
   if (!d) return;
   if (replace) {  // 换的只是图片路径，撤销就换回原来那张
     S.undo.push(before);
@@ -1393,13 +1399,13 @@ async function capture(replace) {
   }
   const keep = S.selected;
   applyDetail(d);
-  S.selected = keep < S.script.steps.length ? keep : -1;
+  S.selected = keep < S.flow.steps.length ? keep : -1;
   if (!replace) S.frame = "latest";
   await showFrame();
   render();
   const ids = d.replaced_steps || [];
   toast(!replace ? "已截图，画面切到「当前画面」"
-    : ids.length ? `已更新第 ${numRanges(ids.map((id) => actionNo(S.script.steps, S.script.steps.findIndex((s) => s.id === id))))} 步的录制画面（Ctrl+Z 换回原来的）`
+    : ids.length ? `已更新第 ${numRanges(ids.map((id) => actionNo(S.flow.steps, S.flow.steps.findIndex((s) => s.id === id))))} 步的录制画面（Ctrl+Z 换回原来的）`
     : `已更新「${windowLabel(S.win)}」的录制画面（Ctrl+Z 换回原来的）`);
 }
 $("#btn-anchor-mode").addEventListener("click", () => setAnchorMode(!S.anchorMode || S.regionFor !== "anchor"));
@@ -1430,18 +1436,18 @@ $("#anchor-ok").addEventListener("click", async () => {
   const page = $("#anchor-page").value.trim();
   if (!page) return toast("给页面起个名字", true);
   if (!(await ensureSaved())) return;
-  const d = await attempt(() => api("POST", `/api/scripts/${S.id}/anchors`, { page, ...stage.region, ...frameParams() }));
+  const d = await attempt(() => api("POST", `/api/flows/${S.id}/anchors`, { page, ...stage.region, ...frameParams() }));
   if (d) {
     applyDetail(d);
     setAnchorMode(false);
     $("#anchor-page").value = "";
     toast(`已添加锚点：${page}`);
     // 从某一步的「我自己框」来的：这个页面直接给那一步
-    const asked = S.script.steps.findIndex((x) => x.id === S.anchorFor);
+    const asked = S.flow.steps.findIndex((x) => x.id === S.anchorFor);
     S.anchorFor = null;
-    if (asked >= 0 && pageWins(page).has(S.script.steps[asked].win || null)) {
-      const key = S.script.steps[asked].action === "wait_page" ? "page" : "expected_page";
-      if (S.script.steps[asked][key] !== page) mutate((sc) => (sc.steps[asked][key] = page));
+    if (asked >= 0 && pageWins(page).has(S.flow.steps[asked].win || null)) {
+      const key = S.flow.steps[asked].action === "wait_page" ? "page" : "expected_page";
+      if (S.flow.steps[asked][key] !== page) mutate((sc) => (sc.steps[asked][key] = page));
     }
     await autoAssignPage(page);
   }
@@ -1449,10 +1455,10 @@ $("#anchor-ok").addEventListener("click", async () => {
 
 // 「重新框选目标」框好了：直接存成这一步的目标图
 async function saveTarget(r) {
-  const step = S.script.steps[S.selected];
+  const step = S.flow.steps[S.selected];
   if (!step || (step.action !== "click" && step.action !== "hover")) return setAnchorMode(false);
   if (!(await ensureSaved())) return;
-  const d = await attempt(() => api("POST", `/api/scripts/${S.id}/targets`,
+  const d = await attempt(() => api("POST", `/api/flows/${S.id}/targets`,
     { ...frameParams(), step_id: step.id, shot_of: frameParams().step_id, ...r }));
   setAnchorMode(false);
   if (d) {
@@ -1460,7 +1466,7 @@ async function saveTarget(r) {
     applyDetail(d);
     S.selected = keep;
     render();
-    toast(`第 ${actionNo(S.script.steps, keep)} 步改成按这块图找`);
+    toast(`第 ${actionNo(S.flow.steps, keep)} 步改成按这块图找`);
   }
 }
 
@@ -1508,12 +1514,12 @@ function pageWindow(page, fallback = null) {
 // 主窗口的锚点拿去核对聊天窗口，永远对不上
 async function autoAssignPage(page) {
   const wins = pageWins(page);
-  const idx = S.script.steps
+  const idx = S.flow.steps
     .map((s, i) => (NEEDS_PAGE(s) && !s.expected_page && wins.has(s.win || null) ? i : -1))
     .filter((i) => i >= 0);
   if (!idx.length) return;
   mutate((sc) => idx.forEach((i) => (sc.steps[i].expected_page = page)));
-  if (await ensureSaved()) toast(`已把「${page}」设为第 ${idx.map((i) => actionNo(S.script.steps, i)).join("、")} 步的所在页面`);
+  if (await ensureSaved()) toast(`已把「${page}」设为第 ${idx.map((i) => actionNo(S.flow.steps, i)).join("、")} 步的所在页面`);
 }
 
 // 新建：点一下目标窗口（或从列表点一个）就直接创建，名字、标题、尺寸全部自动
@@ -1570,7 +1576,7 @@ async function createFromWindow(w, { record = false } = {}) {
     height: (custom && +$("#nf-height").value) || w.height,
     platform: (custom && $("#nf-platform").value.trim()) || S.newApp || null,
   };
-  const d = await attempt(() => api("POST", "/api/scripts", body));
+  const d = await attempt(() => api("POST", "/api/flows", body));
   if (!d) return false;
   if ($("#new-dialog").open) $("#new-dialog").close();
   await loadList(d.id);
@@ -1645,7 +1651,7 @@ $("#new-form").addEventListener("submit", async (e) => {
   if (w) await createFromWindow(w);
 });
 
-// 还没有宏时的一键流程：点窗口 → 建宏 → 开始录制
+// 还没有流程时的一键流程：点窗口 → 建流程 → 开始录制
 async function quickStart() {
   const w = await pickByClick();
   if (w) await createFromWindow(w, { record: true });
@@ -1692,7 +1698,7 @@ async function startRecording() {
   // 先清空再发请求：录制线程推送的步骤可能比这个请求的响应先到
   S.recSteps = [];
   const ok = await attempt(() => api("POST", "/api/record/start",
-    { script_id: S.id, record_delays: $("#opt-delays").checked, record_append: recordAppend }));
+    { flow_id: S.id, record_delays: $("#opt-delays").checked, record_append: recordAppend }));
   // 推送的「开始录制」事件可能比响应先到，那边已经提示过了就不再重复
   if (ok && !S.recording) {
     S.recording = true;
@@ -1726,10 +1732,10 @@ async function handleRecordDone(d) {
   S.recording = false;
   S.stopping = false;
   S.recSteps = [];
-  if (d.id !== S.id) return render(); // 录的是别的宏（比如切走了）：不覆盖当前画面
+  if (d.id !== S.id) return render(); // 录的是别的流程（比如切走了）：不覆盖当前画面
   // 替换掉了旧步骤：旧的放进撤销历史，Ctrl+Z 就回来
-  if (d.replaced && S.script) {
-    S.undo.push(JSON.stringify(S.script));
+  if (d.replaced && S.flow) {
+    S.undo.push(JSON.stringify(S.flow));
     S.redo = [];
   }
   applyDetail(d);
@@ -1738,8 +1744,8 @@ async function handleRecordDone(d) {
   if (d.replaced) done.push(`替换了原来的 ${d.replaced} 步（Ctrl+Z 恢复）`);
   if (d.auto_targets) done.push(`${d.auto_targets} 次点击会按图找`);
   if (d.auto_send) {
-    const i = S.script.steps.findIndex((s) => s.id === d.auto_send);
-    done.push(`第 ${actionNo(S.script.steps, i)} 步标为「发送」`);
+    const i = S.flow.steps.findIndex((s) => s.id === d.auto_send);
+    done.push(`第 ${actionNo(S.flow.steps, i)} 步标为「发送」`);
   }
   if (d.auto_anchor) {
     const fresh = d.auto_anchor.pages.filter((p) => !(d.auto_anchor.reused || []).includes(p));
@@ -1756,23 +1762,23 @@ async function handleRecordDone(d) {
   }
   if (d.dropped_pages?.length) done.push(`收起了没有步骤再用的页面「${d.dropped_pages.join("、")}」`);
   toast(done.join(" · "));
-  const imeAt = S.script.steps.findIndex((s) => s.typed_with_ime);
+  const imeAt = S.flow.steps.findIndex((s) => s.typed_with_ime);
   if (imeAt >= 0) {
     select(imeAt);
-    toast(`第 ${actionNo(S.script.steps, imeAt)} 步是用中文输入法打的，只录到了按键，请在右边填上实际要输入的文字`, true);
+    toast(`第 ${actionNo(S.flow.steps, imeAt)} 步是用中文输入法打的，只录到了按键，请在右边填上实际要输入的文字`, true);
     setTimeout(() => $("#pane-step [data-f=text]")?.select(), 50);
   }
   // 没能自动选出锚点的输入 / 发送步骤：选中第一步，右边就是修复按钮
-  const missAt = S.script.steps.findIndex((s) => d.auto_anchor?.missing?.includes(s.id) && !s.expected_page);
+  const missAt = S.flow.steps.findIndex((s) => d.auto_anchor?.missing?.includes(s.id) && !s.expected_page);
   if (imeAt < 0 && missAt >= 0) {
     select(missAt);
-    toast(`第 ${actionNo(S.script.steps, missAt)} 步没能自动设好「在哪个画面执行」：在右边点「自动选一个」，或「我自己框」`, true);
+    toast(`第 ${actionNo(S.flow.steps, missAt)} 步没能自动设好「在哪个画面执行」：在右边点「自动选一个」，或「我自己框」`, true);
   }
   if (!Object.keys(localProblems()).length) toast("录好了，已自动保存。点上面的「空跑」先跑一遍看看");
 }
 
 $("#btn-record").addEventListener("click", () =>
-  S.recording ? stopRecording() : S.script ? startRecording() : quickStart());
+  S.recording ? stopRecording() : S.flow ? startRecording() : quickStart());
 
 // 执行
 $("#btn-dry").addEventListener("click", () => run(true));
@@ -1786,12 +1792,12 @@ async function run(dryRun) {
     if (!(await ensureSaved())) return;
     const variables = {};
     $$("[data-var]").forEach((el) => (variables[el.dataset.var] = el.value));
-    const missing = S.script.variables.filter((v) => !variables[v]);
+    const missing = S.flow.variables.filter((v) => !variables[v]);
     if (missing.length) {
       setTab("run");
       return toast(`先填变量：${missing.join(", ")}`, true);
     }
-    await attempt(() => api("POST", `/api/scripts/${S.id}/run`, { dry_run: dryRun, variables }));
+    await attempt(() => api("POST", `/api/flows/${S.id}/run`, { dry_run: dryRun, variables }));
   } finally {
     runStarting = false;
   }
@@ -1805,11 +1811,11 @@ $("#btn-panic").addEventListener("click", async () => {
 $("#run-log").addEventListener("click", (e) => {
   const li = e.target.closest("li[data-url]");
   if (!li) return;
-  S.shot = { url: li.dataset.url, win: S.script.steps.find((s) => s.id === li.dataset.step)?.win || null };
+  S.shot = { url: li.dataset.url, win: S.flow.steps.find((s) => s.id === li.dataset.step)?.win || null };
   S.win = S.shot.win;
   S.frame = "shot";
   showFrame();
-  const i = S.script.steps.findIndex((s) => s.id === li.dataset.step);
+  const i = S.flow.steps.findIndex((s) => s.id === li.dataset.step);
   if (i >= 0) {
     S.selected = i;
     renderSteps();
@@ -1876,7 +1882,7 @@ document.addEventListener("focusout", (e) => {
 });
 
 // 右键一步：在后面添加 / 在前面添加 / 换成 / 复制一份 / 删除；「添加」「换成」往右弹出 8 种步骤类型。
-// 在列表空白处右键（或空宏里点「手动添加一步」）：直接是类型，加在最后
+// 在列表空白处右键（或空流程里点「手动添加一步」）：直接是类型，加在最后
 const MENU = { i: -1, sub: null };
 const SUB_TITLE = { after: "在后面添加", before: "在前面添加", change: "换成", end: "添加到最后" };
 function typeItems(skip) {
@@ -1912,14 +1918,14 @@ function openSub(kind, anchor) {
   $$("#step-menu [data-sub]").forEach((b) => b.classList.toggle("on", b.dataset.sub === kind));
   const sub = $("#step-submenu");
   sub.innerHTML = `<div class="menu-title">${SUB_TITLE[kind]}</div>`
-    + typeItems(kind === "change" ? S.script.steps[MENU.i]?.action : null);
+    + typeItems(kind === "change" ? S.flow.steps[MENU.i]?.action : null);
   sub.hidden = false;
   const r = anchor.getBoundingClientRect();
   const w = sub.getBoundingClientRect().width;
   placeMenu(sub, r.right + 4 + w > innerWidth ? r.left - w - 4 : r.right + 4, r.top - 6);
 }
 function openEndMenu(anchor, x, y) {
-  if (!S.script) return;
+  if (!S.flow) return;
   MENU.i = -1;
   $("#step-menu").hidden = true;
   MENU.sub = "end";
@@ -1931,7 +1937,7 @@ function openEndMenu(anchor, x, y) {
   } else placeMenu(sub, x, y);
 }
 function duplicateStep(i) {
-  const copy = JSON.parse(JSON.stringify(S.script.steps[i]));
+  const copy = JSON.parse(JSON.stringify(S.flow.steps[i]));
   if (copy.sends) copy.sends = false;  // 复制出来的不能也是「发送」，不然会发两遍
   mutate((sc) => sc.steps.splice(i + 1, 0, { ...copy, id: nextId(sc.steps) }));
   select(i + 1);
@@ -1973,7 +1979,7 @@ list.addEventListener("contextmenu", (e) => {
   openStepMenu(i, e.clientX, e.clientY);
 });
 $("#steps-card").addEventListener("contextmenu", (e) => {
-  if (e.defaultPrevented || e.target.closest("li, .card-head, input, textarea, button") || !S.script || S.recording) return;
+  if (e.defaultPrevented || e.target.closest("li, .card-head, input, textarea, button") || !S.flow || S.recording) return;
   e.preventDefault();
   openEndMenu(null, e.clientX, e.clientY);
 });
@@ -1994,7 +2000,7 @@ document.addEventListener("keydown", (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === "s") {
     e.preventDefault();
-    if (S.script) ensureSaved().then((ok) => ok && toast("已保存"));
+    if (S.flow) ensureSaved().then((ok) => ok && toast("已保存"));
     return;
   }
   if (mod && e.key === "Enter") {
@@ -2009,8 +2015,8 @@ document.addEventListener("keydown", (e) => {
   else if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
   else if (mod && e.key.toLowerCase() === "d" && S.selected >= 0) { e.preventDefault(); duplicateStep(S.selected); }
   else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteSteps(); }
-  else if (e.key === "ArrowDown" && S.script) { e.preventDefault(); select(Math.min(S.selected + 1, S.script.steps.length - 1)); }
-  else if (e.key === "ArrowUp" && S.script) { e.preventDefault(); select(Math.max(S.selected - 1, 0)); }
+  else if (e.key === "ArrowDown" && S.flow) { e.preventDefault(); select(Math.min(S.selected + 1, S.flow.steps.length - 1)); }
+  else if (e.key === "ArrowUp" && S.flow) { e.preventDefault(); select(Math.max(S.selected - 1, 0)); }
   else if (e.key === "Escape") { if (S.anchorMode) setAnchorMode(false); else select(-1); }
 });
 
@@ -2062,7 +2068,7 @@ connectEvents((ev) => {
     S.stopping = !!ev.stopping;  // 按了快捷键停止：在保存录到的步骤
     if (started) {
       S.recSteps = [];
-      if (ev.script_id === S.id) toast(recStartHint());
+      if (ev.flow_id === S.id) toast(recStartHint());
     }
     render();
   } else if (ev.type === "record_done") {
@@ -2073,11 +2079,11 @@ connectEvents((ev) => {
     applyHotkeys(ev.items);
   } else if (ev.type === "settings") {
     Settings.applyRemote(ev);
-  } else if (ev.type === "run_wait" && ev.script_id === S.id) {
+  } else if (ev.type === "run_wait" && ev.flow_id === S.id) {
     if (S.running === "waiting") onRunWait(ev);
-  } else if (ev.type === "dry_run_request" && ev.page === PAGE_ID && ev.script_id === S.id) {
+  } else if (ev.type === "dry_run_request" && ev.page === PAGE_ID && ev.flow_id === S.id) {
     run(true); // 按了空跑快捷键、这里有没保存的修改：和点「空跑」一样，先写回再跑
-  } else if (ev.type === "run_state" && ev.script_id === S.id) {
+  } else if (ev.type === "run_state" && ev.flow_id === S.id) {
     if (ev.state === "queued") {
       S.running = "waiting";
       S.idleSec = ev.idle_sec ?? 2;
@@ -2098,7 +2104,7 @@ connectEvents((ev) => {
       pickUpLearnedLooks();
     }
     render();
-  } else if (ev.type === "run_entry" && ev.script_id === S.id) {
+  } else if (ev.type === "run_entry" && ev.flow_id === S.id) {
     const en = ev.entry;
     S.runMarks[en.step_id] = en.status;
     $("#run-log .summary-row.muted")?.remove();
@@ -2118,14 +2124,14 @@ connectEvents((ev) => {
 Build.canReload = () => !S.dirty && !S.undo.length && !S.redo.length && !S.recording && !S.running && !S.anchorMode;
 Build.beforeReload = () => ensureSaved();
 
-// 执行时可能自动记住了按钮的新样子（写进了宏文件的 target.alt）：页面上的宏跟着更新，
+// 执行时可能自动记住了按钮的新样子（写进了流程文件的 target.alt）：页面上的流程跟着更新，
 // 不然下次自动保存会用页面上的旧内容把它盖掉。有没保存的修改就只把 alt 合进来，修改照样留着
 async function pickUpLearnedLooks() {
   const id = S.id;
-  const d = await api("GET", `/api/scripts/${id}/detail`).catch(() => null);
+  const d = await api("GET", `/api/flows/${id}/detail`).catch(() => null);
   if (!d || id !== S.id) return;
-  const fresh = new Map(d.script.steps.map((s) => [s.id, s.target]));
-  const changed = S.script.steps.filter((s) => {
+  const fresh = new Map(d.flow.steps.map((s) => [s.id, s.target]));
+  const changed = S.flow.steps.filter((s) => {
     const t = fresh.get(s.id);
     return s.target && t && t.image === s.target.image && t.alt !== s.target.alt;
   });
@@ -2133,7 +2139,7 @@ async function pickUpLearnedLooks() {
   if (!S.dirty) {
     const keep = S.selected;
     applyDetail(d);
-    S.selected = keep < S.script.steps.length ? keep : -1;
+    S.selected = keep < S.flow.steps.length ? keep : -1;
     render();
   } else {
     changed.forEach((s) => (s.target.alt = fresh.get(s.id).alt));
@@ -2141,11 +2147,11 @@ async function pickUpLearnedLooks() {
   }
 }
 
-// 连上（包括 studio 重启后自动重连）：断线期间的事件都丢了，跟服务端对一次，屏幕上的宏以文件为准
+// 连上（包括 studio 重启后自动重连）：断线期间的事件都丢了，跟服务端对一次，屏幕上的流程以文件为准
 async function onReconnect() {
   await syncStatus();
   if (!S.id || S.dirty || S.recording) return;  // 有没保存的修改就不覆盖
-  const d = await api("GET", `/api/scripts/${S.id}/detail`).catch(() => null);
+  const d = await api("GET", `/api/flows/${S.id}/detail`).catch(() => null);
   if (d && !S.dirty) applyDetail(d);
 }
 
@@ -2171,8 +2177,8 @@ $("#opt-delays").addEventListener("change", (e) => Settings.update({ record_dela
 function startTour() {
   const rec = recKbd();
   Tour.start([
-    { el: "#macro-picker", title: "现在在哪个应用、哪个宏",
-      body: "「QQ › 群聊天」：这是 QQ 应用里的「群聊天」这个宏。左边的「‹」回到 QQ 的首页，那里能看到它的所有宏；点这一栏可以直接切到别的宏、新建宏。改动会自动保存，不用点保存；Ctrl/⌘+Z 撤销。" },
+    { el: "#flow-picker", title: "现在在哪个应用、哪个流程",
+      body: "「QQ › 群聊天」：这是 QQ 应用里的「群聊天」这个流程。左边的「‹」回到 QQ 的首页，那里能看到它的所有流程；点这一栏可以直接切到别的流程、新建流程。改动会自动保存，不用点保存；Ctrl/⌘+Z 撤销。" },
     { el: "#run-bar", title: "录制 → 空跑 → 执行",
       body: `点「录制」或在任何窗口里按 ${rec}，到目标窗口里像平时一样操作，再按一下就停止。录完点「空跑」（或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.dryHotkey) || "Alt+T")}</kbd>）完整走一遍但不发送；确认没问题再点「执行」，要点两次确认。执行会真的发送，所以没有全局快捷键。` },
     { el: "#steps-card", title: "步骤列表",
@@ -2182,11 +2188,11 @@ function startTour() {
       before: () => setTab("step") },
     { el: "#stage-card .card-head", title: "画面上方这一排",
       body: "「录制画面」是录制时的样子，「当前画面」是窗口现在的样子，执行后点运行记录还会多出「运行截图」。"
-        + "宏用到好几个窗口时，旁边可以切换显示哪个窗口。右边「截图」截一张窗口现在的样子；「框锚点」在画面上拖一块不会变的区域，"
+        + "流程用到好几个窗口时，旁边可以切换显示哪个窗口。右边「截图」截一张窗口现在的样子；「框锚点」在画面上拖一块不会变的区域，"
         + "程序靠它认出页面。录制画面截错了，点「截图」旁边的 ▾。" },
-    { el: "#panel", title: "参数、宏设置、运行日志",
+    { el: "#panel", title: "参数、流程设置、运行日志",
       body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错。说明藏在 ⓘ 里，不常用的选项在「更多」里。空跑 / 执行的进度和每一步截图在「运行」里。",
-      before: () => { if (S.script?.steps.length && S.selected < 0) select(0); setTab("step"); } },
+      before: () => { if (S.flow?.steps.length && S.selected < 0) select(0); setTab("step"); } },
     { el: "#btn-panic", title: "随时可以停",
       body: `点「急停」或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.hotkey) || "急停热键")}</kbd> 立刻中止。执行时你一动键鼠，它也会自己停下来。` },
     { el: "#btn-settings", title: "设置都在齿轮里",
@@ -2213,18 +2219,19 @@ $("#btn-tour").addEventListener("click", startTour);
     // 配置的快捷键被别的软件占了、自动换成了备选：告诉用户
     (st.hotkey_notes || []).forEach((n) => toast(n));
   }
-  // 审计页「去修改」带过来的：直接打开那个宏、选中出问题的那一步
+  // 审计页「去修改」带过来的：直接打开那个流程、选中出问题的那一步
   const q = new URLSearchParams(location.search);
-  if (!q.has("macro") && !q.has("new")) return location.replace("/apps");
-  await attempt(() => loadList(q.get("macro")));
-  if (q.get("step") && S.script) {
-    const i = S.script.steps.findIndex((s) => s.id === q.get("step"));
+  const linked = fromLegacy(q.get("flow") || q.get("macro"));
+  if (!linked && !q.has("new")) return location.replace("/apps");
+  await attempt(() => loadList(linked));
+  if (q.get("step") && S.flow) {
+    const i = S.flow.steps.findIndex((s) => s.id === q.get("step"));
     if (i >= 0) select(i);
   }
   if (q.has("new")) {
-    S.newApp = q.get("app");  // 在某个应用里「录一个新宏」：建在这个应用下
+    S.newApp = q.get("app");  // 在某个应用里「录一个新流程」：建在这个应用下
     quickStart();
-  } else if (q.get("dry") && S.script) {
+  } else if (q.get("dry") && S.flow) {
     run(true);  // 应用首页卡片上的「空跑」
   }
   if (!Tour.seen("cw.tour.editor")) startTour();

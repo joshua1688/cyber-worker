@@ -88,33 +88,33 @@ sequenceDiagram
 
 > 状态图例：⬜ 待开始 · 🚧 进行中 · ✅ 已完成
 
-> 平台适配层是**声明式的平台包**：每个平台就是一个目录，里面只有 `platform.yaml`（能力 → 宏的映射、提取字段）、`pages.yaml`（页面指纹、监控区域）和录制好的宏。所有平台由同一个通用 `ScreenAdapter` 驱动。内置平台开箱即用；其他平台或私人场景，在 `studio` 里录制并保存成平台包即可，**无需改代码**。只有提取逻辑特别复杂时，才需要写一个可选的 `hooks.py`。
+> 平台适配层是**声明式的平台包**：每个平台就是一个目录，里面只有 `platform.yaml`（能力 → 流程的映射、提取字段）、`pages.yaml`（页面指纹、监控区域）和录制好的流程。所有平台由同一个通用 `ScreenAdapter` 驱动。内置平台开箱即用；其他平台或私人场景，在 `studio` 里录制并保存成平台包即可，**无需改代码**。只有提取逻辑特别复杂时，才需要写一个可选的 `hooks.py`。
 >
-> 平台包可以**一键导出**成一个 `.cwpack` 文件分享给其他人，对方把文件拖进 studio 页面就导入完成，立刻拥有整套平台操作。导出时默认带上录制时的窗口截图（每个窗口的参考图、每一步的画面），对方打开宏就能看到每一步在哪操作；截图里可能有聊天内容，不想分享可以在设置里关掉（执行只看锚点和目标图，不受影响）。草稿和运行截图不打进去；导入时自动校验文件，同名的宏自动加 `-2` 后缀，不弹任何确认框。
+> 平台包可以**一键导出**成一个 `.cwpack` 文件分享给其他人，对方把文件拖进 studio 页面就导入完成，立刻拥有整套平台操作。导出时默认带上录制时的窗口截图（每个窗口的参考图、每一步的画面），对方打开流程就能看到每一步在哪操作；截图里可能有聊天内容，不想分享可以在设置里关掉（执行只看锚点和目标图，不受影响）。草稿和运行截图不打进去；导入时自动校验文件，同名的流程自动加 `-2` 后缀，不弹任何确认框。
 
 ## 🏗️ 工作原理
 
 ```mermaid
 flowchart LR
     E["engine<br/>决策：做什么"] -->|PlatformPort| A["adapters<br/>平台包：在哪做"]
-    A --> M["macro<br/>执行：怎么做"]
+    A --> M["flow<br/>执行：怎么做"]
     M --> SCR(["屏幕<br/>微信 / B站 / 抖音"])
     A -->|监控事件 · 提取内容| E
     E -->|草稿| Q[("待确认队列")]
     Q <-->|通过 / 修改 / 拒绝| S["studio<br/>你的入口"]
-    S -->|录制 / 编辑宏| M
+    S -->|录制 / 编辑流程| M
     M --> R[("审计<br/>截图 + 日志")]
     R --> S
 ```
 
-1. **studio**：可视化编辑器，也是你的主入口。在这里录制和编辑宏、确认待发动作、回看审计。
+1. **studio**：可视化编辑器，也是你的主入口。在这里录制和编辑流程、确认待发动作、回看审计。界面上按「**应用 › 流程 › 步骤**」组织：一个应用（QQ、微信…）就是一个平台包，一个流程就是录下来的一串操作（`flows/*.yaml`），流程里是一步步的步骤；代码、文件夹和本文里应用仍叫平台。
 2. **engine**：决策层，负责「此刻做什么」。它监控新内容、按作息挑时机、判断该不该互动、生成草稿，并推进待确认动作的工作流。
-3. **adapters**：平台层，负责「在哪做」。通用 `ScreenAdapter` 读取平台包的声明，实现监控、提取，并调用宏。
-4. **macro**：执行层，负责「怎么做」。全局排队执行、校准窗口、拟人操作、每步操作后截图；不认识任何具体平台。
+3. **adapters**：平台层，负责「在哪做」。通用 `ScreenAdapter` 读取平台包的声明，实现监控、提取，并调用流程。
+4. **flow**：执行层，负责「怎么做」。全局排队执行、校准窗口、拟人操作、每步操作后截图；不认识任何具体平台。
 5. **infra**：存储（SQLite）和 LLM 客户端的具体实现。
 6. **审计**：每次操作存一张截图和一条日志，事后按可疑度回看。
 
-> **依赖方向：** engine 只依赖 `engine/ports/` 里的接口；adapters 和 infra 负责实现这些接口；macro 与平台无关；所有装配都在 `bootstrap.py` 一处完成。CLI 和 studio 都通过它启动。
+> **依赖方向：** engine 只依赖 `engine/ports/` 里的接口；adapters 和 infra 负责实现这些接口；flow 与平台无关；所有装配都在 `bootstrap.py` 一处完成。CLI 和 studio 都通过它启动。
 
 ## 🔄 评论与发帖工作流
 
@@ -144,9 +144,9 @@ flowchart TD
 | ① 判断 | `engine/decision/policy_comment.py` | 通用。关系名单、频率上限、随机门槛，全平台共用 |
 | ② 生成 | `engine/tone/generator.py` | 通用。经 `ports/llm.py` 调用 LLM，只带生成所需的最少上下文和你的历史评论 |
 | ③ 确认 | `engine/ports/review.py`（实现在 `infra/sqlite/`） | 通用。待确认队列是领域逻辑；`studio/routes/pending.py` 只负责展示和提交你的选择 |
-| ④ 执行 | `adapters/<平台>/templates/` → `macro/executor.py` | 平台宏 + 全局执行器。与其他动作互斥排队；输入和发送前核对页面指纹，对不上就中止 |
-| ⑤ 记录 | `macro/audit/` + `engine/tone/feedback.py` | 截图和操作日志进审计；最终文本、diff 和你的选择进反馈学习与行为记忆 |
-| 串联 | `engine/workflow/comment.py` | 跨时间的状态机：`待确认 → 已通过 / 已修改 / 已拒绝 → 已执行 / 执行失败`。确认后由它触发执行，studio 不直接调用 macro |
+| ④ 执行 | `adapters/<平台>/flows/` → `flow/executor.py` | 平台流程 + 全局执行器。与其他动作互斥排队；输入和发送前核对页面指纹，对不上就中止 |
+| ⑤ 记录 | `flow/audit/` + `engine/tone/feedback.py` | 截图和操作日志进审计；最终文本、diff 和你的选择进反馈学习与行为记忆 |
+| 串联 | `engine/workflow/comment.py` | 跨时间的状态机：`待确认 → 已通过 / 已修改 / 已拒绝 → 已执行 / 执行失败`。确认后由它触发执行，studio 不直接调用 flow |
 
 **发帖**走同一个待确认队列，只是起点不同：不由监控触发，而是由 `policy_post.py` 按你的作息和发帖频率挑时机，在 `engine/workflow/post.py` 里走「时机 → 生成 → 确认 → 执行 → 记录」。
 
@@ -157,7 +157,7 @@ flowchart TD
 | 层 | 选择 | 用途 |
 | :--- | :--- | :--- |
 | 语言 | Python 3.11+ | 全项目（`src/` 布局，uv 管理） |
-| 数据模型 | Pydantic v2 | Step / Script、平台包声明 |
+| 数据模型 | Pydantic v2 | Step / Flow、平台包声明 |
 | 配置 | pydantic-settings + TOML | `config.toml` 运行配置、`.env` 密钥 |
 | 存储 | SQLite | `state.db`：待确认队列、行为记忆、审计日志 |
 | LLM | 可插拔（经 `ports/llm.py`），支持云端 API 或本地模型 | 评论 / 发帖草稿生成 |
@@ -171,13 +171,13 @@ flowchart TD
 
 ## 🖱️ 执行约定
 
-- **全部平台走屏幕级宏操作**，包括 B站和抖音的网页端。浏览器窗口和客户端窗口，在宏的视角里没有区别——都是屏幕上的像素区域。用宏操作浏览器，浏览器看到的是真实 CGEvent，比 CDP 更安全。
-- **只有一套鼠标键盘**：studio 录制、手动运行、engine 定时动作，全部经过 `macro/executor.py` 排队，互斥执行。检测到你正在用电脑时，执行器暂停让出，等你空闲后再继续。
-- **坐标相对窗口**：宏记录的是窗口内坐标，同时记下录制时的窗口尺寸和屏幕缩放倍率（macOS Retina / Windows 显示缩放）。执行前先把窗口校准到相同尺寸，避免换了分辨率就点歪。
+- **全部平台走屏幕级流程操作**，包括 B站和抖音的网页端。浏览器窗口和客户端窗口，在流程的视角里没有区别——都是屏幕上的像素区域。用流程操作浏览器，浏览器看到的是真实 CGEvent，比 CDP 更安全。
+- **只有一套鼠标键盘**：studio 录制、手动运行、engine 定时动作，全部经过 `flow/executor.py` 排队，互斥执行。检测到你正在用电脑时，执行器暂停让出，等你空闲后再继续。
+- **坐标相对窗口**：流程记录的是窗口内坐标，同时记下录制时的窗口尺寸和屏幕缩放倍率（macOS Retina / Windows 显示缩放）。执行前先把窗口校准到相同尺寸，避免换了分辨率就点歪。
 - **先认页面，再动手**：每一步都可以声明「此时应该在哪个页面」（`expected_page`）。输入和发送之前，runner 必须先核对页面指纹；对不上就中止，并在审计里标记为可疑——宁可不发，也不能把评论打进错误的聊天窗口。
 - **输入前先清空**：输入步骤默认先全选删除输入框里的内容（macOS ⌘A / Windows Ctrl+A），空跑或被打断后残留的文字不会跟着下一次一起发出去。
 - **急停**：全局快捷键（默认 macOS `⌃⌥⌘.`、Windows `Ctrl+Alt+Shift+.`，可在 studio 的「设置 · 快捷键」里改，跟别的软件冲突会当场提示）会立刻中止当前动作并清空执行队列，已中止的动作同样会留下审计记录。
-- **空跑模式**：开启 `dry_run` 后，完整走一遍「打开 → 定位 → 输入」，但跳过最后一步「发送」，并照常截图和写审计。录完新宏、换了窗口尺寸之后，先空跑一遍再上线。
+- **空跑模式**：开启 `dry_run` 后，完整走一遍「打开 → 定位 → 输入」，但跳过最后一步「发送」，并照常截图和写审计。录完新流程、换了窗口尺寸之后，先空跑一遍再上线。
 
 ## 🚀 快速开始
 
@@ -335,11 +335,11 @@ cyber-worker/
 │   │   │   └── post.py             # 时机 → 生成 → 入队 →（确认后）执行 → 记录
 │   │   └── monitor.py              # 轮询各平台监控区域，产生「新内容」事件
 │   │
-│   ├── macro/                      # ★ 执行层：决定「怎么做」（与平台无关）
-│   │   ├── schema.py               # Step / Script 数据模型（坐标相对窗口、窗口尺寸与缩放倍率、每步 expected_page）
+│   ├── flow/                       # ★ 执行层：决定「怎么做」（与平台无关）
+│   │   ├── schema.py               # Step / Flow 数据模型（坐标相对窗口、窗口尺寸与缩放倍率、每步 expected_page）
 │   │   ├── recorder.py             # 录制引擎（pynput 监听鼠标键盘，操作间隔录成延迟行）
 │   │   ├── anchors.py              # 从截图框选区域 → 页面锚点（studio 和 CLI 共用）
-│   │   ├── runner.py               # 执行单个脚本：校准窗口 → 逐步操作（输入/发送前校验页面）→ 操作后截图；支持空跑
+│   │   ├── runner.py               # 执行单个流程：校准窗口 → 逐步操作（输入/发送前校验页面）→ 操作后截图；支持空跑
 │   │   ├── executor.py             # 全局执行器：所有动作排队互斥，你在用电脑时暂停，急停热键清空队列
 │   │   ├── locator/                # 定位（决定点哪里，具体识别交给 vision/）
 │   │   │   ├── coord.py            # 坐标定位（最基础）
@@ -374,23 +374,23 @@ cyber-worker/
 │   │       └── windows.py          # Win32 + Pillow（窗口校准、截图、绕过输入法打字、系统热键注册）
 │   │
 │   ├── adapters/                   # ★ 平台层：决定「在哪做」（声明式平台包）
-│   │   ├── screen_adapter.py       # 通用 PlatformPort 实现：读取平台包声明，调 macro 执行
+│   │   ├── screen_adapter.py       # 通用 PlatformPort 实现：读取平台包声明，调 flow 执行
 │   │   ├── loader.py               # 加载平台包（内置 + user_data/platforms/，同名文件用户版优先）
 │   │   ├── pack.py                 # 平台包导出 / 导入（.cwpack：打包、安全校验、解压）
 │   │   ├── wechat/
-│   │   │   ├── platform.yaml       # 能力 → 宏映射、提取字段（区域 + OCR）、窗口尺寸
+│   │   │   ├── platform.yaml       # 能力 → 流程映射、提取字段（区域 + OCR）、窗口尺寸
 │   │   │   ├── pages.yaml          # 页面指纹 + 监控区域（朋友圈 / 发布页 / 主页）
-│   │   │   ├── templates/          # 坐标宏（录制生成，只读）
+│   │   │   ├── flows/              # 坐标流程（录制生成，只读）
 │   │   │   │   ├── moments_browse.yaml     # 打开朋友圈 + 滚 N 屏
 │   │   │   │   ├── moments_like.yaml       # 浏览 + 点赞
 │   │   │   │   ├── moments_comment.yaml    # 评论指定动态（带 comment_draft 变量）
 │   │   │   │   └── moments_publish.yaml    # 点相机 → 输入 → 发布（带 post_draft 变量）
 │   │   │   └── reference/          # 参考截图（测试账号录制，随项目分发）
 │   │   │       └── moments_1200x900.png
-│   │   ├── bilibili/               # 同上：platform.yaml + pages.yaml + templates/
-│   │   │   └── templates/          # feed_browse / feed_like / feed_comment
+│   │   ├── bilibili/               # 同上：platform.yaml + pages.yaml + flows/
+│   │   │   └── flows/              # feed_browse / feed_like / feed_comment
 │   │   ├── douyin/                 # 同上
-│   │   │   └── templates/          # feed_browse / feed_like / feed_comment
+│   │   │   └── flows/              # feed_browse / feed_like / feed_comment
 │   │   ├── weibo/                  # 后续适配（空目录 + .gitkeep）
 │   │   ├── x/                      # 后续适配
 │   │   └── instagram/              # 后续适配
@@ -406,10 +406,10 @@ cyber-worker/
 │   │
 │   └── studio/                     # ★ 可视化编辑器（用户主入口）
 │       ├── server.py               # 唯一的 FastAPI 实例（:9999）
-│       ├── state.py                # 共享状态：脚本目录、最新截图帧、录制会话、问题检查
+│       ├── state.py                # 共享状态：流程目录、最新截图帧、录制会话、问题检查
 │       ├── ws.py                   # WebSocket：录制时实时推步骤、执行时实时推每一步结果
 │       ├── routes/                 # HTTP 接口（只做展示与提交，不含业务逻辑）
-│       │   ├── edit.py             # 宏的增删改查、截取当前窗口、页面锚点
+│       │   ├── edit.py             # 流程的增删改查、截取当前窗口、页面锚点
 │       │   ├── record.py           # 录制控制（开始/停止；默认替换已有步骤，可选追加到末尾）
 │       │   ├── preview.py          # 图片读取（参考图、截图、锚点图，只限 user_data）
 │       │   ├── run.py              # 空跑 / 执行（进执行器排队）、急停、实时状态推送
@@ -419,7 +419,7 @@ cyber-worker/
 │       │   ├── pending.py          # 待确认动作（评论 + 发帖；通过 / 修改 / 拒绝，拒绝需选原因）
 │       │   └── audit.py            # 审计页（按可疑度排序）
 │       └── static/                 # 前端（原生 HTML + JS + Canvas，不引框架）
-│           ├── index.html          # 宏设计：添加 / 步骤列表 / 画布 + 参数·宏设置·运行 标签页
+│           ├── index.html          # 流程设计：添加 / 步骤列表 / 画布 + 参数·流程设置·运行 标签页
 │           ├── pending.html        # 待确认动作页
 │           ├── audit.html          # 审计回放页（单张截图 + 预期状态）
 │           ├── common.js           # 图标、外观（深色 / 浅色 / 跟随系统）、请求封装、提示、WebSocket
@@ -440,7 +440,7 @@ cyber-worker/
 │   │   ├── test_decision.py        # 决策逻辑（假 adapter + 假 clock）
 │   │   ├── test_workflow.py        # 待确认动作状态机（假 ReviewQueue）
 │   │   └── test_feedback.py        # 反馈分流逻辑（三种动作 → 各自的模型）
-│   ├── macro/
+│   ├── flow/
 │   │   ├── test_humanize.py        # 贝塞尔轨迹、lognormal 打字
 │   │   ├── test_executor.py        # 排队互斥、用户输入时暂停、急停清空队列
 │   │   ├── test_runner.py          # 执行引擎、窗口校准、页面不符即中止、空跑不发送
@@ -466,15 +466,15 @@ cyber-worker/
 │           └── douyin_recommend_feed.png      # B站/抖音适配时补
 │
 ├── docs/                           # 设计文档
-│   ├── adapters.md                 # 平台包格式：platform.yaml / pages.yaml / templates
-│   ├── macro.md                    # 宏引擎 + 录制 + 执行器 + 窗口校准
+│   ├── adapters.md                 # 平台包格式：platform.yaml / pages.yaml / flows
+│   ├── flow.md                     # 流程引擎 + 录制 + 执行器 + 窗口校准
 │   ├── workflow.md                 # 待确认动作状态机与反馈信号
 │   ├── audit.md                    # 截图存档 + 审计
 │   └── studio.md                   # UI 使用说明 + 路由
 │
 └── user_data/                      # ★ 运行时数据（gitignore，不进 git）
     ├── platforms/                  # 你录制或 fork 的平台包（格式同 adapters/<平台>/，同名覆盖内置）
-    │   └── wechat/templates/my_moments_like.yaml
+    │   └── wechat/flows/my_moments_like.yaml
     ├── baselines/                  # 圈选区域的基准图（每个 tag 一张）
     │   ├── wechat/
     │   │   ├── new_comment.png     # 消息图标右上角
@@ -496,10 +496,10 @@ cyber-worker/
 
 | 状态 | 功能 |
 | :---: | :--- |
-| 🚧 | `macro/` 最小闭环（录制 + 窗口校准 + 页面校验 + 执行 + 操作后截图 + 空跑）：Windows 已实测，待 macOS 实机验证 |
+| 🚧 | `flow/` 最小闭环（录制 + 窗口校准 + 页面校验 + 执行 + 操作后截图 + 空跑）：Windows 已实测，待 macOS 实机验证 |
 | 🚧 | 全局执行器（动作排队互斥、你在用电脑时暂停、急停）：Windows 已实测，待 macOS 实机验证 |
 | ✅ | 审计页（按可疑度排序、抽查、日报；出问题的步骤附「怎么修」和直达修改的按钮） |
-| ✅ | `studio/` 应用页（应用总览、每个应用的宏卡片：说明、最近一次运行）+ 宏设计器（新建 + 录制 + 编辑 + 锚点 + 按图找点击 + 等待页面 + 空跑 / 执行 + 深色 / 浅色外观 + 设置中心 + 新手引导；报错都附一键修复） |
+| ✅ | `studio/` 应用页（应用总览、每个应用的流程卡片：说明、最近一次运行）+ 流程设计器（新建 + 录制 + 编辑 + 锚点 + 按图找点击 + 等待页面 + 空跑 / 执行 + 深色 / 浅色外观 + 设置中心 + 新手引导；报错都附一键修复） |
 | ✅ | 平台包导出 / 导入（一键导出 `.cwpack`，拖进页面即导入，方便分享给其他人） |
 | ⬜ | 按文字找点击（OCR，`locator/text.py` + `vision/ocr.py`） |
 | ⬜ | 平台包格式 + 通用 `ScreenAdapter`，用微信朋友圈验证 |

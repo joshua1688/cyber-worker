@@ -5,19 +5,19 @@ import shutil
 import threading
 
 import pytest
+from fakes import FakeActivity, FakeHotkeys, FakeIO
 from fastapi.testclient import TestClient
+from helpers import pattern, screen_with
 
 from cyber_worker.bootstrap import App
 from cyber_worker.config import Config, PathsConfig
+from cyber_worker.flow.executor import Executor
+from cyber_worker.flow.io.hotkeys import HotkeyManager
+from cyber_worker.flow.runner import Runner
+from cyber_worker.flow.screenshot.storage import ScreenshotStorage
 from cyber_worker.infra.sqlite.audit_store import SqliteAuditStore
 from cyber_worker.infra.sqlite.db import connect
-from cyber_worker.macro.executor import Executor
-from cyber_worker.macro.io.hotkeys import HotkeyManager
-from cyber_worker.macro.runner import Runner
-from cyber_worker.macro.screenshot.storage import ScreenshotStorage
 from cyber_worker.studio.server import create_app
-from fakes import FakeActivity, FakeHotkeys, FakeIO
-from helpers import pattern, screen_with
 
 
 def fake_listen(builder, stop: threading.Event):
@@ -63,77 +63,77 @@ def client(tmp_path):
     executor.shutdown()
 
 
-def new_script(client, name="comment"):
-    r = client.post("/api/scripts", json={"platform": "demo", "name": name, "app": "Demo",
+def new_flow(client, name="comment"):
+    r = client.post("/api/flows", json={"platform": "demo", "name": name, "app": "Demo",
                                           "width": 400, "height": 300})
     assert r.status_code == 200, r.text
     return r.json()
 
 
-def test_new_macro_is_a_draft_until_saved(client, tmp_path):
-    d = new_script(client)
-    assert d["id"] == "_draft/demo/templates/comment.yaml" and d["draft"] is True
-    assert d["frames"]["reference"]["main"]["url"].startswith("/api/file?path=drafts/demo/templates/comment.png")
+def test_new_flow_is_a_draft_until_saved(client, tmp_path):
+    d = new_flow(client)
+    assert d["id"] == "_draft/demo/flows/comment.yaml" and d["draft"] is True
+    assert d["frames"]["reference"]["main"]["url"].startswith("/api/file?path=drafts/demo/flows/comment.png")
     assert client.get(d["frames"]["reference"]["main"]["url"]).status_code == 200
-    assert client.get("/api/scripts").json() == [
+    assert client.get("/api/flows").json() == [
         {"id": d["id"], "platform": "demo", "name": "comment", "draft": True}]
-    assert not (tmp_path / "user_data/platforms").exists()  # 宏库里还没有
+    assert not (tmp_path / "user_data/platforms").exists()  # 流程库里还没有
     # 重名不报错，自动加序号
-    again = new_script(client)
-    assert again["id"] == "_draft/demo/templates/comment-2.yaml"
-    assert again["script"]["name"] == "comment-2"  # 显示名也带序号，列表里分得清
+    again = new_flow(client)
+    assert again["id"] == "_draft/demo/flows/comment-2.yaml"
+    assert again["flow"]["name"] == "comment-2"  # 显示名也带序号，列表里分得清
 
 
 def test_save_moves_draft_with_reference_and_anchors(client, tmp_path):
-    d = new_script(client)
+    d = new_flow(client)
     sid = d["id"]
-    client.post(f"/api/scripts/{sid}/capture")
-    client.post(f"/api/scripts/{sid}/anchors", json={"page": "页面1", "x": 50, "y": 40, "w": 40, "h": 30})
-    saved = client.post(f"/api/scripts/{sid}/commit").json()
-    assert saved["id"] == "demo/templates/comment.yaml" and saved["draft"] is False
-    lib = tmp_path / "user_data/platforms/demo/templates"
+    client.post(f"/api/flows/{sid}/capture")
+    client.post(f"/api/flows/{sid}/anchors", json={"page": "页面1", "x": 50, "y": 40, "w": 40, "h": 30})
+    saved = client.post(f"/api/flows/{sid}/commit").json()
+    assert saved["id"] == "demo/flows/comment.yaml" and saved["draft"] is False
+    lib = tmp_path / "user_data/platforms/demo/flows"
     assert sorted(p.name for p in lib.iterdir()) == [
         "comment.anchors", "comment.pages.yaml", "comment.png", "comment.yaml"]
     assert not list((tmp_path / "user_data/drafts").rglob("*.*"))  # 草稿清空了
     assert client.get(saved["frames"]["reference"]["main"]["url"]).status_code == 200
     assert client.get(saved["pages"]["页面1"][0]["url"]).status_code == 200  # 锚点图跟着搬过来了
     assert saved["frames"]["latest"]["main"]["url"]  # 最新截图也还在
-    assert client.post(f"/api/scripts/{saved['id']}/commit").status_code == 400  # 已经保存过了
+    assert client.post(f"/api/flows/{saved['id']}/commit").status_code == 400  # 已经保存过了
 
 
 def test_save_renames_when_library_already_has_same_name(client):
-    first = client.post(f"/api/scripts/{new_script(client)['id']}/commit").json()
-    second = client.post(f"/api/scripts/{new_script(client)['id']}/commit").json()
-    assert first["id"] == "demo/templates/comment.yaml"
-    assert second["id"] == "demo/templates/comment-2.yaml"
-    assert [first["script"]["name"], second["script"]["name"]] == ["comment", "comment-2"]
+    first = client.post(f"/api/flows/{new_flow(client)['id']}/commit").json()
+    second = client.post(f"/api/flows/{new_flow(client)['id']}/commit").json()
+    assert first["id"] == "demo/flows/comment.yaml"
+    assert second["id"] == "demo/flows/comment-2.yaml"
+    assert [first["flow"]["name"], second["flow"]["name"]] == ["comment", "comment-2"]
 
 
-def test_delete_removes_macro_and_its_own_files(client, tmp_path):
-    d = new_script(client)
+def test_delete_removes_flow_and_its_own_files(client, tmp_path):
+    d = new_flow(client)
     sid = d["id"]
-    client.post(f"/api/scripts/{sid}/capture")
-    client.post(f"/api/scripts/{sid}/anchors", json={"page": "页面1", "x": 50, "y": 40, "w": 40, "h": 30})
-    assert client.delete(f"/api/scripts/{sid}/detail").status_code == 200
+    client.post(f"/api/flows/{sid}/capture")
+    client.post(f"/api/flows/{sid}/anchors", json={"page": "页面1", "x": 50, "y": 40, "w": 40, "h": 30})
+    assert client.delete(f"/api/flows/{sid}/detail").status_code == 200
     assert not list((tmp_path / "user_data/drafts").rglob("*.*"))
-    assert client.get("/api/scripts").json() == []
+    assert client.get("/api/flows").json() == []
 
 
 def test_chinese_name_and_auto_platform(client):
-    r = client.post("/api/scripts", json={"name": "朋友圈 评论", "app": "WeChat.exe",
+    r = client.post("/api/flows", json={"name": "朋友圈 评论", "app": "WeChat.exe",
                                           "width": 400, "height": 300})
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["id"] == "_draft/wechat/templates/朋友圈_评论.yaml"
-    assert d["script"]["name"] == "朋友圈 评论"
+    assert d["id"] == "_draft/wechat/flows/朋友圈_评论.yaml"
+    assert d["flow"]["name"] == "朋友圈 评论"
     assert client.get(d["frames"]["reference"]["main"]["url"]).status_code == 200
-    saved = client.post(f"/api/scripts/{d['id']}/commit").json()
-    assert saved["id"] == "wechat/templates/朋友圈_评论.yaml"
-    assert client.get("/api/scripts").json() == [
+    saved = client.post(f"/api/flows/{d['id']}/commit").json()
+    assert saved["id"] == "wechat/flows/朋友圈_评论.yaml"
+    assert client.get("/api/flows").json() == [
         {"id": saved["id"], "platform": "wechat", "name": "朋友圈 评论", "draft": False}]
-    again = client.post("/api/scripts", json={"name": "朋友圈 评论", "app": "WeChat.exe",
+    again = client.post("/api/flows", json={"name": "朋友圈 评论", "app": "WeChat.exe",
                                               "width": 400, "height": 300}).json()
-    assert again["script"]["name"] == "朋友圈 评论-2"
+    assert again["flow"]["name"] == "朋友圈 评论-2"
 
 
 def test_windows_list_hides_studio_and_flags_shared_apps(client):
@@ -144,65 +144,65 @@ def test_windows_list_hides_studio_and_flags_shared_apps(client):
 
 
 def test_rejects_path_traversal(client):
-    new_script(client)
-    assert client.get("/api/scripts/../../state.db/detail").status_code in (400, 404)
+    new_flow(client)
+    assert client.get("/api/flows/../../state.db/detail").status_code in (400, 404)
     assert client.get("/api/file", params={"path": "../secret.png"}).status_code == 400
-    assert client.post("/api/scripts", json={"platform": "../x", "name": "a", "app": "A",
+    assert client.post("/api/flows", json={"platform": "../x", "name": "a", "app": "A",
                                              "width": 1, "height": 1}).status_code == 400
 
 
 def test_save_validates_and_reports_problems(client):
-    d = new_script(client)
-    url = f"/api/scripts/{d['id']}/detail"
-    script = d["script"]
-    script["steps"] = [{"id": "s01", "action": "type", "text": "{draft}"}]
-    r = client.put(url, json=script)
+    d = new_flow(client)
+    url = f"/api/flows/{d['id']}/detail"
+    flow = d["flow"]
+    flow["steps"] = [{"id": "s01", "action": "type", "text": "{draft}"}]
+    r = client.put(url, json=flow)
     assert r.status_code == 200
     msgs = [p["message"] for p in r.json()["problems"]]
     assert any("在哪个画面执行" in m for m in msgs)
     assert any("{draft}" in m for m in msgs)
 
-    script["steps"] = [{"id": "s01", "action": "teleport"}]
-    assert client.put(url, json=script).status_code == 422
+    flow["steps"] = [{"id": "s01", "action": "teleport"}]
+    assert client.put(url, json=flow).status_code == 422
 
 
 def test_capture_then_anchor(client):
-    d = new_script(client)
+    d = new_flow(client)
     sid = d["id"]
-    assert client.post(f"/api/scripts/{sid}/anchors", json={
+    assert client.post(f"/api/flows/{sid}/anchors", json={
         "page": "compose", "x": 50, "y": 40, "w": 40, "h": 30}).status_code == 400  # 还没截图
 
-    d = client.post(f"/api/scripts/{sid}/capture").json()
+    d = client.post(f"/api/flows/{sid}/capture").json()
     assert d["frames"]["latest"]["main"]["url"]
-    d = client.post(f"/api/scripts/{sid}/anchors", json={
+    d = client.post(f"/api/flows/{sid}/anchors", json={
         "page": "compose", "x": 50, "y": 40, "w": 40, "h": 30}).json()
-    assert d["script"]["pages"] == "comment.pages.yaml"  # 每个宏自己一份
+    assert d["flow"]["pages"] == "comment.pages.yaml"  # 每个流程自己一份
     assert len(d["pages"]["compose"]) == 1 and d["pages"]["compose"][0]["url"]
 
-    # 宏自己的页面文件不能出现在宏列表里
-    assert [x["id"] for x in client.get("/api/scripts").json()] == [sid]
+    # 流程自己的页面文件不能出现在流程列表里
+    assert [x["id"] for x in client.get("/api/flows").json()] == [sid]
 
-    d = client.delete(f"/api/scripts/{sid}/anchors/compose/0").json()
+    d = client.delete(f"/api/flows/{sid}/anchors/compose/0").json()
     assert d["pages"] == {}
 
 
 def test_record_appends_steps(client):
-    d = new_script(client)
+    d = new_flow(client)
     with client.websocket_connect(WS) as ws:
-        assert client.post("/api/record/start", json={"script_id": d["id"]}).status_code == 200
+        assert client.post("/api/record/start", json={"flow_id": d["id"]}).status_code == 200
         assert ws.receive_json()["type"] in ("record", "record_state")
         r = client.post("/api/record/stop").json()
     assert r["added"] >= 3
-    actions = [s["action"] for s in r["script"]["steps"]]
+    actions = [s["action"] for s in r["flow"]["steps"]]
     assert actions[0] == "click" and "type" in actions
 
 
 def test_record_automates_send_and_page(client):
     """录完自动：标记发送步骤、选锚点、把页面填给输入和发送步骤；用户什么都不用填。"""
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     r = client.post("/api/record/stop").json()
-    steps = r["script"]["steps"]
+    steps = r["flow"]["steps"]
     send = next(s for s in steps if s.get("sends"))
     assert send["id"] == r["auto_send"] and send["action"] == "click"
     assert r["auto_anchor"]["page"] == "页面1"
@@ -225,21 +225,21 @@ def test_pick_window_skips_studio_and_cleans_title(client):
 
 
 def test_dry_run_streams_progress_then_audit(client):
-    d = new_script(client)
+    d = new_flow(client)
     sid = d["id"]
-    client.post(f"/api/scripts/{sid}/capture")
-    client.post(f"/api/scripts/{sid}/anchors", json={"page": "compose", "x": 50, "y": 40, "w": 40, "h": 30})
-    script = client.get(f"/api/scripts/{sid}/detail").json()["script"]
-    script["variables"] = ["draft"]
-    script["steps"] = [
+    client.post(f"/api/flows/{sid}/capture")
+    client.post(f"/api/flows/{sid}/anchors", json={"page": "compose", "x": 50, "y": 40, "w": 40, "h": 30})
+    flow = client.get(f"/api/flows/{sid}/detail").json()["flow"]
+    flow["variables"] = ["draft"]
+    flow["steps"] = [
         {"id": "s01", "action": "click", "x": 20, "y": 30},
         {"id": "s02", "action": "type", "text": "{draft}", "expected_page": "compose"},
         {"id": "s03", "action": "key", "combo": "enter", "sends": True, "expected_page": "compose"},
     ]
-    assert client.put(f"/api/scripts/{sid}/detail", json=script).json()["problems"] == []
+    assert client.put(f"/api/flows/{sid}/detail", json=flow).json()["problems"] == []
 
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{sid}/run", json={"dry_run": True, "variables": {"draft": "好看"}})
+        client.post(f"/api/flows/{sid}/run", json={"dry_run": True, "variables": {"draft": "好看"}})
         events = []
         while not (events and events[-1].get("state") == "done"):
             events.append(ws.receive_json())
@@ -272,11 +272,11 @@ def test_pages_served(client):
 
 def test_run_waits_while_user_is_moving_and_can_be_cancelled(client):
     """你一直在动鼠标：任务停在「排队」不开始；点取消后收到「完成：已取消」，按钮能恢复。"""
-    d = new_script(client)
+    d = new_flow(client)
     client.app.state.studio.run_idle_sec = 2
     client.activity.idle = 0  # 用户正在动鼠标
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
+        client.post(f"/api/flows/{d['id']}/run", json={"dry_run": True})
         queued = ws.receive_json()
         assert queued["state"] == "queued" and queued["idle_sec"] == 2
         assert client.get("/api/status").json()["busy"] is True
@@ -292,9 +292,9 @@ def test_run_waits_while_user_is_moving_and_can_be_cancelled(client):
 
 
 def test_run_reports_running_once_user_is_idle(client):
-    d = new_script(client)
+    d = new_flow(client)
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
+        client.post(f"/api/flows/{d['id']}/run", json={"dry_run": True})
         states = []
         while not states or states[-1] != "done":
             ev = ws.receive_json()
@@ -305,7 +305,7 @@ def test_run_reports_running_once_user_is_idle(client):
 
 def test_record_across_windows_saves_window_and_its_anchor(client):
     """QQ 那种场景：主窗口双击会话，弹出的聊天窗口里打字、点发送。"""
-    from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
+    from cyber_worker.flow.io.base import WindowGeometry, WindowInfo
 
     # 同一个程序弹出的聊天窗口（别的程序的窗口不录）
     chat = (WindowInfo("Demo", "My Sky等2个会话", 300, 200), WindowGeometry(150, 80, 300, 200, 1.0))
@@ -320,10 +320,10 @@ def test_record_across_windows_saves_window_and_its_anchor(client):
         stop.wait()
 
     client.app.state.studio.app.listen = listen_two_windows
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     r = client.post("/api/record/stop").json()
-    s = r["script"]
+    s = r["flow"]
     assert s["windows"] == {"w2": {"app": "Demo", "title": "My Sky", "width": 300, "height": 200, "scale": 1.0,
                                    "reference": "comment.refs/w2.png", "popup": False}}
     assert [(x["action"], x.get("win")) for x in s["steps"]] == [("click", None), ("type", "w2"), ("click", "w2")]
@@ -339,21 +339,21 @@ def test_record_across_windows_saves_window_and_its_anchor(client):
     assert r["problems"] == []
 
 
-def test_record_hotkey_toggles_current_macro(client):
-    """全局快捷键：没有选中的宏时提示；选中后按一下开始、再按一下停止，结果通过事件推给界面。"""
+def test_record_hotkey_toggles_current_flow(client):
+    """全局快捷键：没有选中的流程时提示；选中后按一下开始、再按一下停止，结果通过事件推给界面。"""
     from cyber_worker.studio.routes.record import toggle_recording
 
     st = client.app.state.studio
     assert client.get("/api/status").json()["record_hotkey"] == "alt+r"
     with client.websocket_connect(WS) as ws:
-        toggle_recording(st)  # 还没选宏
+        toggle_recording(st)  # 还没选流程
         ev = ws.receive_json()
         assert ev["type"] == "toast" and ev["error"]
 
-        d = new_script(client)
-        client.post("/api/current", json={"script_id": d["id"]})
+        d = new_flow(client)
+        client.post("/api/current", json={"flow_id": d["id"]})
         toggle_recording(st)  # 开始
-        assert st.recording is not None and st.recording.script_id == d["id"]
+        assert st.recording is not None and st.recording.flow_id == d["id"]
         toggle_recording(st)  # 停止
         assert st.recording is None
         events = []
@@ -369,8 +369,8 @@ def test_record_hotkey_double_press_does_not_restart(client):
     from cyber_worker.studio.routes.record import toggle_recording
 
     st = client.app.state.studio
-    d = new_script(client)
-    client.post("/api/current", json={"script_id": d["id"]})
+    d = new_flow(client)
+    client.post("/api/current", json={"flow_id": d["id"]})
     with client.websocket_connect(WS) as ws:
         toggle_recording(st)  # 开始
         st.record_lock.acquire()  # 模拟「正在停止」：这时候按下的也不算
@@ -395,8 +395,8 @@ def test_record_hotkey_works_again_after_cooldown(client):
     from cyber_worker.studio.routes import record
 
     st = client.app.state.studio
-    d = new_script(client)
-    client.post("/api/current", json={"script_id": d["id"]})
+    d = new_flow(client)
+    client.post("/api/current", json={"flow_id": d["id"]})
     record.toggle_recording(st)
     record.toggle_recording(st)
     st.stopped_at -= record.RESTART_COOLDOWN  # 过了冷却时间
@@ -431,8 +431,8 @@ def test_hotkey_settings(client, tmp_path):
     assert sorted(client.hotkeys.bound) == ["alt+t", "ctrl+alt+f10", "ctrl+shift+alt+."]
 
     # 新键马上能用：按一下开始录制
-    d = new_script(client)
-    client.post("/api/current", json={"script_id": d["id"]})
+    d = new_flow(client)
+    client.post("/api/current", json={"flow_id": d["id"]})
     client.hotkeys.press("ctrl+alt+f10")
     st = client.app.state.studio
     for _ in range(100):
@@ -495,11 +495,11 @@ def test_settings_apply_immediately_and_persist(client, tmp_path):
 
 def test_run_countdown_restarts_when_user_moves(client):
     """倒计时：剩余秒数随你停手的时间减少；你一动就回到满值；停够了就开始。"""
-    d = new_script(client)
+    d = new_flow(client)
     client.app.state.studio.run_idle_sec = 2
     client.activity.idle = 0
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
+        client.post(f"/api/flows/{d['id']}/run", json={"dry_run": True})
 
         def next_wait():
             while True:
@@ -532,76 +532,76 @@ def test_recording_click_gets_target_image(client, tmp_path):
 
     st = client.app.state.studio
     st.app.listen = listen
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     r = client.post("/api/record/stop").json()
     assert r["auto_targets"] == 1
-    s1, s2 = r["script"]["steps"]
+    s1, s2 = r["flow"]["steps"]
     assert s1["target"]["image"] == "comment.targets/s01.png" and s2["target"] is None
     t = s1["target"]
     assert t["x"] <= 70 <= t["x"] + t["w"] and t["y"] <= 55 <= t["y"] + t["h"]
     assert client.get(r["targets"]["s01"]).status_code == 200
 
     # 在画面上重新框一块（用录制最后一帧）；保留调过的等待时间
-    sc = r["script"]
+    sc = r["flow"]
     sc["steps"][0]["target"]["timeout"] = 9
-    client.put(f"/api/scripts/{d['id']}/detail", json=sc)
-    r = client.post(f"/api/scripts/{d['id']}/targets",
+    client.put(f"/api/flows/{d['id']}/detail", json=sc)
+    r = client.post(f"/api/flows/{d['id']}/targets",
                     json={"step_id": "s01", "x": 50, "y": 40, "w": 40, "h": 30, "frame": "latest"}).json()
-    t = r["script"]["steps"][0]["target"]
+    t = r["flow"]["steps"][0]["target"]
     assert (t["x"], t["y"], t["w"], t["h"], t["timeout"]) == (50, 40, 40, 30, 9)
-    bad = client.post(f"/api/scripts/{d['id']}/targets", json={"step_id": "s02", "x": 0, "y": 0, "w": 2, "h": 2})
+    bad = client.post(f"/api/flows/{d['id']}/targets", json={"step_id": "s02", "x": 0, "y": 0, "w": 2, "h": 2})
     assert bad.status_code == 400
 
-    # 保存进宏库：目标图目录一起搬，引用跟着改
-    saved = client.post(f"/api/scripts/{d['id']}/commit").json()
-    t = saved["script"]["steps"][0]["target"]
+    # 保存进流程库：目标图目录一起搬，引用跟着改
+    saved = client.post(f"/api/flows/{d['id']}/commit").json()
+    t = saved["flow"]["steps"][0]["target"]
     assert t["image"] == "comment.targets/s01.png"
-    lib = tmp_path / "user_data/platforms/demo/templates"
+    lib = tmp_path / "user_data/platforms/demo/flows"
     assert (lib / "comment.targets/s01.png").exists()
-    assert not (tmp_path / "user_data/drafts/demo/templates/comment.targets").exists()
-    client.delete(f"/api/scripts/{saved['id']}/detail")
+    assert not (tmp_path / "user_data/drafts/demo/flows/comment.targets").exists()
+    client.delete(f"/api/flows/{saved['id']}/detail")
     assert not (lib / "comment.targets").exists()
 
 
 def saved_with_anchor(client, name="comment"):
-    sid = new_script(client, name)["id"]
-    client.post(f"/api/scripts/{sid}/capture")
-    client.post(f"/api/scripts/{sid}/anchors", json={"page": "页面1", "x": 50, "y": 40, "w": 40, "h": 30})
-    return client.post(f"/api/scripts/{sid}/commit").json()
+    sid = new_flow(client, name)["id"]
+    client.post(f"/api/flows/{sid}/capture")
+    client.post(f"/api/flows/{sid}/anchors", json={"page": "页面1", "x": 50, "y": 40, "w": 40, "h": 30})
+    return client.post(f"/api/flows/{sid}/commit").json()
 
 
-def test_pack_export_then_import_renames_same_name_macros(client, tmp_path):
+def test_pack_export_then_import_renames_same_name_flows(client, tmp_path):
     saved = saved_with_anchor(client)
-    new_script(client, "草稿")  # 草稿不进包
+    new_flow(client, "草稿")  # 草稿不进包
     r = client.get("/api/packs/demo")
     assert r.status_code == 200
     assert "demo.cwpack" in r.headers["content-disposition"]
 
-    # 本机已经有同名宏：导入的自动加 -2，原来的不动
+    # 本机已经有同名流程：导入的自动加 -2，原来的不动
     imported = client.post("/api/packs", content=r.content).json()
-    assert imported == {"platform": "demo", "ids": ["demo/templates/comment-2.yaml"]}
-    lib = tmp_path / "user_data/platforms/demo/templates"
+    assert imported == {"platform": "demo", "ids": ["demo/flows/comment-2.yaml"]}
+    lib = tmp_path / "user_data/platforms/demo/flows"
     assert sorted(p.name for p in lib.iterdir()) == [
         "comment-2.anchors", "comment-2.pages.yaml", "comment-2.png", "comment-2.yaml",  # 参考截图跟着导出、改名
         "comment.anchors", "comment.pages.yaml", "comment.png", "comment.yaml"]
-    d = client.get(f"/api/scripts/{imported['ids'][0]}/detail").json()
+    d = client.get(f"/api/flows/{imported['ids'][0]}/detail").json()
     assert client.get(d["pages"]["页面1"][0]["url"]).status_code == 200  # 锚点图跟着改了名
     assert client.get(d["frames"]["reference"]["main"]["url"]).status_code == 200
-    assert d["script"]["name"] == "comment-2"
+    assert d["flow"]["name"] == "comment-2"
     assert not list((tmp_path / "user_data").glob(".import-*"))  # 临时目录清掉了
-    assert saved["id"] in [s["id"] for s in client.get("/api/scripts").json()]
+    assert saved["id"] in [s["id"] for s in client.get("/api/flows").json()]
 
 
 def test_pack_import_into_fresh_platform(client, tmp_path):
     saved_with_anchor(client)
     data = client.get("/api/packs/demo").content
     shutil.rmtree(tmp_path / "user_data/platforms/demo")
-    assert client.post("/api/packs", content=data).json()["ids"] == ["demo/templates/comment.yaml"]
+    assert client.post("/api/packs", content=data).json()["ids"] == ["demo/flows/comment.yaml"]
 
 
 def test_pack_errors(client, tmp_path):
-    assert client.get("/api/packs/demo").status_code == 404  # 还没有保存的宏
+    assert client.get("/api/packs/demo").status_code == 404  # 还没有保存的流程
     assert client.get("/api/packs/..").status_code in (400, 404)
     r = client.post("/api/packs", content=b"garbage")
     assert r.status_code == 400 and "cwpack" in r.json()["detail"]
@@ -617,57 +617,57 @@ def test_rerecording_replaces_old_steps_by_default(client, tmp_path):
 
     st = client.app.state.studio
     st.app.listen = listen
-    sid = new_script(client)["id"]
+    sid = new_flow(client)["id"]
     first = None
     for _ in range(2):
-        client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+        client.post("/api/record/start", json={"flow_id": sid, "record_delays": False})
         r = client.post("/api/record/stop").json()
         first = first or r
-    assert [s["id"] for s in r["script"]["steps"]] == ["s01"] and r["replaced"] == 1
+    assert [s["id"] for s in r["flow"]["steps"]] == ["s01"] and r["replaced"] == 1
     assert r["rec_id"] != first["rec_id"]  # 每次都不一样：studio 重启后也不会和页面记着的撞上
     # 旧步骤的目标图留着（界面上撤销回去还能用），新的换了个名字
-    assert first["script"]["steps"][0]["target"]["image"] == "comment.targets/s01.png"
-    assert r["script"]["steps"][0]["target"]["image"] == "comment.targets/s01-2.png"
-    tpl = tmp_path / "user_data/drafts/demo/templates"
+    assert first["flow"]["steps"][0]["target"]["image"] == "comment.targets/s01.png"
+    assert r["flow"]["steps"][0]["target"]["image"] == "comment.targets/s01-2.png"
+    tpl = tmp_path / "user_data/drafts/demo/flows"
     assert (tpl / "comment.targets/s01.png").exists() and (tpl / "comment.targets/s01-2.png").exists()
 
 
 def test_record_append_setting_keeps_old_steps(client, tmp_path):
-    sid = new_script(client)["id"]
+    sid = new_flow(client)["id"]
     assert client.patch("/api/settings", json={"record_append": True}).json()["record_append"] is True
     assert "record_append = true" in (tmp_path / "config.toml").read_text(encoding="utf-8")
     for _ in range(2):
-        client.post("/api/record/start", json={"script_id": sid})
+        client.post("/api/record/start", json={"flow_id": sid})
         r = client.post("/api/record/stop").json()
-    assert r["replaced"] == 0 and len(r["script"]["steps"]) == 2 * r["added"]
-    ids = [s["id"] for s in r["script"]["steps"]]
+    assert r["replaced"] == 0 and len(r["flow"]["steps"]) == 2 * r["added"]
+    ids = [s["id"] for s in r["flow"]["steps"]]
     assert len(set(ids)) == len(ids)  # 编号接着往后排
     # 这一次单独要替换：请求里明确说不追加
-    client.post("/api/record/start", json={"script_id": sid, "record_append": False})
+    client.post("/api/record/start", json={"flow_id": sid, "record_append": False})
     r = client.post("/api/record/stop").json()
-    assert len(r["script"]["steps"]) == r["added"]
+    assert len(r["flow"]["steps"]) == r["added"]
 
 
-def test_dry_run_hotkey_runs_current_macro(client):
-    """在目标窗口里按 Alt+T：空跑界面上当前打开的宏（用界面上填的变量），不用切回 studio。"""
+def test_dry_run_hotkey_runs_current_flow(client):
+    """在目标窗口里按 Alt+T：空跑界面上当前打开的流程（用界面上填的变量），不用切回 studio。"""
     from cyber_worker.studio.routes.run import hotkey_dry_run
 
     st = client.app.state.studio
     assert client.get("/api/status").json()["dry_run_hotkey"] == "alt+t"
     with client.websocket_connect(WS) as ws:
-        hotkey_dry_run(st)  # 还没选宏
-        assert "先在 studio 里选一个宏" in ws.receive_json()["text"]
+        hotkey_dry_run(st)  # 还没选流程
+        assert "先在 studio 里选一个流程" in ws.receive_json()["text"]
 
-        d = new_script(client)
-        sc = d["script"]
+        d = new_flow(client)
+        sc = d["flow"]
         sc["steps"] = [{"id": "s01", "action": "type", "text": "{评论}"}]
         sc["variables"] = ["评论"]
-        client.put(f"/api/scripts/{d['id']}/detail", json=sc)
-        client.post("/api/current", json={"script_id": d["id"]})
+        client.put(f"/api/flows/{d['id']}/detail", json=sc)
+        client.post("/api/current", json={"flow_id": d["id"]})
         hotkey_dry_run(st)  # 变量没填
         assert "先在 studio 里填变量：评论" in ws.receive_json()["text"]
 
-        client.post("/api/current", json={"script_id": d["id"], "variables": {"评论": "好看"}})
+        client.post("/api/current", json={"flow_id": d["id"], "variables": {"评论": "好看"}})
         hotkey_dry_run(st)
         hotkey_dry_run(st)  # 连按：正在跑，不再排一次
         events = []
@@ -682,10 +682,10 @@ def test_dry_run_hotkey_runs_current_macro(client):
 
 def test_every_run_chimes_once(client):
     """点「空跑」「执行」按钮（Ctrl+Enter 也是点按钮）和按快捷键一样：开跑时响一声。"""
-    d = new_script(client)
+    d = new_flow(client)
     for dry in (True, False):
         with client.websocket_connect(WS) as ws:
-            client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": dry})
+            client.post(f"/api/flows/{d['id']}/run", json={"dry_run": dry})
             while ws.receive_json().get("state") != "done":
                 pass
     assert client.io.calls.count(("chime", "start")) == 2
@@ -697,17 +697,17 @@ def test_dry_run_hotkey_hands_unsaved_edits_to_the_page(client):
     from cyber_worker.studio.routes.run import hotkey_dry_run
 
     st = client.app.state.studio
-    d = new_script(client)
+    d = new_flow(client)
     with client.websocket_connect(WS) as ws:
-        client.post("/api/current", json={"script_id": d["id"], "dirty": True, "page": "tab-1"})
+        client.post("/api/current", json={"flow_id": d["id"], "dirty": True, "page": "tab-1"})
         hotkey_dry_run(st)
         ev = ws.receive_json()
-        assert ev == {"type": "dry_run_request", "script_id": d["id"], "page": "tab-1"}
+        assert ev == {"type": "dry_run_request", "flow_id": d["id"], "page": "tab-1"}
         assert not st.app.executor.busy  # 服务端自己没跑
         assert ("chime", "start") not in client.io.calls  # 那个页面开跑时才响，不然要响两次
 
         # 保存后（或页面关掉时撤回）又直接跑文件
-        client.post("/api/current", json={"script_id": d["id"], "dirty": False, "page": "tab-1"})
+        client.post("/api/current", json={"flow_id": d["id"], "dirty": False, "page": "tab-1"})
         hotkey_dry_run(st)
         events = []
         while not (events and events[-1].get("state") == "done"):
@@ -717,18 +717,18 @@ def test_dry_run_hotkey_hands_unsaved_edits_to_the_page(client):
 
 def test_page_from_another_window_is_a_problem(client):
     """主窗口的锚点拿去核对聊天窗口，永远对不上：执行前就要指出来。"""
-    d = new_script(client)
+    d = new_flow(client)
     sid = d["id"]
-    client.post(f"/api/scripts/{sid}/capture")
-    d = client.post(f"/api/scripts/{sid}/anchors", json={
+    client.post(f"/api/flows/{sid}/capture")
+    d = client.post(f"/api/flows/{sid}/anchors", json={
         "page": "列表", "x": 50, "y": 40, "w": 40, "h": 30}).json()
-    sc = d["script"]
+    sc = d["flow"]
     sc["windows"] = {"w2": sc["window"]}
     sc["steps"] = [
         {"id": "s01", "action": "type", "text": "你好", "expected_page": "列表"},
         {"id": "s02", "win": "w2", "action": "type", "text": "你好", "expected_page": "列表"},
     ]
-    r = client.put(f"/api/scripts/{sid}/detail", json=sc).json()
+    r = client.put(f"/api/flows/{sid}/detail", json=sc).json()
     msgs = {p["step"]: p["message"] for p in r["problems"]}
     assert "s01" not in msgs
     assert "截自别的窗口" in msgs["s02"]
@@ -736,7 +736,7 @@ def test_page_from_another_window_is_a_problem(client):
 
 def _record_two_windows(client):
     """主窗口点一下，弹出的聊天窗口里打字、点发送。返回录完的结果。"""
-    from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
+    from cyber_worker.flow.io.base import WindowGeometry, WindowInfo
 
     chat = (WindowInfo("Demo", "My Sky", 300, 200), WindowGeometry(150, 80, 300, 200, 1.0))
 
@@ -748,26 +748,26 @@ def _record_two_windows(client):
         stop.wait()
 
     client.app.state.studio.app.listen = listen
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     return client.post("/api/record/stop").json()
 
 
 def test_each_window_has_its_own_reference(client, tmp_path):
-    """主窗口点开的聊天窗口也有参考图：画布切到它就能看、能在上面框锚点；跟着宏一起保存、删除，不进平台包。"""
+    """主窗口点开的聊天窗口也有参考图：画布切到它就能看、能在上面框锚点；跟着流程一起保存、删除，不进平台包。"""
     r = _record_two_windows(client)
     sid = r["id"]
     # 在聊天窗口的参考图上框锚点：锚点属于聊天窗口
-    d = client.post(f"/api/scripts/{sid}/anchors", json={
+    d = client.post(f"/api/flows/{sid}/anchors", json={
         "page": "聊天", "x": 10, "y": 10, "w": 40, "h": 30, "frame": "reference", "win": "w2"}).json()
     assert d["pages"]["聊天"][0]["win"] == "w2"
 
-    # 保存进宏库：参考图目录跟着搬，引用也改了
-    saved = client.post(f"/api/scripts/{sid}/commit").json()
-    lib = tmp_path / "user_data/platforms/demo/templates"
-    assert saved["script"]["windows"]["w2"]["reference"] == "comment.refs/w2.png"
+    # 保存进流程库：参考图目录跟着搬，引用也改了
+    saved = client.post(f"/api/flows/{sid}/commit").json()
+    lib = tmp_path / "user_data/platforms/demo/flows"
+    assert saved["flow"]["windows"]["w2"]["reference"] == "comment.refs/w2.png"
     assert (lib / "comment.refs/w2.png").exists()
-    assert not (tmp_path / "user_data/drafts/demo/templates/comment.refs").exists()
+    assert not (tmp_path / "user_data/drafts/demo/flows/comment.refs").exists()
     assert client.get(saved["frames"]["reference"]["w2"]["url"]).status_code == 200
 
     # 平台包默认带上每个窗口的参考图和每一步的画面；设置里关掉就都不带
@@ -776,41 +776,41 @@ def test_each_window_has_its_own_reference(client, tmp_path):
     r = client.get("/api/packs/demo")
     assert r.headers["X-Pack-Screenshots"] == "1"
     names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
-    assert "templates/comment.refs/w2.png" in names and any(".shots/" in n for n in names)
+    assert "flows/comment.refs/w2.png" in names and any(".shots/" in n for n in names)
     client.patch("/api/settings", json={"pack_screenshots": False})
     r = client.get("/api/packs/demo")
     assert r.headers["X-Pack-Screenshots"] == "0"
     names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
-    assert not any(".refs/" in n or ".shots/" in n or n == "templates/comment.png" for n in names)
+    assert not any(".refs/" in n or ".shots/" in n or n == "flows/comment.png" for n in names)
 
-    client.delete(f"/api/scripts/{saved['id']}/detail")
+    client.delete(f"/api/flows/{saved['id']}/detail")
     assert not (lib / "comment.refs").exists() and not (lib / "comment.shots").exists()
 
 
 def test_capture_fills_missing_window_reference(client):
-    """以前录的宏，聊天窗口没有参考图：在它上面截一张就顺便存成参考图；最新截图每个窗口各一张。"""
+    """以前录的流程，聊天窗口没有参考图：在它上面截一张就顺便存成参考图；最新截图每个窗口各一张。"""
     r = _record_two_windows(client)
     sid = r["id"]
-    sc = r["script"]
+    sc = r["flow"]
     sc["windows"]["w2"].pop("reference")
-    for step in sc["steps"]:  # 更早的宏：也没有步骤画面
+    for step in sc["steps"]:  # 更早的流程：也没有步骤画面
         step.pop("shot", None)
-    client.put(f"/api/scripts/{sid}/detail", json=sc)
-    assert "w2" not in client.get(f"/api/scripts/{sid}/detail").json()["frames"]["reference"]
+    client.put(f"/api/flows/{sid}/detail", json=sc)
+    assert "w2" not in client.get(f"/api/flows/{sid}/detail").json()["frames"]["reference"]
 
-    d = client.post(f"/api/scripts/{sid}/capture?win=w2").json()
-    assert d["script"]["windows"]["w2"]["reference"] == "comment.refs/w2.png"
+    d = client.post(f"/api/flows/{sid}/capture?win=w2").json()
+    assert d["flow"]["windows"]["w2"]["reference"] == "comment.refs/w2.png"
     assert set(d["frames"]["reference"]) == {"main", "w2"}
-    d = client.post(f"/api/scripts/{sid}/capture").json()  # 截主窗口不会把聊天窗口的最新截图冲掉
+    d = client.post(f"/api/flows/{sid}/capture").json()  # 截主窗口不会把聊天窗口的最新截图冲掉
     assert set(d["frames"]["latest"]) == {"main", "w2"}
-    assert client.post(f"/api/scripts/{sid}/anchors", json={
+    assert client.post(f"/api/flows/{sid}/anchors", json={
         "page": "x", "x": 1, "y": 1, "w": 10, "h": 10, "frame": "reference", "win": "w9"}).status_code == 400
 
     # 没有步骤画面时在「录制画面」上截：换的是窗口参考图，存成新文件
-    d = client.post(f"/api/scripts/{sid}/capture?replace=true").json()
-    assert d["replaced_steps"] == [] and d["script"]["reference"] == "comment.refs/main-2.png"
-    d = client.post(f"/api/scripts/{sid}/capture?win=w2&replace=true").json()
-    assert d["script"]["windows"]["w2"]["reference"] == "comment.refs/w2-2.png"
+    d = client.post(f"/api/flows/{sid}/capture?replace=true").json()
+    assert d["replaced_steps"] == [] and d["flow"]["reference"] == "comment.refs/main-2.png"
+    d = client.post(f"/api/flows/{sid}/capture?win=w2&replace=true").json()
+    assert d["flow"]["windows"]["w2"]["reference"] == "comment.refs/w2-2.png"
 
 
 def test_each_step_keeps_the_frame_it_was_recorded_on(client):
@@ -842,44 +842,44 @@ def test_each_step_keeps_the_frame_it_was_recorded_on(client):
         stop.wait()
 
     client.app.state.studio.app.listen = listen
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     r = client.post("/api/record/stop").json()
-    shots = {s["id"]: s.get("shot") for s in r["script"]["steps"]}
+    shots = {s["id"]: s.get("shot") for s in r["flow"]["steps"]}
     assert shots == {"s01": "comment.shots/s01.png", "s02": "comment.shots/s01.png",
                      "s03": "comment.shots/s03.png", "s04": "comment.shots/s03.png"}
     assert set(r["shots"]) == {"s01", "s02", "s03", "s04"}
     assert client.get(r["shots"]["s03"]["url"]).status_code == 200
 
     # 在某一步的画面上直接框锚点、重框目标图
-    a = client.post(f"/api/scripts/{d['id']}/anchors", json={
+    a = client.post(f"/api/flows/{d['id']}/anchors", json={
         "page": "页面B", "x": 200, "y": 150, "w": 60, "h": 40, "frame": "step", "step_id": "s03"}).json()
     assert a["pages"]["页面B"][0]["win"] is None
-    t = client.post(f"/api/scripts/{d['id']}/targets", json={
+    t = client.post(f"/api/flows/{d['id']}/targets", json={
         "step_id": "s02", "x": 50, "y": 40, "w": 40, "h": 30, "frame": "step", "shot_of": "s02"})
     assert t.status_code == 200, t.text
 
-    # 保存进宏库：画面目录跟着搬
-    saved = client.post(f"/api/scripts/{d['id']}/commit").json()
+    # 保存进流程库：画面目录跟着搬
+    saved = client.post(f"/api/flows/{d['id']}/commit").json()
     assert client.get(saved["shots"]["s01"]["url"]).status_code == 200
 
     # 录制画面录错了：停在这一步的录制画面上截，换掉它和共用它的那几步；旧图留着给撤销
     sid = saved["id"]
-    lib = client.app.state.studio.script_path(sid).parent
-    r = client.post(f"/api/scripts/{sid}/capture?replace=true&step_id=s02").json()
+    lib = client.app.state.studio.flow_path(sid).parent
+    r = client.post(f"/api/flows/{sid}/capture?replace=true&step_id=s02").json()
     assert r["replaced_steps"] == ["s01", "s02"]
-    shots = {s["id"]: s.get("shot") for s in r["script"]["steps"]}
+    shots = {s["id"]: s.get("shot") for s in r["flow"]["steps"]}
     assert shots["s01"] == shots["s02"] == "comment.shots/s01-2.png"
     assert shots["s03"] == "comment.shots/s03.png"
     assert (lib / "comment.shots/s01.png").exists()
-    assert client.post(f"/api/scripts/{sid}/capture?replace=true&step_id=s09").status_code == 400
+    assert client.post(f"/api/flows/{sid}/capture?replace=true&step_id=s09").status_code == 400
 
 
 def test_hover_recorded_only_when_something_pops_up(client):
     """停一下什么都没变：不记。停在头像上弹出了资料卡：记一步悬停（带目标图和画面），资料卡标成弹出窗口。"""
     import time as _time
 
-    from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
+    from cyber_worker.flow.io.base import WindowGeometry, WindowInfo
 
     io = client.io
     base = io.list_windows()
@@ -899,17 +899,17 @@ def test_hover_recorded_only_when_something_pops_up(client):
 
     done = threading.Event()
     client.app.state.studio.app.listen = listen
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     assert done.wait(10)  # 操作完了再停（盯悬停的线程在停止录制时就退出了）
     r = client.post("/api/record/stop").json()
     io.list_windows = lambda: base
-    steps = r["script"]["steps"]
+    steps = r["flow"]["steps"]
     assert [(s["action"], s.get("win")) for s in steps] == [("hover", None), ("click", "w2")]
     hover = steps[0]
     assert (hover["x"], hover["y"]) == (65, 55) and 0.5 <= hover["seconds"] <= 3
     assert hover["target"] and hover["shot"]  # 按图找头像；画面是悬停之前的主窗口
-    assert r["script"]["windows"]["w2"]["popup"] is True
+    assert r["flow"]["windows"]["w2"]["popup"] is True
     assert set(r["targets"]) >= {hover["id"]}
 
 
@@ -933,11 +933,11 @@ def test_short_pause_on_the_way_is_not_a_hover(client):
 
     done = threading.Event()
     client.app.state.studio.app.listen = listen
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     assert done.wait(10)
     r = client.post("/api/record/stop").json()
-    assert [s["action"] for s in r["script"]["steps"]] == ["click"]
+    assert [s["action"] for s in r["flow"]["steps"]] == ["click"]
 
 
 def _record_with(client, listen):
@@ -950,8 +950,8 @@ def _record_with(client, listen):
         stop.wait()
 
     client.app.state.studio.app.listen = run
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     assert done.wait(15)
     return client.post("/api/record/stop").json()
 
@@ -960,7 +960,7 @@ def test_hover_with_jitter_and_slow_popup_is_recorded(client):
     """停在头像上手一直在抖，资料卡 1.5 秒才弹出来：照样记成悬停，时长是等到它弹出的时间。"""
     import time as _time
 
-    from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
+    from cyber_worker.flow.io.base import WindowGeometry, WindowInfo
 
     io = client.io
     base = io.list_windows()
@@ -978,7 +978,7 @@ def test_hover_with_jitter_and_slow_popup_is_recorded(client):
 
     r = _record_with(client, listen)
     io.list_windows = lambda: base
-    steps = r["script"]["steps"]
+    steps = r["flow"]["steps"]
     assert [s["action"] for s in steps] == ["hover", "click"]
     assert 1.4 <= steps[0]["seconds"] <= 2.2
 
@@ -1001,26 +1001,26 @@ def test_hover_highlight_vanishing_on_leave_is_not_a_change(client):
         builder.on_click(300, 300, "left")
 
     r = _record_with(client, listen)
-    assert [s["action"] for s in r["script"]["steps"]] == ["click"]
+    assert [s["action"] for s in r["flow"]["steps"]] == ["click"]
 
 
 def test_rerecording_drops_unused_windows(client):
     """重新录一遍（替换）：以前录过、现在没有步骤用到的窗口去掉；还在用的按这次的尺寸记。"""
     r = _record_two_windows(client)
     sid = r["id"]
-    sc = r["script"]
+    sc = r["flow"]
     sc["windows"]["w3"] = {"app": "Demo", "title": "旧窗口", "width": 930, "height": 613}
     sc["windows"]["w2"]["width"] = 999
-    client.put(f"/api/scripts/{sid}/detail", json=sc)
-    r = client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+    client.put(f"/api/flows/{sid}/detail", json=sc)
+    r = client.post("/api/record/start", json={"flow_id": sid, "record_delays": False})
     r = client.post("/api/record/stop").json()
-    assert set(r["script"]["windows"]) == {"w2"}
-    assert r["script"]["windows"]["w2"]["width"] == 300
+    assert set(r["flow"]["windows"]) == {"w2"}
+    assert r["flow"]["windows"]["w2"]["width"] == 300
 
 
-def test_new_macro_remembers_fixed_window_titles():
+def test_new_flow_remembers_fixed_window_titles():
     """标题固定（「QQ」）就记下来，以后再开聊天窗口也认得出主窗口；带文件名的标题只在开着好几个时才用。"""
-    from cyber_worker.macro.io.base import WindowInfo
+    from cyber_worker.flow.io.base import WindowInfo
     from cyber_worker.studio.state import window_json
 
     assert window_json(WindowInfo("QQ", "QQ", 320, 740), set())["match_title"] == "QQ"
@@ -1036,8 +1036,8 @@ def test_window_reference_uses_its_first_step_frame(client, tmp_path):
 
     import numpy as np
 
-    from cyber_worker.macro.io.base import WindowGeometry, WindowInfo
-    from cyber_worker.macro.screenshot.storage import read_image
+    from cyber_worker.flow.io.base import WindowGeometry, WindowInfo
+    from cyber_worker.flow.screenshot.storage import read_image
 
     io = client.io
     chat_img = screen_with(pattern(seed=7), size=(300, 200))
@@ -1062,41 +1062,41 @@ def test_window_reference_uses_its_first_step_frame(client, tmp_path):
 
 
 def test_window_shows_its_first_step_frame_over_a_stale_reference(client, tmp_path):
-    """旧版本录的宏，资料卡的参考图是它关掉后截到的乱图：画布上优先显示它第一步的画面。"""
+    """旧版本录的流程，资料卡的参考图是它关掉后截到的乱图：画布上优先显示它第一步的画面。"""
     r = _record_two_windows(client)
-    sc = r["script"]
-    lib = tmp_path / "user_data/drafts/demo/templates"
+    sc = r["flow"]
+    lib = tmp_path / "user_data/drafts/demo/flows"
     (lib / sc["windows"]["w2"]["reference"]).write_bytes(b"\x89PNG stale")  # 存下来的旧参考图（乱的）
-    d = client.get(f"/api/scripts/{r['id']}/detail").json()
+    d = client.get(f"/api/flows/{r['id']}/detail").json()
     first_w2 = next(s for s in sc["steps"] if s.get("win") == "w2")
     assert d["frames"]["reference"]["w2"]["url"].split("&v=")[0] == d["shots"][first_w2["id"]]["url"].split("&v=")[0]
     # 在这张画面上框锚点，截的也是它
-    a = client.post(f"/api/scripts/{r['id']}/anchors", json={
+    a = client.post(f"/api/flows/{r['id']}/anchors", json={
         "page": "聊天", "x": 5, "y": 5, "w": 40, "h": 30, "frame": "reference", "win": "w2"})
     assert a.status_code == 200, a.text
 
 
 def test_click_far_from_its_target_is_a_problem(client):
     """按图找的点击，点击位置被挪到目标框外面（以前点一下画面就会挪）：执行时会点空，执行前就提示。"""
-    d = new_script(client)
-    sc = d["script"]
+    d = new_flow(client)
+    sc = d["flow"]
     target = {"image": "t.png", "x": 686, "y": 609, "w": 48, "h": 40}
     sc["steps"] = [
         {"id": "s01", "action": "click", "x": 710, "y": 629, "target": target},    # 在目标上
         {"id": "s02", "action": "click", "x": 192.5, "y": 539, "target": target},  # 挪到输入框里了
         {"id": "s03", "action": "click", "x": 192.5, "y": 539, "target": target, "use_target": False},  # 固定坐标不管
     ]
-    r = client.put(f"/api/scripts/{d['id']}/detail", json=sc).json()
+    r = client.put(f"/api/flows/{d['id']}/detail", json=sc).json()
     bad = {p["step"] for p in r["problems"] if "不在目标图上" in p["message"]}
     assert bad == {"s02"}
 
 
 def test_delays_are_not_steps(client, tmp_path):
-    """延迟不算「步」：动作编号 s01、s02…，延迟单独 d01、d02…；保存、录制、打开旧宏都统一成这样。"""
-    from cyber_worker.macro.schema import Script
+    """延迟不算「步」：动作编号 s01、s02…，延迟单独 d01、d02…；保存、录制、打开旧流程都统一成这样。"""
+    from cyber_worker.flow.schema import Flow
 
-    d = new_script(client)
-    sc = d["script"]
+    d = new_flow(client)
+    sc = d["flow"]
     sc["steps"] = [
         {"id": "s01", "action": "click", "x": 1, "y": 1},
         {"id": "s02", "action": "wait", "seconds": 1},
@@ -1104,24 +1104,24 @@ def test_delays_are_not_steps(client, tmp_path):
         {"id": "s09", "action": "wait", "seconds": 2},
         {"id": "s04", "action": "click", "x": 2, "y": 2},
     ]
-    r = client.put(f"/api/scripts/{d['id']}/detail", json=sc).json()
-    assert [s["id"] for s in r["script"]["steps"]] == ["s01", "d01", "s02", "d02", "s03"]
+    r = client.put(f"/api/flows/{d['id']}/detail", json=sc).json()
+    assert [s["id"] for s in r["flow"]["steps"]] == ["s01", "d01", "s02", "d02", "s03"]
 
-    # 以前的宏（延迟也占 s 号）：打开时统一改过来并存回去
-    path = tmp_path / "user_data/drafts/demo/templates/comment.yaml"
-    old = Script.load(path)
+    # 以前的流程（延迟也占 s 号）：打开时统一改过来并存回去
+    path = tmp_path / "user_data/drafts/demo/flows/comment.yaml"
+    old = Flow.load(path)
     for i, s in enumerate(old.steps, 1):
         s.id = f"s{i:02d}"
     old.dump(path)
-    got = client.get(f"/api/scripts/{d['id']}/detail").json()
-    assert [s["id"] for s in got["script"]["steps"]] == ["s01", "d01", "s02", "d02", "s03"]
-    assert [s.id for s in Script.load(path).steps] == ["s01", "d01", "s02", "d02", "s03"]
+    got = client.get(f"/api/flows/{d['id']}/detail").json()
+    assert [s["id"] for s in got["flow"]["steps"]] == ["s01", "d01", "s02", "d02", "s03"]
+    assert [s.id for s in Flow.load(path).steps] == ["s01", "d01", "s02", "d02", "s03"]
 
     # 录制（带延迟）：一样的编号
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": True})
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": True})
     rec = client.post("/api/record/stop").json()
-    ids = [s["id"] for s in rec["script"]["steps"]]
-    acts = [s["action"] for s in rec["script"]["steps"]]
+    ids = [s["id"] for s in rec["flow"]["steps"]]
+    acts = [s["action"] for s in rec["flow"]["steps"]]
     assert [i for i, a in zip(ids, acts) if a == "wait"] == [f"d{k:02d}" for k in range(1, acts.count("wait") + 1)]
     assert [i for i, a in zip(ids, acts) if a != "wait"] == [f"s{k:02d}" for k in range(1, len(acts) - acts.count("wait") + 1)]
     if rec["auto_send"]:
@@ -1134,24 +1134,24 @@ def test_rerecording_reuses_matching_page_and_drops_unused_ones(client, tmp_path
     first = _record_two_windows(client)
     assert first["auto_anchor"]["pages"] == ["页面1"]
     sid = first["id"]
-    lib = tmp_path / "user_data/drafts/demo/templates"
+    lib = tmp_path / "user_data/drafts/demo/flows"
     # 再加一个谁都不用的页面
-    client.post(f"/api/scripts/{sid}/capture")
-    client.post(f"/api/scripts/{sid}/anchors", json={"page": "旧页面", "x": 50, "y": 40, "w": 40, "h": 30})
+    client.post(f"/api/flows/{sid}/capture")
+    client.post(f"/api/flows/{sid}/anchors", json={"page": "旧页面", "x": 50, "y": 40, "w": 40, "h": 30})
     old_img = lib / "comment.anchors/旧页面_1.png"
     assert old_img.exists()
 
-    client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+    client.post("/api/record/start", json={"flow_id": sid, "record_delays": False})
     again = client.post("/api/record/stop").json()
     assert again["auto_anchor"]["reused"] == ["页面1"]
     assert set(again["pages"]) == {"页面1"}
     assert again["dropped_pages"] == ["旧页面"] and old_img.exists()
-    assert {s.get("expected_page") for s in again["script"]["steps"] if s["action"] == "type"} == {"页面1"}
+    assert {s.get("expected_page") for s in again["flow"]["steps"] if s["action"] == "type"} == {"页面1"}
 
     # Ctrl+Z：界面写回的旧步骤用到「旧页面」，它自动回到页面列表
-    old = again["script"]
+    old = again["flow"]
     next(s for s in old["steps"] if s["action"] == "type")["expected_page"] = "旧页面"
-    back = client.put(f"/api/scripts/{sid}/detail", json=old).json()
+    back = client.put(f"/api/flows/{sid}/detail", json=old).json()
     assert "旧页面" in back["pages"] and not any("还没有锚点" in p["message"] for p in back["problems"])
 
 
@@ -1165,13 +1165,13 @@ def test_old_unused_images_are_cleaned_up_after_a_few_days(client, tmp_path):
     r = _record_two_windows(client)
     sid = r["id"]
     st = client.app.state.studio
-    path = st.script_path(sid)
+    path = st.flow_path(sid)
     stale = path.parent / "comment.shots/s01-9.png"
-    stale.write_bytes((path.parent / r["script"]["steps"][0]["shot"]).read_bytes())
+    stale.write_bytes((path.parent / r["flow"]["steps"][0]["shot"]).read_bytes())
     assert collect_garbage(path) == 0  # 刚产生的：撤销可能还要用
     later = _time.time() + GARBAGE_AGE + 60
     assert collect_garbage(path, now=later) == 1 and not stale.exists()
-    d = client.get(f"/api/scripts/{sid}/detail").json()
+    d = client.get(f"/api/flows/{sid}/detail").json()
     assert all(client.get(s["url"]).status_code == 200 for s in d["shots"].values())  # 在用的都还在
     assert client.get(d["frames"]["reference"]["main"]["url"]).status_code == 200
 
@@ -1185,7 +1185,7 @@ def test_only_local_pages_can_talk_to_studio(client):
     assert client.post("/api/panic", headers={"Origin": "http://localhost:9999"}).status_code == 200
     assert client.post("/api/panic", headers={"Origin": "https://evil.example"}).status_code == 403
     assert client.post("/api/panic", headers={"Origin": "null"}).status_code == 403
-    assert client.get("/api/scripts", headers={"Host": "evil.example:9999"}).status_code == 403
+    assert client.get("/api/flows", headers={"Host": "evil.example:9999"}).status_code == 403
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(WS, headers={"Origin": "https://evil.example"}):
             pass
@@ -1195,32 +1195,32 @@ def test_only_local_pages_can_talk_to_studio(client):
 
 def _clear_pages(client, sid):
     """把输入 / 发送步骤上的页面去掉，回到「还没设在哪个画面执行」。"""
-    script = client.get(f"/api/scripts/{sid}/detail").json()["script"]
-    for s in script["steps"]:
+    flow = client.get(f"/api/flows/{sid}/detail").json()["flow"]
+    for s in flow["steps"]:
         s.pop("expected_page", None)
-    return client.put(f"/api/scripts/{sid}/detail", json=script).json()
+    return client.put(f"/api/flows/{sid}/detail", json=flow).json()
 
 
 def test_auto_page_button_fixes_a_step_without_page(client):
     """步骤上「自动选一个」：同一窗口里还对得上的页面就沿用；没有页面就从录制画面里挑一块新建，并填给这一步。"""
-    r = client.post("/api/record/start", json={"script_id": new_script(client)["id"], "record_delays": False})
+    r = client.post("/api/record/start", json={"flow_id": new_flow(client)["id"], "record_delays": False})
     assert r.status_code == 200
     sid = client.post("/api/record/stop").json()["id"]
     d = _clear_pages(client, sid)
-    typed = next(s for s in d["script"]["steps"] if s["action"] == "type")
+    typed = next(s for s in d["flow"]["steps"] if s["action"] == "type")
     assert d["problems"]
 
-    got = client.post(f"/api/scripts/{sid}/auto-page", json={"step_id": typed["id"]}).json()
+    got = client.post(f"/api/flows/{sid}/auto-page", json={"step_id": typed["id"]}).json()
     assert got["auto_page"]["reused"] and got["auto_page"]["page"] == "页面1"
     assert typed["id"] in got["auto_page"]["steps"] and got["problems"] == []
 
     # 页面删掉以后再点：新挑一块
-    client.delete(f"/api/scripts/{sid}/anchors/页面1/0")
+    client.delete(f"/api/flows/{sid}/anchors/页面1/0")
     _clear_pages(client, sid)
-    got = client.post(f"/api/scripts/{sid}/auto-page", json={"step_id": typed["id"]}).json()
+    got = client.post(f"/api/flows/{sid}/auto-page", json={"step_id": typed["id"]}).json()
     page = got["auto_page"]["page"]
     assert not got["auto_page"]["reused"] and got["pages"][page]
-    assert {s.get("expected_page") for s in got["script"]["steps"] if s["action"] == "type"} == {page}
+    assert {s.get("expected_page") for s in got["flow"]["steps"] if s["action"] == "type"} == {page}
     assert got["problems"] == []
 
 
@@ -1229,11 +1229,11 @@ def test_record_reports_steps_it_could_not_give_a_page(client):
     import numpy as np
 
     client.io.screen = lambda: np.full((300, 400, 3), 255, np.uint8)
-    client.post("/api/record/start", json={"script_id": new_script(client)["id"], "record_delays": False})
+    client.post("/api/record/start", json={"flow_id": new_flow(client)["id"], "record_delays": False})
     r = client.post("/api/record/stop").json()
-    typed = next(s for s in r["script"]["steps"] if s["action"] == "type")
+    typed = next(s for s in r["flow"]["steps"] if s["action"] == "type")
     assert typed["id"] in r["auto_anchor"]["missing"] and not typed.get("expected_page")
-    bad = client.post(f"/api/scripts/{r['id']}/auto-page", json={"step_id": typed["id"]})
+    bad = client.post(f"/api/flows/{r['id']}/auto-page", json={"step_id": typed["id"]})
     assert bad.status_code == 400 and "我自己框" in bad.json()["detail"]
 
 
@@ -1243,36 +1243,36 @@ def test_chimes_can_be_switched_off(client, tmp_path):
     assert r["record_chime"] is False and r["run_chime"] is False
     assert "record_chime = false" in (tmp_path / "config.toml").read_text(encoding="utf-8")
 
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     client.post("/api/record/stop")
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
+        client.post(f"/api/flows/{d['id']}/run", json={"dry_run": True})
         while ws.receive_json().get("state") != "done":
             pass
     assert [c for c in client.io.calls if c[0] == "chime"] == []
 
     # 只开回录制提示音：录制响，空跑照样不响
     client.patch("/api/settings", json={"record_chime": True})
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     client.post("/api/record/stop")
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
+        client.post(f"/api/flows/{d['id']}/run", json={"dry_run": True})
         while ws.receive_json().get("state") != "done":
             pass
     assert [c for c in client.io.calls if c[0] == "chime"] == [("chime", "start"), ("chime", "stop")]
 
 
 def test_startup_cleanup_drops_old_latest_frames_and_empty_platforms(client, tmp_path):
-    """启动时：上次留下的「最新截图」都删掉（只记在内存里，重启后没人读）；宏删光后剩下的空平台目录也删掉，有文件的不动。"""
+    """启动时：上次留下的「最新截图」都删掉（只记在内存里，重启后没人读）；流程删光后剩下的空平台目录也删掉，有文件的不动。"""
     st = client.app.state.studio
     data = tmp_path / "user_data"
-    old = data / "frames" / "qq__templates__已删掉的宏__w7.png"
+    old = data / "frames" / "qq__flows__已删掉的流程__w7.png"
     old.parent.mkdir(parents=True, exist_ok=True)
     old.write_bytes(b"png")
-    empty = data / "platforms" / "chrome" / "templates"
+    empty = data / "platforms" / "chrome" / "flows"
     empty.mkdir(parents=True)
-    kept = data / "platforms" / "qq" / "templates" / "readme.txt"
+    kept = data / "platforms" / "qq" / "flows" / "readme.txt"
     kept.parent.mkdir(parents=True)
     kept.write_text("x", encoding="utf-8")
 
@@ -1283,8 +1283,8 @@ def test_startup_cleanup_drops_old_latest_frames_and_empty_platforms(client, tmp
     assert kept.exists()
 
     # 用着用着（内存里有最新截图）就不碰 frames 目录
-    d = new_script(client)
-    client.post(f"/api/scripts/{d['id']}/capture")
+    d = new_flow(client)
+    client.post(f"/api/flows/{d['id']}/capture")
     frame = next((data / "frames").glob("*.png"))
     st.collect_garbage()
     assert frame.exists()
@@ -1303,11 +1303,11 @@ def test_build_id_changes_when_frontend_files_change(tmp_path):
 
 def test_audit_screenshots_are_served_as_webp(client):
     """执行后的截图是 .webp：审计页能直接打开；别的类型照样拒绝。"""
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     client.post("/api/record/stop")
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{d['id']}/run", json={"dry_run": True})
+        client.post(f"/api/flows/{d['id']}/run", json={"dry_run": True})
         while ws.receive_json().get("state") != "done":
             pass
     day = client.get("/api/audit/days").json()[0]
@@ -1318,35 +1318,36 @@ def test_audit_screenshots_are_served_as_webp(client):
     assert client.get("/api/file?path=state.db").status_code == 400
 
 
-def _macro_with_targets(client):
-    """一个草稿宏：一次点击、一次悬停，都按图找（目标是画面上 (50, 40) 那块纹理）。"""
-    d = new_script(client)
+def _flow_with_targets(client):
+    """一个草稿流程：一次点击、一次悬停，都按图找（目标是画面上 (50, 40) 那块纹理）。"""
+    d = new_flow(client)
     sid = d["id"]
-    script = d["script"]
-    script["steps"] = [{"id": "s01", "action": "click", "x": 70, "y": 55},
+    flow = d["flow"]
+    flow["steps"] = [{"id": "s01", "action": "click", "x": 70, "y": 55},
                        {"id": "s02", "action": "hover", "x": 70, "y": 55, "seconds": 1}]
-    client.put(f"/api/scripts/{sid}/detail", json=script)
-    client.post(f"/api/scripts/{sid}/capture")
+    client.put(f"/api/flows/{sid}/detail", json=flow)
+    client.post(f"/api/flows/{sid}/capture")
     for step in ("s01", "s02"):
-        r = client.post(f"/api/scripts/{sid}/targets", json={"step_id": step, "x": 50, "y": 40, "w": 40, "h": 30})
+        r = client.post(f"/api/flows/{sid}/targets", json={"step_id": step, "x": 50, "y": 40, "w": 40, "h": 30})
         assert r.status_code == 200, r.text
     return sid
 
 
-def test_moving_a_macro_keeps_hover_targets_and_second_looks(client, tmp_path):
-    """宏改了文件名搬进宏库（同名的已经有了 → comment-2）：点击、悬停的目标图和另一种样子，路径都跟着改。"""
-    first = new_script(client)
-    client.post(f"/api/scripts/{first['id']}/commit")
-    sid = _macro_with_targets(client)
-    from cyber_worker.macro.anchors import learn_look
+def test_moving_a_flow_keeps_hover_targets_and_second_looks(client, tmp_path):
+    """流程改了文件名搬进流程库（同名的已经有了 → comment-2）：点击、悬停的目标图和另一种样子，路径都跟着改。"""
+    first = new_flow(client)
+    client.post(f"/api/flows/{first['id']}/commit")
+    sid = _flow_with_targets(client)
     from helpers import pattern as tex
 
-    draft = client.app.state.studio.script_path(sid)
+    from cyber_worker.flow.anchors import learn_look
+
+    draft = client.app.state.studio.flow_path(sid)
     image = f"{draft.stem}.targets/s01.png"
     assert learn_look(draft, "s01", image, tex(40, 30, seed=5), 1.0)
-    saved = client.post(f"/api/scripts/{sid}/commit").json()
-    lib = tmp_path / "user_data/platforms/demo/templates"
-    click, hover = saved["script"]["steps"]
+    saved = client.post(f"/api/flows/{sid}/commit").json()
+    lib = tmp_path / "user_data/platforms/demo/flows"
+    click, hover = saved["flow"]["steps"]
     for path in (click["target"]["image"], click["target"]["alt"], hover["target"]["image"]):
         assert path.startswith("comment-2.targets/") and (lib / path).exists(), path
     assert saved["targets"]["s02"]  # 悬停的目标图在界面上也看得到
@@ -1358,7 +1359,7 @@ def test_recording_keeps_the_normal_look_of_a_clicked_button():
 
     import numpy as np
 
-    from cyber_worker.macro.schema import Click, TypeText
+    from cyber_worker.flow.schema import Click, TypeText
     from cyber_worker.studio.routes.record import _normal_look
 
     normal = screen_with(pattern(40, 30, seed=7), at=(300, 200))
@@ -1382,84 +1383,84 @@ def test_window_you_typed_into_is_never_a_popup(client):
     小窗执行时不切前台、不改尺寸，聊天窗口要是被当成小窗，字可能打到挡在前面的窗口里。"""
     first = _record_two_windows(client)
     sid = first["id"]
-    script = first["script"]
-    script["windows"]["w2"]["popup"] = True
-    client.put(f"/api/scripts/{sid}/detail", json=script)
-    client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+    flow = first["flow"]
+    flow["windows"]["w2"]["popup"] = True
+    client.put(f"/api/flows/{sid}/detail", json=flow)
+    client.post("/api/record/start", json={"flow_id": sid, "record_delays": False})
     again = client.post("/api/record/stop").json()
-    assert again["script"]["windows"]["w2"].get("popup", False) is False
+    assert again["flow"]["windows"]["w2"].get("popup", False) is False
 
 
-def test_apps_list_macros_with_their_last_run(client):
-    """应用页：每个应用（宏库里的平台目录）列出它的宏，带说明、几步、变量、最近一次运行；应用带上今天运行了几次、失败几次。"""
-    d = new_script(client)
-    client.post("/api/record/start", json={"script_id": d["id"], "record_delays": False})
+def test_apps_list_flows_with_their_last_run(client):
+    """应用页：每个应用（流程库里的平台目录）列出它的流程，带说明、几步、变量、最近一次运行；应用带上今天运行了几次、失败几次。"""
+    d = new_flow(client)
+    client.post("/api/record/start", json={"flow_id": d["id"], "record_delays": False})
     client.post("/api/record/stop")
-    sid = client.post(f"/api/scripts/{d['id']}/commit").json()["id"]
-    script = client.get(f"/api/scripts/{sid}/detail").json()["script"]
-    script["description"] = "在群里发一条消息"
-    client.put(f"/api/scripts/{sid}/detail", json=script)
+    sid = client.post(f"/api/flows/{d['id']}/commit").json()["id"]
+    flow = client.get(f"/api/flows/{sid}/detail").json()["flow"]
+    flow["description"] = "在群里发一条消息"
+    client.put(f"/api/flows/{sid}/detail", json=flow)
 
     (app,) = client.get("/api/apps").json()
-    (m,) = app["macros"]
+    (m,) = app["flows"]
     assert app["platform"] == "demo" and app["title"] == "Demo"
     assert m["id"] == sid and m["description"] == "在群里发一条消息" and m["last"] is None
     assert m["steps"] >= 2 and app["today"] == {"runs": 0, "bad": 0}
 
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{sid}/run", json={"dry_run": True})
+        client.post(f"/api/flows/{sid}/run", json={"dry_run": True})
         while ws.receive_json().get("state") != "done":
             pass
     (app,) = client.get("/api/apps").json()
-    last = app["macros"][0]["last"]
+    last = app["flows"][0]["last"]
     assert last["dry_run"] and not last["bad"] and app["today"]["runs"] == 1
     assert client.get("/apps").status_code == 200
 
 
 def test_rename_from_the_app_page_keeps_run_history(client):
     """卡片上改名、写说明：重名自动加 -2；以前的运行记录跟着改名，卡片上「最近一次」不会变成「还没跑过」。
-    在编辑器的宏设置里改名也一样。"""
-    a = client.post(f"/api/scripts/{new_script(client, 'chat')['id']}/commit").json()["id"]
-    b = client.post(f"/api/scripts/{new_script(client, 'other')['id']}/commit").json()["id"]
-    client.post("/api/record/start", json={"script_id": a, "record_delays": False})  # 有步骤，空跑才有记录
+    在编辑器的流程设置里改名也一样。"""
+    a = client.post(f"/api/flows/{new_flow(client, 'chat')['id']}/commit").json()["id"]
+    b = client.post(f"/api/flows/{new_flow(client, 'other')['id']}/commit").json()["id"]
+    client.post("/api/record/start", json={"flow_id": a, "record_delays": False})  # 有步骤，空跑才有记录
     client.post("/api/record/stop")
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{a}/run", json={"dry_run": True})
+        client.post(f"/api/flows/{a}/run", json={"dry_run": True})
         while ws.receive_json().get("state") != "done":
             pass
 
-    r = client.patch(f"/api/scripts/{a}/meta", json={"name": "群聊天", "description": "在群里发一条消息"}).json()
+    r = client.patch(f"/api/flows/{a}/meta", json={"name": "群聊天", "description": "在群里发一条消息"}).json()
     assert r == {"name": "群聊天", "description": "在群里发一条消息"}
-    macros = {m["id"]: m for m in client.get("/api/apps").json()[0]["macros"]}
-    assert macros[a]["name"] == "群聊天" and macros[a]["last"] is not None  # 历史跟过来了
+    flows = {m["id"]: m for m in client.get("/api/apps").json()[0]["flows"]}
+    assert flows[a]["name"] == "群聊天" and flows[a]["last"] is not None  # 历史跟过来了
 
-    assert client.patch(f"/api/scripts/{b}/meta", json={"name": "群聊天"}).json()["name"] == "群聊天-2"
-    assert client.patch(f"/api/scripts/{b}/meta", json={"name": "  "}).json()["name"] == "群聊天-2"  # 空的不改
+    assert client.patch(f"/api/flows/{b}/meta", json={"name": "群聊天"}).json()["name"] == "群聊天-2"
+    assert client.patch(f"/api/flows/{b}/meta", json={"name": "  "}).json()["name"] == "群聊天-2"  # 空的不改
 
-    script = client.get(f"/api/scripts/{a}/detail").json()["script"]
-    script["name"] = "发群消息"
-    client.put(f"/api/scripts/{a}/detail", json=script)
-    macros = {m["id"]: m for m in client.get("/api/apps").json()[0]["macros"]}
-    assert macros[a]["name"] == "发群消息" and macros[a]["last"] is not None
+    flow = client.get(f"/api/flows/{a}/detail").json()["flow"]
+    flow["name"] = "发群消息"
+    client.put(f"/api/flows/{a}/detail", json=flow)
+    flows = {m["id"]: m for m in client.get("/api/apps").json()[0]["flows"]}
+    assert flows[a]["name"] == "发群消息" and flows[a]["last"] is not None
 
 
 def test_audit_says_which_app_each_run_belongs_to(client):
-    """审计记录带上应用：新的运行直接记下应用；没记应用的旧记录按宏名认，宏名在好几个应用里都有就不猜。
-    可以按应用 / 应用里的某个宏筛选；改名只改这个应用的记录；应用页的「最近一次」也按应用对。"""
+    """审计记录带上应用：新的运行直接记下应用；没记应用的旧记录按流程名认，流程名在好几个应用里都有就不猜。
+    可以按应用 / 应用里的某个流程筛选；改名只改这个应用的记录；应用页的「最近一次」也按应用对。"""
     from datetime import datetime
 
-    from cyber_worker.macro.audit.logger import AuditEntry, StepStatus
+    from cyber_worker.flow.audit.logger import AuditEntry, StepStatus
 
-    sid = client.post(f"/api/scripts/{new_script(client, '群聊天')['id']}/commit").json()["id"]
-    other = client.post("/api/scripts", json={"platform": "wx", "name": "群聊天", "app": "WeChat",
+    sid = client.post(f"/api/flows/{new_flow(client, '群聊天')['id']}/commit").json()["id"]
+    other = client.post("/api/flows", json={"platform": "wx", "name": "群聊天", "app": "WeChat",
                                               "width": 400, "height": 300}).json()["id"]
-    other = client.post(f"/api/scripts/{other}/commit").json()["id"]
-    client.post("/api/scripts", json={"platform": "wx", "name": "回复", "app": "WeChat", "width": 400, "height": 300})
-    only = client.post(f"/api/scripts/{client.get('/api/scripts').json()[0]['id']}/commit").json()["id"]
-    client.post("/api/record/start", json={"script_id": sid, "record_delays": False})
+    other = client.post(f"/api/flows/{other}/commit").json()["id"]
+    client.post("/api/flows", json={"platform": "wx", "name": "回复", "app": "WeChat", "width": 400, "height": 300})
+    only = client.post(f"/api/flows/{client.get('/api/flows').json()[0]['id']}/commit").json()["id"]
+    client.post("/api/record/start", json={"flow_id": sid, "record_delays": False})
     client.post("/api/record/stop")
     with client.websocket_connect(WS) as ws:
-        client.post(f"/api/scripts/{sid}/run", json={"dry_run": True})
+        client.post(f"/api/flows/{sid}/run", json={"dry_run": True})
         while ws.receive_json().get("state") != "done":
             pass
     now = datetime.now()
@@ -1470,45 +1471,65 @@ def test_audit_says_which_app_each_run_belongs_to(client):
     data = client.get(f"/api/audit?day={day}").json()
     by_run = {e["run_id"]: e for e in data["entries"]}
     new = next(e for e in data["entries"] if e["run_id"] not in ("old1", "old2"))
-    assert (new["app"], new["app_title"], new["macro_id"]) == ("demo", "Demo", sid)
-    assert (by_run["old1"]["app"], by_run["old1"]["app_title"], by_run["old1"]["macro_id"]) == ("wx", "WeChat", only)
-    assert by_run["old2"]["app"] is None and by_run["old2"]["macro_id"] is None
-    assert {(m["app"], m["script"]) for m in data["macros"]} == {("demo", "群聊天"), ("wx", "回复"), (None, "群聊天")}
+    assert (new["app"], new["app_title"], new["flow_id"]) == ("demo", "Demo", sid)
+    assert (by_run["old1"]["app"], by_run["old1"]["app_title"], by_run["old1"]["flow_id"]) == ("wx", "WeChat", only)
+    assert by_run["old2"]["app"] is None and by_run["old2"]["flow_id"] is None
+    assert {(m["app"], m["flow"]) for m in data["flows"]} == {("demo", "群聊天"), ("wx", "回复"), (None, "群聊天")}
 
     only_demo = client.get(f"/api/audit?day={day}&app=demo").json()
     assert {e["run_id"] for e in only_demo["entries"]} == {new["run_id"]}
-    assert len(only_demo["macros"]) == 3  # 下拉的选项不受筛选影响
-    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&app=wx&script=回复").json()["entries"]} == {"old1"}
-    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&app=&script=群聊天").json()["entries"]} == {"old2"}
+    assert len(only_demo["flows"]) == 3  # 下拉的选项不受筛选影响
+    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&app=wx&flow=回复").json()["entries"]} == {"old1"}
+    assert {e["run_id"] for e in client.get(f"/api/audit?day={day}&app=&flow=群聊天").json()["entries"]} == {"old2"}
 
     apps = {a["platform"]: a for a in client.get("/api/apps").json()}
-    assert apps["demo"]["macros"][0]["last"] is not None and apps["demo"]["today"]["runs"] == 1
-    wx = {m["id"]: m for m in apps["wx"]["macros"]}
+    assert apps["demo"]["flows"][0]["last"] is not None and apps["demo"]["today"]["runs"] == 1
+    wx = {m["id"]: m for m in apps["wx"]["flows"]}
     assert wx[other]["last"] is None and wx[only]["last"] is not None  # 同名的「群聊天」不会认成 wx 的
 
-    client.patch(f"/api/scripts/{other}/meta", json={"name": "微信群"})  # 改 wx 的：demo 的记录不动
+    client.patch(f"/api/flows/{other}/meta", json={"name": "微信群"})  # 改 wx 的：demo 的记录不动
     entries = client.get(f"/api/audit?day={day}").json()["entries"]
-    assert {e["script"] for e in entries if e["run_id"] == new["run_id"]} == {"群聊天"}
+    assert {e["flow"] for e in entries if e["run_id"] == new["run_id"]} == {"群聊天"}
+
+
+def test_old_templates_dirs_become_flows(client, tmp_path):
+    """「宏」改叫「流程」以前，流程放在 templates/ 下：启动时挪成 flows/；flows/ 已经有了就一个个挪，同名的不覆盖。
+    以前的链接（qq/templates/x.yaml）照样能打开。"""
+    sid = client.post(f"/api/flows/{new_flow(client)['id']}/commit").json()["id"]
+    lib = tmp_path / "user_data/platforms/demo"
+    (lib / "flows").rename(lib / "templates")  # 装成改名以前的样子
+    other = tmp_path / "user_data/platforms/wx"
+    (other / "templates").mkdir(parents=True)
+    (other / "flows").mkdir()
+    (other / "templates" / "a.yaml").write_text("x")
+    (other / "templates" / "b.yaml").write_text("old")
+    (other / "flows" / "b.yaml").write_text("new")
+
+    assert client.app.state.studio.migrate_layout() == 2
+    assert (lib / "flows" / "comment.yaml").exists() and not (lib / "templates").exists()
+    assert (other / "flows" / "a.yaml").exists() and (other / "flows" / "b.yaml").read_text() == "new"
+    assert (other / "templates" / "b.yaml").read_text() == "old"  # 同名的留着，不覆盖
+    assert client.get(f"/api/flows/{sid.replace('/flows/', '/templates/')}/detail").status_code == 200
 
 
 def test_delete_app_goes_to_trash_and_can_be_undone(client, tmp_path):
-    """删除整个应用：挪进回收站（不在应用列表里了），撤销就原样放回来；宏库里又有同名应用时不覆盖；
+    """删除整个应用：挪进回收站（不在应用列表里了），撤销就原样放回来；流程库里又有同名应用时不覆盖；
     回收站里放了 7 天以上的，studio 启动时清掉。"""
     from datetime import datetime, timedelta
 
-    sid = client.post(f"/api/scripts/{new_script(client)['id']}/commit").json()["id"]
+    sid = client.post(f"/api/flows/{new_flow(client)['id']}/commit").json()["id"]
     r = client.delete("/api/apps/demo").json()
-    assert r["platform"] == "demo" and r["macros"] == 1
+    assert r["platform"] == "demo" and r["flows"] == 1
     trash = tmp_path / "user_data/.trash" / r["trash"]
     assert trash.is_dir() and not (tmp_path / "user_data/platforms/demo").exists()
     assert client.get("/api/apps").json() == []
 
     assert client.post("/api/apps/restore", json={"trash": r["trash"]}).json() == {"platform": "demo"}
-    assert [m["id"] for m in client.get("/api/apps").json()[0]["macros"]] == [sid]
+    assert [m["id"] for m in client.get("/api/apps").json()[0]["flows"]] == [sid]
 
     # 删了以后又建了个同名应用：撤销不覆盖它
     r2 = client.delete("/api/apps/demo").json()
-    client.post(f"/api/scripts/{new_script(client)['id']}/commit")
+    client.post(f"/api/flows/{new_flow(client)['id']}/commit")
     assert client.post("/api/apps/restore", json={"trash": r2["trash"]}).status_code == 409
     assert client.post("/api/apps/restore", json={"trash": "../platforms"}).status_code == 404
     assert client.delete("/api/apps/nope").status_code == 404

@@ -88,33 +88,33 @@ The value of a digital twin isn't how much it does — it's how much **what it d
 
 > Legend: ⬜ todo · 🚧 in progress · ✅ done
 
-> The platform layer is made of **declarative platform packs**. Each platform is a directory containing only `platform.yaml` (capability → macro mapping, extraction fields), `pages.yaml` (page fingerprints, watch regions) and recorded macros. All platforms are driven by one generic `ScreenAdapter`. Built-in platforms work out of the box; for other platforms or private use cases, record and save a platform pack in `studio` — **no code changes needed**. Only unusually complex extraction needs an optional `hooks.py`.
+> The platform layer is made of **declarative platform packs**. Each platform is a directory containing only `platform.yaml` (capability → flow mapping, extraction fields), `pages.yaml` (page fingerprints, watch regions) and recorded flows. All platforms are driven by one generic `ScreenAdapter`. Built-in platforms work out of the box; for other platforms or private use cases, record and save a platform pack in `studio` — **no code changes needed**. Only unusually complex extraction needs an optional `hooks.py`.
 >
-> A platform pack can be **exported in one click** as a single `.cwpack` file to share with others; they drag the file onto the studio page and it is imported, giving them the whole set of platform operations right away. By default, export includes the screenshots taken while recording (each window's reference image and each step's frame), so whoever imports the macro can see where every step acts; the screenshots may contain chat content, so this can be turned off in settings (running only uses anchors and target images, so it is unaffected). Drafts and run screenshots are never included; import validates the file automatically and renames same-name macros with a `-2` suffix, with no confirmation dialogs.
+> A platform pack can be **exported in one click** as a single `.cwpack` file to share with others; they drag the file onto the studio page and it is imported, giving them the whole set of platform operations right away. By default, export includes the screenshots taken while recording (each window's reference image and each step's frame), so whoever imports the flow can see where every step acts; the screenshots may contain chat content, so this can be turned off in settings (running only uses anchors and target images, so it is unaffected). Drafts and run screenshots are never included; import validates the file automatically and renames same-name flows with a `-2` suffix, with no confirmation dialogs.
 
 ## 🏗️ How it works
 
 ```mermaid
 flowchart LR
     E["engine<br/>decide: what to do"] -->|PlatformPort| A["adapters<br/>platform packs: where"]
-    A --> M["macro<br/>execute: how"]
+    A --> M["flow<br/>execute: how"]
     M --> SCR(["Screen<br/>WeChat / Bilibili / Douyin"])
     A -->|watch events · extracted content| E
     E -->|drafts| Q[("pending queue")]
     Q <-->|approve / edit / reject| S["studio<br/>your entry point"]
-    S -->|record / edit macros| M
+    S -->|record / edit flows| M
     M --> R[("audit<br/>screenshots + logs")]
     R --> S
 ```
 
-1. **studio**: The visual editor and your main entry point. Record and edit macros, confirm pending actions and review the audit trail here.
+1. **studio**: The visual editor and your main entry point. Record and edit flows, confirm pending actions and review the audit trail here. The UI is organised as **应用 (app) › 流程 (flow) › 步骤 (step)**: an app (QQ, WeChat…) is a platform pack, a flow is one recorded sequence (`flows/*.yaml`), and a flow is made of steps. Code, folders and this document call an app a platform.
 2. **engine**: The decision layer, deciding "what to do now". It watches for new content, picks timing from your rhythm, decides whether to engage, drafts text, and drives the pending-action workflows.
-3. **adapters**: The platform layer, deciding "where". The generic `ScreenAdapter` reads each platform pack's declarations to watch, extract and invoke macros.
-4. **macro**: The execution layer, deciding "how". It queues all actions globally, calibrates windows, performs human-like input and takes a screenshot after every step. It knows nothing about specific platforms.
+3. **adapters**: The platform layer, deciding "where". The generic `ScreenAdapter` reads each platform pack's declarations to watch, extract and invoke flows.
+4. **flow**: The execution layer, deciding "how". It queues all actions globally, calibrates windows, performs human-like input and takes a screenshot after every step. It knows nothing about specific platforms.
 5. **infra**: Concrete implementations for storage (SQLite) and the LLM client.
 6. **audit**: One screenshot plus one log entry per action, reviewed afterward by suspicion level.
 
-> **Dependency direction:** engine depends only on the interfaces in `engine/ports/`; adapters and infra implement them; macro is platform-agnostic; all wiring happens in one place, `bootstrap.py`. Both the CLI and studio start through it.
+> **Dependency direction:** engine depends only on the interfaces in `engine/ports/`; adapters and infra implement them; flow is platform-agnostic; all wiring happens in one place, `bootstrap.py`. Both the CLI and studio start through it.
 
 ## 🔄 Comment & post workflow
 
@@ -144,9 +144,9 @@ Who owns each step:
 | ① Decide | `engine/decision/policy_comment.py` | Generic. Relationship lists, frequency caps, random threshold, shared across platforms |
 | ② Draft | `engine/tone/generator.py` | Generic. Calls the LLM via `ports/llm.py` with only the minimum context needed plus your past comments |
 | ③ Confirm | `engine/ports/review.py` (implemented in `infra/sqlite/`) | Generic. The pending queue is domain logic; `studio/routes/pending.py` only displays it and submits your choice |
-| ④ Execute | `adapters/<platform>/templates/` → `macro/executor.py` | Platform macro + global executor. Mutually exclusive with other actions; verifies the page fingerprint before typing and sending, and aborts on mismatch |
-| ⑤ Record | `macro/audit/` + `engine/tone/feedback.py` | Screenshots and action logs go to audit; final text, diff and your choice go to feedback learning and behavior memory |
-| Orchestrate | `engine/workflow/comment.py` | A long-running state machine: `pending → approved / edited / rejected → executed / failed`. It triggers execution after confirmation; studio never calls macro directly |
+| ④ Execute | `adapters/<platform>/flows/` → `flow/executor.py` | Platform flow + global executor. Mutually exclusive with other actions; verifies the page fingerprint before typing and sending, and aborts on mismatch |
+| ⑤ Record | `flow/audit/` + `engine/tone/feedback.py` | Screenshots and action logs go to audit; final text, diff and your choice go to feedback learning and behavior memory |
+| Orchestrate | `engine/workflow/comment.py` | A long-running state machine: `pending → approved / edited / rejected → executed / failed`. It triggers execution after confirmation; studio never calls flow directly |
 
 **Posting** uses the same pending queue, but starts differently: it isn't triggered by watching. `policy_post.py` picks a moment from your rhythm and posting frequency, and `engine/workflow/post.py` runs "timing → draft → confirm → execute → record".
 
@@ -157,7 +157,7 @@ Who owns each step:
 | Layer | Choice | Purpose |
 | :--- | :--- | :--- |
 | Language | Python 3.11+ | Entire project (`src/` layout, managed with uv) |
-| Data models | Pydantic v2 | Step / Script, platform pack declarations |
+| Data models | Pydantic v2 | Step / Flow, platform pack declarations |
 | Config | pydantic-settings + TOML | `config.toml` runtime config, `.env` secrets |
 | Storage | SQLite | `state.db`: pending queue, behavior memory, audit log |
 | LLM | Pluggable (via `ports/llm.py`), cloud API or local model | Comment / post drafting |
@@ -171,13 +171,13 @@ Who owns each step:
 
 ## 🖱️ Execution rules
 
-- **All platforms use screen-level macro operations**, including the web versions of Bilibili and Douyin. From the macro's perspective, a browser window and a client window are indistinguishable — both are just pixel regions on screen. Operating a browser via macros means the browser sees real CGEvent input, which is safer than CDP.
-- **One mouse, one keyboard**: studio recording, manual runs and engine-scheduled actions all go through `macro/executor.py`, queued and mutually exclusive. When it detects you using the computer, the executor pauses and resumes once you're idle.
-- **Window-relative coordinates**: macros record coordinates inside the window, plus the window size and screen scale factor (macOS Retina / Windows display scaling) at recording time. Before running, the window is calibrated to the same size so a resolution change doesn't make clicks miss.
+- **All platforms use screen-level flow operations**, including the web versions of Bilibili and Douyin. From the flow's perspective, a browser window and a client window are indistinguishable — both are just pixel regions on screen. Operating a browser via flows means the browser sees real CGEvent input, which is safer than CDP.
+- **One mouse, one keyboard**: studio recording, manual runs and engine-scheduled actions all go through `flow/executor.py`, queued and mutually exclusive. When it detects you using the computer, the executor pauses and resumes once you're idle.
+- **Window-relative coordinates**: flows record coordinates inside the window, plus the window size and screen scale factor (macOS Retina / Windows display scaling) at recording time. Before running, the window is calibrated to the same size so a resolution change doesn't make clicks miss.
 - **Verify the page before acting**: each step can declare which page it expects to be on (`expected_page`). Before typing or sending, the runner must match the page fingerprint; on mismatch it aborts and flags the action as suspicious in the audit log. Not sending is better than typing a comment into the wrong chat window.
 - **Clear before typing**: text steps first select-all and delete the input field (⌘A on macOS / Ctrl+A on Windows), so text left over from a dry run or an interrupted run is never sent along with the next one.
 - **Panic stop**: a global hotkey (default `⌃⌥⌘.` on macOS, `Ctrl+Alt+Shift+.` on Windows, configurable in studio under Settings · Hotkeys, with live conflict detection) aborts the current action and clears the execution queue immediately. Aborted actions are still audited.
-- **Dry run**: with `dry_run` on, the whole "open → locate → type" flow runs but the final "send" is skipped, with screenshots and audit entries written as usual. After recording a new macro or changing window size, dry-run it before going live.
+- **Dry run**: with `dry_run` on, the whole "open → locate → type" flow runs but the final "send" is skipped, with screenshots and audit entries written as usual. After recording a new flow or changing window size, dry-run it before going live.
 
 ## 🚀 Quick start
 
@@ -335,11 +335,11 @@ cyber-worker/
 │   │   │   └── post.py             # timing → draft → enqueue → (after confirm) execute → record
 │   │   └── monitor.py              # Polls each platform's watch regions, emits "new content" events
 │   │
-│   ├── macro/                      # ★ Execution layer: decides "how to do it" (platform-agnostic)
-│   │   ├── schema.py               # Step / Script models (window-relative coords, window size & scale, per-step expected_page)
+│   ├── flow/                       # ★ Execution layer: decides "how to do it" (platform-agnostic)
+│   │   ├── schema.py               # Step / Flow models (window-relative coords, window size & scale, per-step expected_page)
 │   │   ├── recorder.py             # Recording engine (pynput listener; gaps become delay rows)
 │   │   ├── anchors.py              # Region of a frame → page anchor (shared by studio and CLI)
-│   │   ├── runner.py               # Runs one script: calibrate window → steps (verify page before type/send) → screenshot; supports dry run
+│   │   ├── runner.py               # Runs one flow: calibrate window → steps (verify page before type/send) → screenshot; supports dry run
 │   │   ├── executor.py             # Global executor: queues all actions, pauses on user input, panic hotkey clears queue
 │   │   ├── locator/                # Targeting (decides where to click; recognition is delegated to vision/)
 │   │   │   ├── coord.py            # Coordinate targeting (baseline)
@@ -374,23 +374,23 @@ cyber-worker/
 │   │       └── windows.py          # Win32 + Pillow (window calibration, capture, IME-proof typing, system hotkeys)
 │   │
 │   ├── adapters/                   # ★ Platform layer: decides "where to do it" (declarative platform packs)
-│   │   ├── screen_adapter.py       # Generic PlatformPort implementation: reads pack declarations, runs macros
+│   │   ├── screen_adapter.py       # Generic PlatformPort implementation: reads pack declarations, runs flows
 │   │   ├── loader.py               # Loads packs (built-in + user_data/platforms/; user files override same-name built-ins)
 │   │   ├── pack.py                 # Pack export / import (.cwpack: packing, safety checks, unpacking)
 │   │   ├── wechat/
-│   │   │   ├── platform.yaml       # Capability → macro mapping, extraction fields (region + OCR), window size
+│   │   │   ├── platform.yaml       # Capability → flow mapping, extraction fields (region + OCR), window size
 │   │   │   ├── pages.yaml          # Page fingerprints + watch regions (Moments / Publish / Home)
-│   │   │   ├── templates/          # Coordinate macros (generated by recording, read-only)
+│   │   │   ├── flows/              # Coordinate flows (generated by recording, read-only)
 │   │   │   │   ├── moments_browse.yaml     # Open Moments + scroll N screens
 │   │   │   │   ├── moments_like.yaml       # Browse + like
 │   │   │   │   ├── moments_comment.yaml    # Comment on a given post (comment_draft variable)
 │   │   │   │   └── moments_publish.yaml    # Camera → type → publish (post_draft variable)
 │   │   │   └── reference/          # Reference screenshots (recorded on a test account, shipped with project)
 │   │   │       └── moments_1200x900.png
-│   │   ├── bilibili/               # Same: platform.yaml + pages.yaml + templates/
-│   │   │   └── templates/          # feed_browse / feed_like / feed_comment
+│   │   ├── bilibili/               # Same: platform.yaml + pages.yaml + flows/
+│   │   │   └── flows/              # feed_browse / feed_like / feed_comment
 │   │   ├── douyin/                 # Same
-│   │   │   └── templates/          # feed_browse / feed_like / feed_comment
+│   │   │   └── flows/              # feed_browse / feed_like / feed_comment
 │   │   ├── weibo/                  # Future support (empty dir + .gitkeep)
 │   │   ├── x/                      # Future support
 │   │   └── instagram/              # Future support
@@ -406,10 +406,10 @@ cyber-worker/
 │   │
 │   └── studio/                     # ★ Visual editor (primary user entry point)
 │       ├── server.py               # Single FastAPI instance (:9999)
-│       ├── state.py                # Shared state: script dir, latest frames, recording session, problem checks
+│       ├── state.py                # Shared state: flow dir, latest frames, recording session, problem checks
 │       ├── ws.py                   # WebSocket: live steps while recording, live results while running
 │       ├── routes/                 # HTTP endpoints (display and submit only, no business logic)
-│       │   ├── edit.py             # Macro CRUD, capture current window, page anchors
+│       │   ├── edit.py             # Flow CRUD, capture current window, page anchors
 │       │   ├── record.py           # Recording control (start/stop; replaces existing steps by default, optionally appends)
 │       │   ├── preview.py          # Image serving (reference, screenshots, anchors; user_data only)
 │       │   ├── run.py              # Dry run / run (queued on executor), panic, live status
@@ -419,7 +419,7 @@ cyber-worker/
 │       │   ├── pending.py          # Pending actions (comments + posts; approve / edit / reject with reason)
 │       │   └── audit.py            # Audit page (sorted by suspicion)
 │       └── static/                 # Frontend (vanilla HTML + JS + Canvas, no framework)
-│           ├── index.html          # Macro editor: add / step list / canvas + params·macro·run tabs
+│           ├── index.html          # Flow editor (流程设计): add / step list / canvas + params·flow settings·run tabs
 │           ├── pending.html        # Pending actions page
 │           ├── audit.html          # Audit replay page (single screenshot + expected state)
 │           ├── common.js           # Icons, appearance (dark / light / system), fetch wrapper, toasts, WebSocket
@@ -440,7 +440,7 @@ cyber-worker/
 │   │   ├── test_decision.py        # Decision logic (fake adapter + fake clock)
 │   │   ├── test_workflow.py        # Pending-action state machine (fake ReviewQueue)
 │   │   └── test_feedback.py        # Feedback routing (three actions → their models)
-│   ├── macro/
+│   ├── flow/
 │   │   ├── test_humanize.py        # Bezier trajectory, lognormal typing
 │   │   ├── test_executor.py        # Mutual exclusion, pause on user input, panic stop clears queue
 │   │   ├── test_runner.py          # Execution, window calibration, abort on page mismatch, dry run never sends
@@ -466,15 +466,15 @@ cyber-worker/
 │           └── douyin_recommend_feed.png      # Added when Bilibili/Douyin support lands
 │
 ├── docs/                           # Design docs
-│   ├── adapters.md                 # Platform pack format: platform.yaml / pages.yaml / templates
-│   ├── macro.md                    # Macro engine + recording + executor + window calibration
+│   ├── adapters.md                 # Platform pack format: platform.yaml / pages.yaml / flows
+│   ├── flow.md                     # Flow engine + recording + executor + window calibration
 │   ├── workflow.md                 # Pending-action state machine and feedback signals
 │   ├── audit.md                    # Screenshot archiving + audit
 │   └── studio.md                   # UI usage + routes
 │
 └── user_data/                      # ★ Runtime data (gitignored, not in git)
     ├── platforms/                  # Your recorded or forked platform packs (same format; overrides built-ins)
-    │   └── wechat/templates/my_moments_like.yaml
+    │   └── wechat/flows/my_moments_like.yaml
     ├── baselines/                  # Baseline images for selected regions (one per tag)
     │   ├── wechat/
     │   │   ├── new_comment.png     # Top-right of the message icon
@@ -496,10 +496,10 @@ cyber-worker/
 
 | Status | Item |
 | :---: | :--- |
-| 🚧 | `macro/` minimal loop (record + window calibration + page verification + execute + post-action screenshot + dry run): verified on Windows, pending on macOS |
+| 🚧 | `flow/` minimal loop (record + window calibration + page verification + execute + post-action screenshot + dry run): verified on Windows, pending on macOS |
 | 🚧 | Global executor (mutual exclusion, pause while you use the computer, panic stop): verified on Windows, pending on macOS |
 | ✅ | Audit page (suspicion ranking, spot checks, daily report; failed steps come with a "how to fix" note and a button straight to the fix) |
-| ✅ | `studio/` app pages (app overview, each app's macro cards: description, last run) + macro editor (create + record + edit + anchors + find-by-image clicks + wait-for-page + dry run / run + dark / light appearance + settings center + onboarding tour; every problem comes with a one-click fix) |
+| ✅ | `studio/` app pages (app overview, each app's flow cards: description, last run) + flow editor (create + record + edit + anchors + find-by-image clicks + wait-for-page + dry run / run + dark / light appearance + settings center + onboarding tour; every problem comes with a one-click fix) |
 | ✅ | Platform pack export / import (one-click `.cwpack` export, drop onto the page to import, easy to share with others) |
 | ⬜ | Find-by-text clicks (OCR, `locator/text.py` + `vision/ocr.py`) |
 | ⬜ | Platform pack format + generic `ScreenAdapter`, validated on WeChat Moments |

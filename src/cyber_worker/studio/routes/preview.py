@@ -10,7 +10,7 @@ from cyber_worker.studio.routes.edit import studio
 router = APIRouter(prefix="/api")
 
 
-IMAGE_TYPES = {".png": "image/png", ".webp": "image/webp"}  # 审计截图是 .webp，宏里的图是 .png
+IMAGE_TYPES = {".png": "image/png", ".webp": "image/webp"}  # 审计截图是 .webp，流程里的图是 .png
 
 
 @router.get("/file")

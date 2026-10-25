@@ -1,4 +1,4 @@
-// 宏设计页和审计页共用：图标、主题、请求封装、提示、WebSocket。
+// 流程设计页和审计页共用：图标、主题、请求封装、提示、WebSocket。
 "use strict";
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -230,7 +230,7 @@ const KEY_CODE_NAMES = {
   Period: ".", Comma: ",", Minus: "-", Equal: "=", Slash: "/", Semicolon: ";", Backquote: "`",
 };
 
-// 同一个应用总是同一个颜色（宏选择框、应用页的小方块）
+// 同一个应用总是同一个颜色（流程选择框、应用页的小方块）
 function hueOf(text) {
   let h = 0;
   for (const ch of text || "") h = (h * 31 + ch.codePointAt(0)) % 360;
@@ -242,7 +242,7 @@ function avatar(platform, cls = "", label = platform) {
   return `<span class="mp-avatar ${cls}" style="--h:${hueOf(platform)}">${escapeHtml(([...(label || "?")][0] || "?").toUpperCase())}</span>`;
 }
 
-// 导出一个应用的全部宏（.cwpack）：宏设计页、应用页共用
+// 导出一个应用的全部流程（.cwpack）：流程设计页、应用页共用
 async function exportPack(platform) {
   const res = await fetch(`/api/packs/${encodeURIComponent(platform)}`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
@@ -267,7 +267,7 @@ function prettyKey(combo) {
 }
 
 // 第几步：延迟不算「步」（它不操作窗口），动作按顺序 1、2、3…；延迟返回 null。
-// 和步骤编号一致：动作 s01、s02…，延迟 d01、d02…（服务端 Script.renumber）
+// 和步骤编号一致：动作 s01、s02…，延迟 d01、d02…（服务端 Flow.renumber）
 function actionNo(steps, i) {
   if (!steps[i] || steps[i].action === "wait") return null;
   let n = 0;

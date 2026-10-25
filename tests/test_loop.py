@@ -1,19 +1,19 @@
-"""最小闭环：磁盘上的脚本 + pages.yaml → 执行器排队 → runner 执行 → 截图落盘 → 审计进 state.db。"""
+"""最小闭环：磁盘上的流程 + pages.yaml → 执行器排队 → runner 执行 → 截图落盘 → 审计进 state.db。"""
 
 import random
 from datetime import datetime
 
 import yaml
-
-from cyber_worker.infra.sqlite.audit_store import SqliteAuditStore
-from cyber_worker.infra.sqlite.db import connect
-from cyber_worker.macro.executor import Executor
-from cyber_worker.macro.runner import Runner, RunStatus
-from cyber_worker.macro.schema import Script
-from cyber_worker.macro.screenshot.storage import ScreenshotStorage
-from cyber_worker.macro.vision.fingerprint import PageBook
 from fakes import FakeActivity, FakeIO
 from helpers import make_book, pattern, screen_with
+
+from cyber_worker.flow.executor import Executor
+from cyber_worker.flow.runner import Runner, RunStatus
+from cyber_worker.flow.schema import Flow
+from cyber_worker.flow.screenshot.storage import ScreenshotStorage
+from cyber_worker.flow.vision.fingerprint import PageBook
+from cyber_worker.infra.sqlite.audit_store import SqliteAuditStore
+from cyber_worker.infra.sqlite.db import connect
 
 
 def test_minimal_loop(tmp_path):
@@ -31,8 +31,8 @@ def test_minimal_loop(tmp_path):
         ],
     }, allow_unicode=True), encoding="utf-8")
 
-    script = Script.load(pack / "moments_comment.yaml")
-    pages = PageBook.load(script.pages_path)
+    flow = Flow.load(pack / "moments_comment.yaml")
+    pages = PageBook.load(flow.pages_path)
     io = FakeIO(lambda: screen_with(pattern()))
     audit = SqliteAuditStore(connect(tmp_path / "user_data" / "state.db"))
     runner = Runner(io, ScreenshotStorage(tmp_path / "user_data" / "screenshots"), audit,
@@ -42,7 +42,7 @@ def test_minimal_loop(tmp_path):
 
     def submit(dry_run):
         return executor.submit(lambda gate: runner.run(
-            script, pages=pages, variables={"comment_draft": "拍得真好"}, dry_run=dry_run, gate=gate,
+            flow, pages=pages, variables={"comment_draft": "拍得真好"}, dry_run=dry_run, gate=gate,
         )).result(timeout=5)
 
     dry = submit(dry_run=True)

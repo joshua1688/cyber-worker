@@ -6,8 +6,8 @@ from collections.abc import Callable
 
 import numpy as np
 
-from cyber_worker.macro.io.base import CalibrationError, WindowGeometry, WindowInfo
-from cyber_worker.macro.schema import Window
+from cyber_worker.flow.io.base import CalibrationError, WindowGeometry, WindowInfo
+from cyber_worker.flow.schema import Window
 
 
 def blank(w: int = 400, h: int = 300) -> np.ndarray:
@@ -29,11 +29,11 @@ class FakeIO:
 
     def list_windows(self):
         return [WindowInfo("Demo", "Demo 窗口", 400, 300), WindowInfo("QQ", "会话", 900, 600),
-                WindowInfo("QQ", "QQ", 320, 740), WindowInfo("chrome", "宏设计 · 赛博打工人 - Google Chrome", 1200, 800)]
+                WindowInfo("QQ", "QQ", 320, 740), WindowInfo("chrome", "流程设计 · 赛博打工人 - Google Chrome", 1200, 800)]
 
     def window_at(self, x, y):
         if x < 0:  # 约定：负坐标 = 点到了 studio 所在的浏览器
-            return WindowInfo("chrome", "宏设计 · 赛博打工人 - Google Chrome", 1200, 800)
+            return WindowInfo("chrome", "流程设计 · 赛博打工人 - Google Chrome", 1200, 800)
         return WindowInfo("QQ", "海绵宝宝大战…等2个会话", 748, 613)
 
     def window_geometry_at(self, x, y):

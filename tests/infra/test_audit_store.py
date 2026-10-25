@@ -1,8 +1,8 @@
 from datetime import datetime
 
+from cyber_worker.flow.audit.logger import AuditEntry, StepStatus
 from cyber_worker.infra.sqlite.audit_store import SqliteAuditStore
 from cyber_worker.infra.sqlite.db import connect
-from cyber_worker.macro.audit.logger import AuditEntry, StepStatus
 
 
 def test_roundtrip(tmp_path):
@@ -22,7 +22,7 @@ def test_delete_day_and_retention(tmp_path):
 
     from cyber_worker.bootstrap import App
     from cyber_worker.config import Config
-    from cyber_worker.macro.screenshot.storage import ScreenshotStorage
+    from cyber_worker.flow.screenshot.storage import ScreenshotStorage
 
     store = SqliteAuditStore(connect(tmp_path / "state.db"))
     for day in (1, 10, 20, 23):
@@ -58,12 +58,13 @@ def test_runs_summarise_each_run(tmp_path):
     store.write(AuditEntry("r2", datetime(2026, 10, 25, 10), "查看资料", "s02", "hover", StepStatus.ABORTED,
                            detail="s02 没找到要点的目标（等了 5 秒）"))
     ok, bad = store.runs()
-    assert ok["script"] == "群聊天" and not ok["bad"] and ok["step_id"] is None
-    assert bad["script"] == "查看资料" and bad["bad"] and bad["step_id"] == "s02" and "没找到" in bad["detail"]
+    assert ok["flow"] == "群聊天" and not ok["bad"] and ok["step_id"] is None
+    assert bad["flow"] == "查看资料" and bad["bad"] and bad["step_id"] == "s02" and "没找到" in bad["detail"]
 
 
-def test_old_database_gets_the_app_column(tmp_path):
-    """旧库没有 app 列：打开时补上，旧记录的应用是空的；改名给了应用就只改这个应用的（加上没记应用的旧记录）。"""
+def test_old_database_is_upgraded(tmp_path):
+    """旧库：列名还叫 script、没有 app 列，打开时改名、补上，旧记录的应用是空的；
+    改名给了应用就只改这个应用的（加上没记应用的旧记录）。"""
     import sqlite3
 
     path = tmp_path / "state.db"
@@ -83,5 +84,6 @@ def test_old_database_gets_the_app_column(tmp_path):
     store.write(AuditEntry("r2", at, "chat", "s01", "click", StepStatus.OK, app="wx"))
     assert [(r["run_id"], r["app"]) for r in store.runs()] == [("r0", None), ("r1", "qq"), ("r2", "wx")]
 
-    assert store.rename_script("chat", "群聊天", "qq") == 2
-    assert [(r["run_id"], r["script"]) for r in store.runs()] == [("r0", "群聊天"), ("r1", "群聊天"), ("r2", "chat")]
+    assert store.rename_flow("chat", "群聊天", "qq") == 2
+    assert [(r["run_id"], r["flow"]) for r in store.runs()] == [("r0", "群聊天"), ("r1", "群聊天"), ("r2", "chat")]
+

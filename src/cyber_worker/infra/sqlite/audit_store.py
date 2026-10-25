@@ -4,7 +4,7 @@ import sqlite3
 import threading
 from datetime import date
 
-from cyber_worker.macro.audit.logger import AuditEntry
+from cyber_worker.flow.audit.logger import AuditEntry
 
 # reviewed 列的取值
 UNREVIEWED, LOOKS_RIGHT, HAS_PROBLEM = 0, 1, 2
@@ -19,13 +19,13 @@ class SqliteAuditStore:
         with self._lock, self._conn:
             self._conn.execute(
                 """INSERT INTO audit_log
-                   (run_id, at, script, step_id, action, status, screenshot,
+                   (run_id, at, flow, step_id, action, status, screenshot,
                     expected_page, page_score, dry_run, suspicious, detail, app)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry.run_id,
                     entry.at.isoformat(timespec="seconds"),
-                    entry.script,
+                    entry.flow,
                     entry.step_id,
                     entry.action,
                     entry.status.value,
@@ -49,7 +49,7 @@ class SqliteAuditStore:
         self,
         *,
         day: date | None = None,
-        script: str | None = None,
+        flow: str | None = None,
         unreviewed_only: bool = False,
         limit: int | None = 1000,
     ) -> list[dict]:
@@ -57,9 +57,9 @@ class SqliteAuditStore:
         if day is not None:
             sql += " AND substr(at, 1, 10) = ?"
             args.append(day.isoformat())
-        if script:
-            sql += " AND script = ?"
-            args.append(script)
+        if flow:
+            sql += " AND flow = ?"
+            args.append(flow)
         if unreviewed_only:
             sql += " AND reviewed = 0"
         sql += " ORDER BY id DESC"
@@ -70,11 +70,11 @@ class SqliteAuditStore:
             return [dict(r) for r in self._conn.execute(sql, args).fetchall()]
 
     def runs(self) -> list[dict]:
-        """每次运行一行，按先后：宏名、开始时间、是不是空跑、有没有出问题（中止 / 出错）；
+        """每次运行一行，按先后：流程名、开始时间、是不是空跑、有没有出问题（中止 / 出错）；
         出了问题的，带上第一处出问题的步骤和原因（应用首页的卡片上显示）。"""
         with self._lock:
             rows = self._conn.execute(
-                """SELECT run_id, script, MAX(app) AS app, MIN(at) AS at, MAX(dry_run) AS dry,
+                """SELECT run_id, flow, MAX(app) AS app, MIN(at) AS at, MAX(dry_run) AS dry,
                           MAX(status IN ('failed', 'aborted')) AS bad
                    FROM audit_log GROUP BY run_id ORDER BY MIN(id)"""
             ).fetchall()
@@ -85,15 +85,15 @@ class SqliteAuditStore:
         out = []
         for r in rows:
             b = first_bad.get(r["run_id"])
-            out.append({"run_id": r["run_id"], "script": r["script"], "app": r["app"], "at": r["at"], "dry_run": bool(r["dry"]),
+            out.append({"run_id": r["run_id"], "flow": r["flow"], "app": r["app"], "at": r["at"], "dry_run": bool(r["dry"]),
                         "bad": bool(r["bad"]), "step_id": b["step_id"] if b else None,
                         "detail": b["detail"] if b else ""})
         return out
 
-    def rename_script(self, old: str, new: str, app: str | None = None) -> int:
-        """宏改了名：以前的记录跟着改名（记录按宏名对应宏，不改的话卡片上「最近一次」和审计历史都对不上）。
-        给了 app 就只改这个应用的（加上没记应用的旧记录），别的应用里同名的宏不受影响。"""
-        sql, args = "UPDATE audit_log SET script = ? WHERE script = ?", [new, old]
+    def rename_flow(self, old: str, new: str, app: str | None = None) -> int:
+        """流程改了名：以前的记录跟着改名（记录按流程名对应流程，不改的话卡片上「最近一次」和审计历史都对不上）。
+        给了 app 就只改这个应用的（加上没记应用的旧记录），别的应用里同名的流程不受影响。"""
+        sql, args = "UPDATE audit_log SET flow = ? WHERE flow = ?", [new, old]
         if app is not None:
             sql += " AND (app = ? OR app IS NULL)"
             args.append(app)

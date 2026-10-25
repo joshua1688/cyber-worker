@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id        TEXT NOT NULL,
     at            TEXT NOT NULL,
-    script        TEXT NOT NULL,
+    flow          TEXT NOT NULL,
     step_id       TEXT NOT NULL,
     action        TEXT NOT NULL,
     status        TEXT NOT NULL,
@@ -42,6 +42,9 @@ def connect(path: str | Path) -> sqlite3.Connection:
 def _migrate(conn: sqlite3.Connection) -> None:
     """旧库补上后来加的列（CREATE TABLE IF NOT EXISTS 不会改已有的表）。"""
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(audit_log)")}
-    if "app" not in cols:  # 以前只记宏名，不知道是哪个应用的：旧记录留空，显示时按宏名去找
+    if "script" in cols and "flow" not in cols:  # 「宏 / 脚本」改叫「流程」以前的库：列名跟着改
+        with conn:
+            conn.execute("ALTER TABLE audit_log RENAME COLUMN script TO flow")
+    if "app" not in cols:  # 以前只记流程名，不知道是哪个应用的：旧记录留空，显示时按流程名去找
         with conn:
             conn.execute("ALTER TABLE audit_log ADD COLUMN app TEXT")

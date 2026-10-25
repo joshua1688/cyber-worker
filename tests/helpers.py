@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-from cyber_worker.macro.screenshot.storage import write_image
-from cyber_worker.macro.vision.fingerprint import Anchor, PageBook, PageFingerprint
+from cyber_worker.flow.screenshot.storage import write_image
+from cyber_worker.flow.vision.fingerprint import Anchor, PageBook, PageFingerprint
 
 
 def pattern(w: int = 40, h: int = 30, seed: int = 1) -> np.ndarray:

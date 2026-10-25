@@ -8,8 +8,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from cyber_worker.config import save_value
-from cyber_worker.macro.io.hotkeys import DEFAULTS, LABELS
-from cyber_worker.macro.io.pynput_input import normalize_combo
+from cyber_worker.flow.io.hotkeys import DEFAULTS, LABELS
+from cyber_worker.flow.io.pynput_input import normalize_combo
 from cyber_worker.studio.routes.edit import studio
 from cyber_worker.studio.routes.record import toggle_recording
 from cyber_worker.studio.routes.run import hotkey_dry_run

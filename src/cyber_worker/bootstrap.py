@@ -10,16 +10,16 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from cyber_worker.config import Config
+from cyber_worker.flow.executor import Executor
+from cyber_worker.flow.io.base import ActivityMonitor, ScreenIO
+from cyber_worker.flow.io.effects import EffectsIO, NullOverlay, Overlay
+from cyber_worker.flow.io.hotkeys import HotkeyManager, NullBackend
+from cyber_worker.flow.io.sounds import NullSound, Sound
+from cyber_worker.flow.recorder import RecordingBuilder
+from cyber_worker.flow.runner import Runner
+from cyber_worker.flow.screenshot.storage import ScreenshotStorage
 from cyber_worker.infra.sqlite.audit_store import SqliteAuditStore
 from cyber_worker.infra.sqlite.db import connect
-from cyber_worker.macro.executor import Executor
-from cyber_worker.macro.io.base import ActivityMonitor, ScreenIO
-from cyber_worker.macro.io.effects import EffectsIO, NullOverlay, Overlay
-from cyber_worker.macro.io.hotkeys import HotkeyManager, NullBackend
-from cyber_worker.macro.io.sounds import NullSound, Sound
-from cyber_worker.macro.recorder import RecordingBuilder
-from cyber_worker.macro.runner import Runner
-from cyber_worker.macro.screenshot.storage import ScreenshotStorage
 
 # 录制监听：阻塞到 stop 被置位，期间把真实输入喂给 builder
 Listen = Callable[[RecordingBuilder, threading.Event], None]
@@ -58,11 +58,11 @@ class App:
 
 def _platform_io() -> ScreenIO:
     if sys.platform == "darwin":
-        from cyber_worker.macro.io.macos import MacScreenIO
+        from cyber_worker.flow.io.macos import MacScreenIO
 
         return MacScreenIO()
     if sys.platform == "win32":
-        from cyber_worker.macro.io.windows import WinScreenIO
+        from cyber_worker.flow.io.windows import WinScreenIO
 
         return WinScreenIO()
     raise RuntimeError(f"屏幕操作只支持 macOS 和 Windows（当前：{sys.platform}）")
@@ -70,7 +70,7 @@ def _platform_io() -> ScreenIO:
 
 def _platform_overlay() -> Overlay:
     if sys.platform == "win32":
-        from cyber_worker.macro.io.win_overlay import WinOverlay
+        from cyber_worker.flow.io.win_overlay import WinOverlay
 
         return WinOverlay()
     return NullOverlay()  # TODO: macOS（NSWindow ignoresMouseEvents + sharingType none）
@@ -78,16 +78,16 @@ def _platform_overlay() -> Overlay:
 
 def _platform_sound() -> Sound:
     if sys.platform == "win32":
-        from cyber_worker.macro.io.win_sound import WinSound
+        from cyber_worker.flow.io.win_sound import WinSound
 
         return WinSound()
     return NullSound()  # TODO: macOS（AVAudioEngine 或 afplay 混好的片段）
 
 
 def build(config_path: str | Path = "config.toml") -> App:
-    from cyber_worker.macro.io.hotkeys import platform_backend
-    from cyber_worker.macro.io.pynput_input import InputActivityMonitor, wait_for_click
-    from cyber_worker.macro.recorder import listen
+    from cyber_worker.flow.io.hotkeys import platform_backend
+    from cyber_worker.flow.io.pynput_input import InputActivityMonitor, wait_for_click
+    from cyber_worker.flow.recorder import listen
 
     config = Config.load(config_path)
     data = config.paths.user_data

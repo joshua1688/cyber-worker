@@ -150,13 +150,13 @@ const Settings = (() => {
   }
 
   const LOCAL_KEYS = [
-    ["Ctrl / ⌘ + K", "打开宏选择器"],
+    ["Ctrl / ⌘ + K", "打开流程选择器"],
     ["Ctrl / ⌘ + Enter 按两次", "执行（会真的发送，所以要按两次）"],
     ["Ctrl / ⌘ + S", "立刻保存（平时改完会自动保存）"],
     ["Ctrl / ⌘ + Z", "撤销"],
     ["Ctrl / ⌘ + Shift + Z", "重做"],
     ["Delete", "删除勾选（或选中）的步骤"],
-    ["↑ / ↓", "宏设计页：上下切换步骤"],
+    ["↑ / ↓", "流程设计页：上下切换步骤"],
     ["Esc", "退出框选 / 取消选中"],
     ["↑ / ↓", "审计页：上下切换运行"],
     ["← / →", "审计页：切换这次运行的步骤"],
@@ -289,7 +289,7 @@ const Settings = (() => {
       </div>
       <div class="set-group">
         <div class="set-group-head"><b>分享</b></div>
-        ${row("导出时带上截图", "导出平台包时带上录制时的窗口截图（参考图、每一步的画面），别人导入后能看到每一步在哪操作。截图里可能有聊天内容，不想分享就关掉；执行不受影响", sw("pack_screenshots"))}
+        ${row("导出时带上截图", "导出应用包时带上录制时的窗口截图（参考图、每一步的画面），别人导入后能看到每一步在哪操作。截图里可能有聊天内容，不想分享就关掉；执行不受影响", sw("pack_screenshots"))}
       </div>
       <div class="set-group">
         <div class="set-group-head"><b>执行</b></div>
@@ -324,7 +324,7 @@ const Settings = (() => {
       </div>
       <div class="set-group">
         ${row("配置文件", "这里的设置都保存在这个文件里", path(data.config_path))}
-        ${row("数据目录", "宏、截图、审计记录都在这里", path(data.user_data))}
+        ${row("数据目录", "流程、截图、审计记录都在这里", path(data.user_data))}
         ${row("新手引导", "看过的引导不会再自动出现，可以在这里重新打开",
           `<button type="button" class="btn sm" id="tour-again">${icon("help")}重新看引导</button>`)}
       </div>`;

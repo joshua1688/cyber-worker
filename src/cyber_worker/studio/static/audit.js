@@ -1,6 +1,6 @@
 // 审计页：一次运行一行，有问题的排前面；连续几次同样的失败合成一行（×N）。
 // 右边是这次运行的步骤时间线 + 选中那一步的原因和截图。复核按「一次运行」来：
-// 「看过了」= 这次运行看过、没问题；「有问题，要修」= 留在「要修」里，点「去修改」直接打开那个宏的那一步。
+// 「看过了」= 这次运行看过、没问题；「有问题，要修」= 留在「要修」里，点「去修改」直接打开那个流程的那一步。
 "use strict";
 
 const A = {
@@ -9,7 +9,7 @@ const A = {
   rows: [],      // 列表上的行：一行 = 连着几次同样结果的运行（通常就一次）
   show: "all",   // all | pending | bad | fix
   selected: -1,  // A.entries 的下标（右边正在看的那一步）
-  macros: [],    // 这一天出现过的 {app, app_title, script}：宏筛选下拉按应用分组
+  flows: [],    // 这一天出现过的 {app, app_title, flow}：流程筛选下拉按应用分组
 };
 const TYPE_TEXT = { click: "点击", type: "输入", key: "按键", scroll: "滚动", wait: "延迟", drag: "拖动",
   hover: "悬停", wait_page: "等待页面", start: "开始", calibrate: "找窗口" };
@@ -20,7 +20,7 @@ const stepNo = (e) => { const m = /^s(\d+)$/.exec(e.step_id); return m ? +m[1] :
 const stepName = (e) => (stepNo(e) ? `第 ${stepNo(e)} 步 · ` : "") + (TYPE_TEXT[e.action] || e.action);
 const flagged = (g) => g.es.some((e) => e.reviewed === 2);   // 标了「有问题，要修」
 const seen = (g) => !flagged(g) && g.es.every((e) => e.reviewed === 1);  // 标了「看过了」
-// 停下来是正常保护、不用改宏（你动了键鼠、窗口没开）：只留「看过了」，不给「要修」「去修改」
+// 停下来是正常保护、不用改流程（你动了键鼠、窗口没开）：只留「看过了」，不给「要修」「去修改」
 const noFix = (g) => !!g.bad && advise(g.bad)?.edit === false;
 
 // 程序写的原因 → 一句人话。细节（得分、等了几秒）放在右边的「详细」里
@@ -42,7 +42,7 @@ function human(detail) {
 }
 
 // 出了问题的那一步怎么修：{ text, edit }。edit = 要到编辑器里改（显示「去修改」）；
-// 不用改宏的（你动了键鼠、窗口没开）只给一句说明。认不出的原因返回 null
+// 不用改流程的（你动了键鼠、窗口没开）只给一句说明。认不出的原因返回 null
 function advise(e) {
   const t = e.detail || "";
   const no = stepNo(e) ? `第 ${stepNo(e)} 步` : "这一步";
@@ -86,7 +86,7 @@ function weakTarget(e) {
     + `点「去修改」，在右边「目标」旁点「重新框选」，框一块只有它才有的区域。` };
 }
 
-// 成功了、但页面锚点挪了位置（runner.SHIFT_NOTE）：界面布局变了，程序在整个窗口里找到了它。提醒看一眼，不用改宏
+// 成功了、但页面锚点挪了位置（runner.SHIFT_NOTE）：界面布局变了，程序在整个窗口里找到了它。提醒看一眼，不用改流程
 function movedAnchor(e) {
   if (e.status !== "ok" || !/页面锚点挪了位置/.test(e.detail || "")) return null;
   return { edit: false, text: "窗口里的界面挪了位置（比如左边多出一栏会话列表），程序在整个窗口里找到了这个页面，照常执行了。"
@@ -104,19 +104,19 @@ async function loadDays() {
 
 async function load(keepRun) {
   const params = new URLSearchParams({ day: $("#f-day").value });
-  // 下拉的值："" 全部；JSON [应用] 这个应用的全部宏；JSON [应用, 宏名] 这一个宏（没认出应用的旧记录，应用是 ""）
-  const pick = $("#f-script").value && JSON.parse($("#f-script").value);
+  // 下拉的值："" 全部；JSON [应用] 这个应用的全部流程；JSON [应用, 流程名] 这一个流程（没认出应用的旧记录，应用是 ""）
+  const pick = $("#f-flow").value && JSON.parse($("#f-flow").value);
   if (pick) {
     params.set("app", pick[0]);
-    if (pick.length > 1) params.set("script", pick[1]);
+    if (pick.length > 1) params.set("flow", pick[1]);
   }
   const data = await api("GET", `/api/audit?${params}`);
-  A.macros = data.macros;
+  A.flows = data.flows;
   A.entries = data.entries;
   buildGroups();
   buildRows();
   renderReport(data.report);
-  renderScripts();
+  renderFlows();
   const g = keepRun && A.groups.find((x) => x.es[0].run_id === keepRun);
   A.selected = g ? A.entries.indexOf(g.top) : firstSelection();
   render();
@@ -133,8 +133,8 @@ function buildGroups() {
     es.sort((x, y) => x.id - y.id);
     const bad = es.find(isBad);
     const top = bad || es.reduce((m, e) => (e.suspicion > m.suspicion ? e : m), es[es.length - 1]);
-    const { app, app_title: appTitle, macro_id: macroId, script } = es[0];
-    return { es, top, bad, at: es[0].at, script, app, appTitle, macroId, dry: es[0].dry_run };
+    const { app, app_title: appTitle, flow_id: flowId, flow } = es[0];
+    return { es, top, bad, at: es[0].at, flow, app, appTitle, flowId, dry: es[0].dry_run };
   });
   A.groups.sort((x, y) => y.top.suspicion - x.top.suspicion || y.at.localeCompare(x.at));
 }
@@ -149,13 +149,13 @@ function summary(g) {
   return `${g.es.length} 步全部成功`;
 }
 
-// 列表上的行：按筛选留下的运行；连着的「同一个宏、同样失败」合成一行
+// 列表上的行：按筛选留下的运行；连着的「同一个流程、同样失败」合成一行
 function buildRows() {
   const keep = { all: () => true, bad: (g) => !!g.bad, fix: flagged, pending: (g) => g.es.some(pending) }[A.show];
   A.rows = [];
   for (const g of A.groups.filter(keep)) {
     const last = A.rows[A.rows.length - 1];
-    const key = `${g.app}|${g.script}|${g.dry}|${summary(g)}`;
+    const key = `${g.app}|${g.flow}|${g.dry}|${summary(g)}`;
     if (g.bad && last?.key === key) last.groups.push(g);
     else A.rows.push({ key, groups: [g] });
   }
@@ -182,27 +182,27 @@ function renderReport(r) {
     <div class="stat ${r.suspicious_unreviewed ? "alert" : ""}"><div class="v">${r.suspicious_unreviewed}</div><div class="k">待审</div></div>`;
 }
 
-// 「全部 QQ 的宏」「全部微信的宏」：英文名两边空一格
-const allOf = (title) => (/^[A-Za-z0-9]|[A-Za-z0-9]$/.test(title) ? `全部 ${title} 的宏` : `全部${title}的宏`);
+// 「全部 QQ 的流程」「全部微信的流程」：英文名两边空一格
+const allOf = (title) => (/^[A-Za-z0-9]|[A-Za-z0-9]$/.test(title) ? `全部 ${title} 的流程` : `全部${title}的流程`);
 
-// 宏筛选：按应用分组，每组先是「全部 QQ 的宏」，再是一个个宏；同名的宏在不同应用里也分得清
-function renderScripts() {
-  const sel = $("#f-script");
+// 流程筛选：按应用分组，每组先是「全部 QQ 的流程」，再是一个个流程；同名的流程在不同应用里也分得清
+function renderFlows() {
+  const sel = $("#f-flow");
   const current = sel.value;
   const groups = new Map();
-  A.macros.forEach((m) => {
+  A.flows.forEach((m) => {
     const k = m.app || "";
     if (!groups.has(k)) groups.set(k, { title: m.app_title || "其他", names: [] });
-    groups.get(k).names.push(m.script);
+    groups.get(k).names.push(m.flow);
   });
   const opt = (value, text) => `<option value="${escapeHtml(value)}" ${value === current ? "selected" : ""}>${escapeHtml(text)}</option>`;
-  let html = opt("", "全部宏");
+  let html = opt("", "全部流程");
   for (const [app, g] of groups) {
     html += `<optgroup label="${escapeHtml(g.title)}">${
       g.names.length > 1 ? opt(JSON.stringify([app]), allOf(g.title)) : ""}${
       g.names.map((n) => opt(JSON.stringify([app, n]), n)).join("")}</optgroup>`;
   }
-  // 选中的宏这一天没有记录了（换了日期）：留着它，别悄悄变成「全部」
+  // 选中的流程这一天没有记录了（换了日期）：留着它，别悄悄变成「全部」
   if (current && !html.includes(`value="${escapeHtml(current)}"`)) {
     const p = JSON.parse(current);
     html += opt(current, p.length > 1 ? p[1] : allOf(p[0]));
@@ -210,13 +210,13 @@ function renderScripts() {
   sel.innerHTML = html;
 }
 
-// 哪个应用：头像 + 「QQ › 群聊天」；认不出应用（宏名在好几个应用里都有的旧记录）只写宏名
+// 哪个应用：头像 + 「QQ › 群聊天」；认不出应用（流程名在好几个应用里都有的旧记录）只写流程名
 function appName(g, link) {
-  if (!g.app) return `<b>${escapeHtml(g.script)}</b>`;
+  if (!g.app) return `<b>${escapeHtml(g.flow)}</b>`;
   const title = escapeHtml(g.appTitle || g.app);
   return `${avatar(g.app, "xs", g.appTitle || g.app)}${link
     ? `<a class="app-link" href="/apps?app=${encodeURIComponent(g.app)}" title="打开这个应用">${title}</a>`
-    : `<span class="app-name">${title}</span>`}<span class="sep">›</span><b>${escapeHtml(g.script)}</b>`;
+    : `<span class="app-name">${title}</span>`}<span class="sep">›</span><b>${escapeHtml(g.flow)}</b>`;
 }
 
 function renderList() {
@@ -252,7 +252,7 @@ function renderViewer() {
   const status = g.bad ? STATUS_TEXT[g.bad.status] : tone(g) === "warn" ? "待看" : "正常";
   const reason = human(e.detail);
   const score = e.page_score == null ? "" : `，得分 ${e.page_score.toFixed(2)}`;
-  const id = g.macroId;
+  const id = g.flowId;
   const fixStep = g.bad || g.top;
   const advice = isBad(e) ? advise(e) : weakTarget(e) || movedAnchor(e);
   v.innerHTML = `
@@ -278,7 +278,7 @@ function renderViewer() {
           e.detail && reason !== e.detail ? ` · 详细：${escapeHtml(e.detail)}` : ""}</small>
       </div>
       ${advice ? `<div class="advice">${icon("info")}<div><b>怎么修</b><p>${escapeHtml(advice.text)}</p>
-        ${advice.edit && id ? `<a class="btn sm primary" href="/?macro=${encodeURIComponent(id)}&step=${encodeURIComponent(e.step_id)}">${icon("sliders")}去修改</a>` : ""}</div></div>` : ""}
+        ${advice.edit && id ? `<a class="btn sm primary" href="/?flow=${encodeURIComponent(id)}&step=${encodeURIComponent(e.step_id)}">${icon("sliders")}去修改</a>` : ""}</div></div>` : ""}
       ${e.screenshot_url ? `<div class="viewer-shot"><img src="${e.screenshot_url}" alt="操作后截图"></div>`
         : `<p class="no-shot">${icon("image")}这一步没有截图${isBad(e) ? "：没做成，所以没有操作后的画面" : ""}</p>`}
     </div>
@@ -286,9 +286,9 @@ function renderViewer() {
       <button class="btn ${seen(g) ? "primary" : ""}" data-act="seen"
         title="${seen(g) ? "再点一下撤销" : "这次运行看过了，没问题；自动跳到下一次"}">${icon("check")}${seen(g) ? "已看过" : "看过了"} <kbd>1</kbd></button>
       ${noFix(g) ? "" : `<button class="btn ${flagged(g) ? "danger" : "danger-ghost"}" data-act="fix"
-        title="${flagged(g) ? "再点一下撤销" : "这次运行做错了：留在「要修」里，回头去改宏"}">${icon("alert")}${flagged(g) ? "已标为要修" : "有问题，要修"} <kbd>2</kbd></button>`}
-      ${flagged(g) && !noFix(g) && !(advice?.edit && id) ? (id ? `<a class="btn" href="/?macro=${encodeURIComponent(id)}&step=${encodeURIComponent(fixStep.step_id)}">${icon("sliders")}去修改</a>`
-        : `<button class="btn" disabled title="这个宏已经删了，没法再改">${icon("trash")}宏已删除</button>`) : ""}
+        title="${flagged(g) ? "再点一下撤销" : "这次运行做错了：留在「要修」里，回头去改流程"}">${icon("alert")}${flagged(g) ? "已标为要修" : "有问题，要修"} <kbd>2</kbd></button>`}
+      ${flagged(g) && !noFix(g) && !(advice?.edit && id) ? (id ? `<a class="btn" href="/?flow=${encodeURIComponent(id)}&step=${encodeURIComponent(fixStep.step_id)}">${icon("sliders")}去修改</a>`
+        : `<button class="btn" disabled title="这个流程已经删了，没法再改">${icon("trash")}流程已删除</button>`) : ""}
       <span class="grow"></span>
       <span class="muted" style="font-size:12px"><kbd>↑</kbd> <kbd>↓</kbd> 切换运行 · <kbd>←</kbd> <kbd>→</kbd> 切换步骤</span>
     </div>`;
@@ -383,7 +383,7 @@ $("#f-show").addEventListener("click", (e) => {
   if (!rowOf(selectedGroup())) A.selected = firstSelection();
   render();
 });
-["#f-day", "#f-script"].forEach((s) => $(s).addEventListener("change", () => attempt(() => load())));
+["#f-day", "#f-flow"].forEach((s) => $(s).addEventListener("change", () => attempt(() => load())));
 $("#btn-clear-day").addEventListener("click", (e) => {
   const btn = e.currentTarget;
   const day = $("#f-day").value;
@@ -422,9 +422,9 @@ function startTour() {
     { el: "#list", title: "一次运行一行，有问题的排最前",
       body: "红点是失败，黄点是还有可疑的步骤没看。连着几次一样的失败合成一行，标着 ×N。↑ ↓ 切换运行。" },
     { el: "#viewer", title: "看截图，下结论",
-      body: "上面是这次运行的每一步，点哪步看哪步，← → 逐步切换；下面是原因和截图。看完按 1「看过了」，自动到下一次；做错了按 2「有问题，要修」，它会留在「要修」里，点「去修改」直接打开那个宏的那一步。再按一次就是撤销。" },
+      body: "上面是这次运行的每一步，点哪步看哪步，← → 逐步切换；下面是原因和截图。看完按 1「看过了」，自动到下一次；做错了按 2「有问题，要修」，它会留在「要修」里，点「去修改」直接打开那个流程的那一步。再按一次就是撤销。" },
     { el: "#filters", title: "筛选",
-      body: "按日期、按宏筛；「待审」是还没看过的，「失败」是失败的，「要修」是你标了有问题的。" },
+      body: "按日期、按流程筛；「待审」是还没看过的，「失败」是失败的，「要修」是你标了有问题的。" },
   ], "cw.tour.audit");
 }
 $("#btn-tour").addEventListener("click", startTour);

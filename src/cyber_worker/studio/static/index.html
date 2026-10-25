@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>宏设计 · 赛博打工人</title>
+  <title>流程设计 · 赛博打工人</title>
   <script>
     // 首帧前确定主题（默认深色），避免闪一下
     try {
@@ -30,25 +30,25 @@
   </header>
 
   <div class="subbar">
-    <div class="macro-picker" id="macro-picker">
+    <div class="flow-picker" id="flow-picker">
       <a class="mp-back" id="mp-back" href="/apps" title="回到这个应用的首页" aria-label="回到这个应用的首页"><i data-icon="chevron"></i></a>
       <div class="mp" id="mp">
-        <button class="mp-trigger" id="mp-trigger" aria-haspopup="listbox" aria-expanded="false" title="切换宏（Ctrl / ⌘ + K）">
+        <button class="mp-trigger" id="mp-trigger" aria-haspopup="listbox" aria-expanded="false" title="切换流程（Ctrl / ⌘ + K）">
           <span class="mp-avatar" id="mp-avatar"></span>
-          <span class="mp-text"><b id="mp-name">还没有宏</b><small id="mp-sub"></small></span>
+          <span class="mp-text"><b id="mp-name">还没有流程</b><small id="mp-sub"></small></span>
           <span id="mp-badge"></span>
           <i data-icon="chevron" class="mp-chev"></i>
         </button>
         <div class="mp-pop" id="mp-pop" hidden>
           <div class="mp-search">
             <i data-icon="search"></i>
-            <input id="mp-q" placeholder="搜索宏…" autocomplete="off" aria-label="搜索宏">
+            <input id="mp-q" placeholder="搜索流程…" autocomplete="off" aria-label="搜索流程">
             <kbd>Esc</kbd>
           </div>
-          <div class="mp-list" id="mp-list" role="listbox" aria-label="宏"></div>
+          <div class="mp-list" id="mp-list" role="listbox" aria-label="流程"></div>
           <div class="mp-foot">
-            <button type="button" id="mp-new"><i data-icon="plus"></i>新建宏</button>
-            <button type="button" id="mp-import" title="选择 .cwpack 文件；也可以直接把文件拖进页面"><i data-icon="upload"></i>导入平台包</button>
+            <button type="button" id="mp-new"><i data-icon="plus"></i>新建流程</button>
+            <button type="button" id="mp-import" title="选择 .cwpack 文件；也可以直接把文件拖进页面"><i data-icon="upload"></i>导入应用包</button>
           </div>
           <input type="file" id="pack-file" accept=".cwpack" hidden>
         </div>
@@ -132,7 +132,7 @@
         <span class="muted frame-note" id="frame-note"></span>
         <span class="coord" id="coord"></span>
         <div class="split" id="capture-group">
-          <button class="btn sm" id="btn-capture" title="截一张窗口现在的样子（把目标窗口调到宏的尺寸再截）"><i data-icon="camera"></i>截图</button>
+          <button class="btn sm" id="btn-capture" title="截一张窗口现在的样子（把目标窗口调到流程的尺寸再截）"><i data-icon="camera"></i>截图</button>
           <button class="btn sm" id="btn-capture-menu" aria-label="截图选项"><i data-icon="chevron"></i></button>
           <div class="menu cap-menu" id="capture-menu" hidden>
             <button type="button" class="menu-row" id="cap-now">
@@ -170,12 +170,12 @@
     <section class="card panel" id="panel">
       <div class="tabs" role="tablist">
         <button data-tab="step" id="tab-step" class="on"><i data-icon="sliders"></i>步骤</button>
-        <button data-tab="macro" id="tab-macro"><i data-icon="page"></i>宏设置</button>
+        <button data-tab="flow" id="tab-flow"><i data-icon="page"></i>流程设置</button>
         <button data-tab="run" id="tab-run"><i data-icon="play"></i>运行</button>
       </div>
       <div class="scroller" style="flex:1">
         <div class="tab-body" id="pane-step"></div>
-        <div class="tab-body" id="pane-macro" hidden></div>
+        <div class="tab-body" id="pane-flow" hidden></div>
         <div class="tab-body" id="pane-run" hidden>
           <div class="fields" id="run-vars"></div>
           <div class="run-busy" id="run-busy" hidden>
@@ -198,7 +198,7 @@
   <dialog id="new-dialog">
     <form method="dialog" id="new-form">
       <div class="dialog-head">
-        <h3>新建宏</h3>
+        <h3>新建流程</h3>
         <p>告诉我要操作哪个窗口，其余的都会自动识别。</p>
       </div>
       <div class="dialog-body">
@@ -215,9 +215,9 @@
         <details class="advanced" id="nf-advanced">
           <summary>自定义名称、尺寸…</summary>
           <div class="fields">
-            <label for="nf-name">宏名</label>
+            <label for="nf-name">流程名</label>
             <input type="text" class="input" id="nf-name" placeholder="自动：用窗口标题">
-            <label for="nf-platform">平台</label>
+            <label for="nf-platform">应用</label>
             <input type="text" class="input" id="nf-platform" placeholder="自动">
             <label for="nf-title">窗口标题</label>
             <input type="text" class="input" id="nf-title" placeholder="自动">
@@ -240,7 +240,7 @@
   </dialog>
 
   <div class="drop-overlay" id="drop-overlay" hidden>
-    <div><i data-icon="upload"></i>松开即可导入平台包</div>
+    <div><i data-icon="upload"></i>松开即可导入应用包</div>
   </div>
 
   <!-- 步骤的右键菜单（也可以点一行上的 ⋯）和它往右弹出的类型列表 -->

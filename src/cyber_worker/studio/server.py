@@ -58,7 +58,8 @@ def create_app(app: App, *, run_idle_sec: float | None = None) -> FastAPI:
     api.state.studio = Studio(app, run_idle_sec=studio_cfg.run_idle_sec if run_idle_sec is None else run_idle_sec,
                               record_delays=studio_cfg.record_delays, record_append=studio_cfg.record_append)
     app.prune_audit(date.today())  # 保留期以前的审计记录和截图
-    api.state.studio.collect_garbage()  # 宏目录里没人用的旧图（重新录制、换画面留下的，过了几天撤销也用不上了）
+    api.state.studio.migrate_layout()  # 以前的 templates/ 挪成 flows/
+    api.state.studio.collect_garbage()  # 流程目录里没人用的旧图（重新录制、换画面留下的，过了几天撤销也用不上了）
     hotkeys.bind(api.state.studio)  # 全局快捷键：配置的键被占用时自动换一个，界面上会提示
 
     for r in (apps.router, edit.router, record.router, run.router, preview.router, audit.router, hotkeys.router,
