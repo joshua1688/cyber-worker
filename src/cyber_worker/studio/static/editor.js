@@ -180,17 +180,11 @@ async function showFrame() {
   });
   renderWinSeg();
   $("#canvas-empty").innerHTML = idle ? `延迟：等 ${escapeHtml(String(sel.seconds))} 秒，不操作窗口，没有画面`
-    : S.win ? `「${escapeHtml(windowLabel(S.win))}」还没有画面<br>打开这个窗口，再点右上角的相机「截取当前窗口」`
-    : "还没有画面<br>点右上角的相机「截取当前窗口」";
+    : `「${escapeHtml(windowLabel(S.win))}」还没有画面<br>打开这个窗口，再点右上角的「截图」`;
   const shot = S.frame === "reference" && f && f === stepShot();
   $("#frame-note").textContent = shot ? `第 ${actionNo(S.script.steps, S.selected)} 步录制时的画面`
     : sel?.action === "wait_page" && f ? `等待页面「${sel.page}」：高亮的是它的锚点`
     : S.frame === "reference" && f ? `${windowLabel(S.win)}录制时的画面` : "";
-  const cap = S.frame === "reference" && f
-    ? (shot ? "用现在的窗口换掉这一步的录制画面（录错了时用；可撤销）" : "用现在的窗口换掉这张录制画面（录错了时用；可撤销）")
-    : "截取当前窗口（把目标窗口调到宏的尺寸再截）";
-  $("#btn-capture").title = cap;
-  $("#btn-capture").setAttribute("aria-label", cap);
   $("#canvas-empty").hidden = !!f;
   $("#canvas").hidden = !f;
   if (f?.url !== S.shownUrl) {  // 同一张图不重新加载（连着几步共用一张画面时）
@@ -406,7 +400,7 @@ function render() {
   $("#btn-add").disabled = !has || busy;
   $("#btn-record").disabled = picking;
   $("#btn-record-menu").disabled = !has || busy;
-  $("#btn-capture").disabled = $("#btn-anchor-mode").disabled = !has || busy;
+  $("#btn-capture").disabled = $("#btn-capture-menu").disabled = $("#btn-anchor-mode").disabled = !has || busy;
   $("#btn-undo").disabled = !S.undo.length || busy;
   $("#btn-redo").disabled = !S.redo.length || busy;
   $("#btn-delete").disabled = !has || (!S.checked.size && S.selected < 0) || busy;
@@ -446,7 +440,7 @@ function numRanges(nums) {
 }
 
 function windowLabel(key) {
-  if (!key) return "主窗口";
+  if (!key) return S.script?.window.title || S.script?.window.app || "主窗口";
   const w = S.script?.windows?.[key];
   return w ? (w.title || w.app) : key;
 }
@@ -817,7 +811,7 @@ function renderMacroPane() {
     </div>
     <div class="section-title" style="margin-top:22px">${icon("scan")}页面锚点</div>
     ${anchors ? `<div class="anchors">${anchors}</div>`
-      : `<div class="callout">${icon("info")}<span>还没有锚点。让目标窗口停在要校验的页面，点画面右上角的相机截一张，再点旁边的「框选锚点」。</span></div>`}
+      : `<div class="callout">${icon("info")}<span>还没有锚点。让目标窗口停在要校验的页面，点画面右上角的「截图」，再点旁边的「框锚点」。</span></div>`}
     <div class="danger-zone">
       <span><b>删除这个宏</b><small>连同它的锚点、目标图和截图一起删除，不能恢复</small></span>
       <button type="button" class="btn danger-ghost sm" id="btn-delete-macro">${icon("trash")}删除</button>
@@ -1306,10 +1300,35 @@ $("#win-seg").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-win]");
   if (b) setWin(b.dataset.win);
 });
-$("#btn-capture").addEventListener("click", async () => {
+$("#btn-capture").addEventListener("click", () => capture(false));
+// 截图旁的 ▾：截一张 / 用现在的样子换掉录制画面（录错了时用，只在「录制画面」上能点）
+$("#btn-capture-menu").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const menu = $("#capture-menu");
+  menu.hidden = !menu.hidden;
+  if (menu.hidden) return;
+  const can = S.frame === "reference" && !!frameOf("reference");
+  $("#cap-replace").disabled = !can;
+  $("#cap-replace-hint").textContent = can
+    ? (stepShot() ? `换掉第 ${actionNo(S.script.steps, S.selected)} 步录制时的画面。先把窗口摆成这一步之前的样子；可撤销`
+      : "录制时截错了才用：先把窗口摆成这一步之前的样子。可撤销")
+    : "先切到「录制画面」，再选这一项";
+});
+$("#cap-now").addEventListener("click", () => {
+  $("#capture-menu").hidden = true;
+  capture(false);
+});
+$("#cap-replace").addEventListener("click", () => {
+  $("#capture-menu").hidden = true;
+  capture(true);
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#capture-group")) $("#capture-menu").hidden = true;
+});
+
+// 截一张窗口现在的样子。replace：用它换掉画布上那张录制画面（录错了的时候），否则只更新「当前画面」并切过去
+async function capture(replace) {
   if (!(await ensureSaved())) return;
-  // 停在「录制画面」上截：用现在的窗口换掉画布上那张录制画面（录错了的时候）；停在别的画面上截就只更新「当前画面」
-  const replace = S.frame === "reference" && !!frameOf("reference");
   const params = new URLSearchParams();
   if (S.win) params.set("win", S.win);
   if (replace) {
@@ -1330,10 +1349,10 @@ $("#btn-capture").addEventListener("click", async () => {
   await showFrame();
   render();
   const ids = d.replaced_steps || [];
-  toast(!replace ? "已截取当前窗口"
+  toast(!replace ? "已截图，画面切到「当前画面」"
     : ids.length ? `已更新第 ${numRanges(ids.map((id) => actionNo(S.script.steps, S.script.steps.findIndex((s) => s.id === id))))} 步的录制画面（Ctrl+Z 换回原来的）`
     : `已更新${windowLabel(S.win)}的录制画面（Ctrl+Z 换回原来的）`);
-});
+}
 $("#btn-anchor-mode").addEventListener("click", () => setAnchorMode(!S.anchorMode || S.regionFor !== "anchor"));
 function setAnchorMode(on, purpose = "anchor") {
   S.anchorMode = on;
@@ -1856,6 +1875,7 @@ connectEvents((ev) => {
       toast(text, !good);
       $("#run-log").insertAdjacentHTML("beforeend",
         `<li class="summary-row"><span class="st ${good ? "ok" : "failed"}">${escapeHtml(text)}</span></li>`);
+      pickUpLearnedLooks();
     }
     render();
   } else if (ev.type === "run_entry" && ev.script_id === S.id) {
@@ -1877,6 +1897,29 @@ connectEvents((ev) => {
 // 页面旧了也不自动刷新的时候：有没保存的修改、能撤销的历史，或正在录制 / 执行 / 框选
 Build.canReload = () => !S.dirty && !S.undo.length && !S.redo.length && !S.recording && !S.running && !S.anchorMode;
 Build.beforeReload = () => ensureSaved();
+
+// 执行时可能自动记住了按钮的新样子（写进了宏文件的 target.alt）：页面上的宏跟着更新，
+// 不然下次自动保存会用页面上的旧内容把它盖掉。有没保存的修改就只把 alt 合进来，修改照样留着
+async function pickUpLearnedLooks() {
+  const id = S.id;
+  const d = await api("GET", `/api/scripts/${id}/detail`).catch(() => null);
+  if (!d || id !== S.id) return;
+  const fresh = new Map(d.script.steps.map((s) => [s.id, s.target]));
+  const changed = S.script.steps.filter((s) => {
+    const t = fresh.get(s.id);
+    return s.target && t && t.image === s.target.image && t.alt !== s.target.alt;
+  });
+  if (!changed.length) return;
+  if (!S.dirty) {
+    const keep = S.selected;
+    applyDetail(d);
+    S.selected = keep < S.script.steps.length ? keep : -1;
+    render();
+  } else {
+    changed.forEach((s) => (s.target.alt = fresh.get(s.id).alt));
+    scheduleSave();
+  }
+}
 
 // 连上（包括 studio 重启后自动重连）：断线期间的事件都丢了，跟服务端对一次，屏幕上的宏以文件为准
 async function onReconnect() {
@@ -1913,10 +1956,14 @@ function startTour() {
     { el: "#run-bar", title: "录制 → 空跑 → 执行",
       body: `点「录制」或在任何窗口里按 ${rec}，到目标窗口里像平时一样操作，再按一下就停止。录完点「空跑」（或在任何窗口里按 <kbd>${escapeHtml(prettyKey(S.dryHotkey) || "Alt+T")}</kbd>）完整走一遍但不发送；确认没问题再点「执行」，要点两次确认。执行会真的发送，所以没有全局快捷键。` },
     { el: "#steps-card", title: "步骤列表",
-      body: "点一行编辑，拖动排序，勾选后批量删除。「＋ 添加」可以手动插一步，比如「等待页面」：等某个页面出来再往下走，比固定延迟靠谱。黄色 ⚠ 表示这一步还缺东西，鼠标放上去能看到原因。" },
+      body: "点一行编辑，拖动排序，勾选后批量删除。「＋ 添加」可以手动插一步，比如「等待页面」：等某个页面出来再往下走，比固定延迟靠谱。黄色 ⚠ 表示这一步还缺东西：点开这一步，右边会说明原因，大多一点按钮就能修好。" },
     { el: "#canvas-area", title: "画面：每一步录制时的样子",
-      body: "选中哪一步，就显示那一步动作之前的画面，编号标记是点击位置，可以直接拖。蓝色虚线框是页面锚点，程序靠它认出「现在在哪个页面」；橙色框是按图找的目标图，界面变了也能找到它再点。右上角的相机截取当前窗口，旁边的按钮框选锚点。",
+      body: "选中哪一步，就显示那一步动作之前的画面，编号标记是点击位置，可以直接拖。蓝色虚线框是页面锚点，程序靠它认出「现在在哪个页面」；橙色框是按图找的目标图，界面变了也能找到它再点。",
       before: () => setTab("step") },
+    { el: "#stage-card .card-head", title: "画面上方这一排",
+      body: "「录制画面」是录制时的样子，「当前画面」是窗口现在的样子，执行后点运行记录还会多出「运行截图」。"
+        + "宏用到好几个窗口时，旁边可以切换显示哪个窗口。右边「截图」截一张窗口现在的样子；「框锚点」在画面上拖一块不会变的区域，"
+        + "程序靠它认出页面。录制画面截错了，点「截图」旁边的 ▾。" },
     { el: "#panel", title: "参数、宏设置、运行日志",
       body: "输入和发送步骤执行前会核对「所在页面」，对不上就停下，宁可不发也不发错。说明藏在 ⓘ 里，不常用的选项在「更多」里。空跑 / 执行的进度和每一步截图在「运行」里。",
       before: () => { if (S.script?.steps.length && S.selected < 0) select(0); setTab("step"); } },
@@ -1928,7 +1975,6 @@ function startTour() {
       body: "每一步都留了截图和记录；审计页按每次运行分组，失败和可疑的排在前面，按 1 / 2 标记就行。" },
   ], "cw.tour.editor", () => setTab(S.selected >= 0 ? "step" : S.tab));
 }
-      pickUpLearnedLooks();
 
 // 引导、空状态里显示的录制快捷键
 function recKbd() {
@@ -1951,29 +1997,6 @@ $("#btn-tour").addEventListener("click", startTour);
   const q = new URLSearchParams(location.search);
   await attempt(() => loadList(q.get("macro")));
   if (q.get("step") && S.script) {
-// 执行时可能自动记住了按钮的新样子（写进了宏文件的 target.alt）：页面上的宏跟着更新，
-// 不然下次自动保存会用页面上的旧内容把它盖掉。有没保存的修改就只把 alt 合进来，修改照样留着
-async function pickUpLearnedLooks() {
-  const id = S.id;
-  const d = await api("GET", `/api/scripts/${id}/detail`).catch(() => null);
-  if (!d || id !== S.id) return;
-  const fresh = new Map(d.script.steps.map((s) => [s.id, s.target]));
-  const changed = S.script.steps.filter((s) => {
-    const t = fresh.get(s.id);
-    return s.target && t && t.image === s.target.image && t.alt !== s.target.alt;
-  });
-  if (!changed.length) return;
-  if (!S.dirty) {
-    const keep = S.selected;
-    applyDetail(d);
-    S.selected = keep < S.script.steps.length ? keep : -1;
-    render();
-  } else {
-    changed.forEach((s) => (s.target.alt = fresh.get(s.id).alt));
-    scheduleSave();
-  }
-}
-
     const i = S.script.steps.findIndex((s) => s.id === q.get("step"));
     if (i >= 0) select(i);
   }

@@ -129,8 +129,21 @@
         <span class="grow"></span>
         <span class="muted frame-note" id="frame-note"></span>
         <span class="coord" id="coord"></span>
-        <button class="icon-btn" id="btn-capture" title="截取当前窗口（把目标窗口调到宏的尺寸再截）" aria-label="截取当前窗口"><i data-icon="camera"></i></button>
-        <button class="icon-btn" id="btn-anchor-mode" title="框选锚点：在画面上拖出一块这个页面独有的区域" aria-label="框选锚点"><i data-icon="scan"></i></button>
+        <div class="split" id="capture-group">
+          <button class="btn sm" id="btn-capture" title="截一张窗口现在的样子（把目标窗口调到宏的尺寸再截）"><i data-icon="camera"></i>截图</button>
+          <button class="btn sm" id="btn-capture-menu" aria-label="截图选项"><i data-icon="chevron"></i></button>
+          <div class="menu cap-menu" id="capture-menu" hidden>
+            <button type="button" class="menu-row" id="cap-now">
+              <span class="menu-ico"><i data-icon="camera"></i></span>
+              <span class="menu-text"><b>截一张现在的样子</b><small>画面切到「当前画面」，录制画面不动</small></span>
+            </button>
+            <button type="button" class="menu-row" id="cap-replace">
+              <span class="menu-ico"><i data-icon="image"></i></span>
+              <span class="menu-text"><b>用现在的样子换掉录制画面</b><small id="cap-replace-hint">录制时截错了才用：先把窗口摆成这一步之前的样子。可撤销</small></span>
+            </button>
+          </div>
+        </div>
+        <button class="btn sm" id="btn-anchor-mode" title="在画面上拖出一块这个页面独有、不会变的区域（标题、名字），程序靠它认出现在在哪个页面"><i data-icon="scan"></i>框锚点</button>
       </div>
       <div class="anchor-bar" id="anchor-bar" hidden>
         <i data-icon="scan"></i>
