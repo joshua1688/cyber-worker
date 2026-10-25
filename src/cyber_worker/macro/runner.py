@@ -37,6 +37,7 @@ from cyber_worker.macro.schema import (
     WaitPage,
     needs_page_check,
 )
+from cyber_worker.macro.anchors import learn_look
 from cyber_worker.macro.screenshot.storage import ScreenshotStorage, read_image
 from cyber_worker.macro.vision.fingerprint import PageBook, match_page
 
@@ -182,8 +183,9 @@ class Runner:
 
                 # 按图找：先找到目标再说（空跑也找，提前发现「找不到」）
                 where: Located | None = None
+                before = None  # 动作之前的画面：这一步把窗口关掉（点「关闭」、按 Esc）时，拿它当证据
                 if isinstance(step, (Click, Hover)) and step.finds_target:
-                    where, shot_path = self._find_target(step, geo, script, gate, targets)
+                    where, shot_path, before = self._find_target(step, geo, script, gate, targets)
                     if not where.found:
                         reason = (f"{step.id} 没找到要点的目标（等了 {step.target.timeout:g} 秒，"
                                   f"最像的地方得分 {where.score:.2f}）")
@@ -205,9 +207,11 @@ class Runner:
                 else:
                     self.sleep(step.delay_after)
                     shot = self._after_shot(geo, step)
+                    detail = _found_text(where) if where else ""
+                    if where is not None and self._learn(script, step, where, before, geo.scale):
+                        detail += f"，{LEARNED_NOTE}"
                     log(step.id, step.action, StepStatus.OK, screenshot=shot,
-                        expected_page=step.expected_page, page_score=page_score,
-                        detail=_found_text(where) if where else "")
+                        expected_page=step.expected_page, page_score=page_score, detail=detail)
                 done += 1
             except Cancelled:
                 log(step.id, step.action, StepStatus.CANCELLED, detail="急停")
@@ -221,6 +225,21 @@ class Runner:
                 return RunResult(run_id, RunStatus.FAILED, done, str(e))
 
         return RunResult(run_id, RunStatus.OK, done)
+
+    def _learn(self, script: Script, step, where: Located, frame, scale: float) -> bool:
+        """按图找到了、但得分偏低：自动记住目标现在的样子（见 anchors.learn_look）。
+        只在确实找到（过了门槛）、窗口里只有一处像它、这一步做成了的时候学，免得把认错的东西记下来。"""
+        t = step.target
+        if not (where.found and where.count == 1 and where.score < LEARN_BELOW) or frame is None or script.path is None:
+            return False
+        x, y = (t.x + where.dx) * scale, (t.y + where.dy) * scale
+        crop = frame[int(y):int(y + t.h * scale), int(x):int(x + t.w * scale)]
+        if crop.size == 0:
+            return False
+        try:
+            return learn_look(script.path, step.id, t.image, crop.copy(), scale) is not None
+        except Exception:  # noqa: BLE001 —— 记不下来不影响执行
+            return False
 
     def _after_shot(self, geo: WindowGeometry, step) -> str | None:
         """操作后截图留证。这一步本身就可能把窗口关掉（点 ✕、最小化），截不到不算失败。"""
@@ -283,18 +302,20 @@ class Runner:
         return True, "", path, m.score, round(waited, 1) if waited >= 0.05 else 0.0
 
     def _find_target(self, step: Click | Hover, geo: WindowGeometry, script: Script, gate: Gate, cache: dict):
-        """在窗口里找这一步的目标图；返回 (定位结果, 截图路径)。找不到时截图留给审计。"""
+        """在窗口里找这一步的目标图；返回 (定位结果, 截图路径, 最后一次截的画面)。找不到时截图留给审计。"""
         t = step.target
-        if t.image not in cache:
-            cache[t.image] = read_image(script.base_dir / t.image)
-        ref = cache[t.image]
+        images = [t.image, *(a for a in [t.alt] if a and (script.base_dir / a).exists())]  # 平时的样子丢了不影响
+        for image in images:
+            if image not in cache:
+                cache[image] = read_image(script.base_dir / image)
+        refs = [cache[image] for image in images]
         last: dict = {}
         hovered = False
 
         def attempt() -> bool:
             nonlocal hovered
             last["shot"] = self.io.capture(geo)
-            loc = last["loc"] = locate_click(step, ref, last["shot"], geo.scale)
+            loc = last["loc"] = locate_click(step, refs, last["shot"], geo.scale)
             if not loc.found and loc.near and not hovered:
                 # 目标图是录制时鼠标悬停在上面的样子（按钮带高亮底色），现在没悬停所以不像：
                 # 先把鼠标移到最像的那一处，等它亮起来再找。还不像就照样等、照样超时中止，不会点
@@ -306,7 +327,7 @@ class Runner:
         path = None
         if not last["loc"].found:
             path = str(self.storage.save(last["shot"], at=self.now(), step_id=step.id, action="find"))
-        return last["loc"], path
+        return last["loc"], path, last["shot"]
 
     def _perform(self, step, geo: WindowGeometry, script: Script, variables, gate: Gate,
                  where: Located | None = None) -> None:
@@ -354,6 +375,10 @@ class Runner:
         for _ in range(n if seconds > 0 else 0):
             check()
             self.sleep(seconds / n)
+
+
+LEARN_BELOW = 0.9  # 按图找的得分低于这个（但过了门槛）：按钮样子变了一点，自动记住新样子
+LEARNED_NOTE = "按钮样子变了，已自动记住新样子"
 
 
 def _found_text(where: Located) -> str:

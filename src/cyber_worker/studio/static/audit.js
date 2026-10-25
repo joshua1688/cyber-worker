@@ -77,6 +77,15 @@ function advise(e) {
   return null;
 }
 
+// 成功了、但按图找的得分离门槛很近（规则同 reviewer.TARGET_WEAK）：提前提醒，免得哪天突然找不到
+function weakTarget(e) {
+  const m = /按图找到目标.*（得分 ([\d.]+)）/.exec(e.detail || "");
+  if (e.status !== "ok" || !m || +m[1] >= 0.85 || /已自动记住新样子/.test(e.detail)) return null;
+  const no = stepNo(e) ? `第 ${stepNo(e)} 步` : "这一步";
+  return { edit: true, text: `${no}按图找到了，但得分只有 ${m[1]}（门槛 0.80），而且窗口里有好几处像它，没法自动记住新样子。`
+    + `点「去修改」，在右边「目标」旁点「重新框选」，框一块只有它才有的区域。` };
+}
+
 // ---------------- 数据 ----------------
 
 async function loadDays() {
@@ -204,7 +213,7 @@ function renderViewer() {
   const score = e.page_score == null ? "" : `，得分 ${e.page_score.toFixed(2)}`;
   const id = A.scripts[g.script];
   const fixStep = g.bad || g.top;
-  const advice = isBad(e) ? advise(e) : null;
+  const advice = isBad(e) ? advise(e) : weakTarget(e);
   v.innerHTML = `
     <div class="card-head viewer-head">
       <span class="pill ${tone(g)}">${status}</span>

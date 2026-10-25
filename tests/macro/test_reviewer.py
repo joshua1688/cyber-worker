@@ -41,3 +41,10 @@ def test_daily_report():
     assert r["success_rate"] == round(2 / 3, 3)  # 急停不计入分母
     assert r["top_failures"] == [{"script": "comment", "step_id": "s02", "status": "aborted", "count": 1}]
     assert r["suspicious_unreviewed"] == 1
+
+
+def test_weak_target_match_needs_a_look():
+    """按图找到了、但得分离门槛很近：进「待看」，下次可能就找不到了。"""
+    weak = {**e(1, "ok"), "detail": "按图找到目标，位置没变（得分 0.81）"}
+    strong = {**e(2, "ok"), "detail": "按图找到目标，位置偏了 +0, -320（得分 0.97）"}
+    assert suspicion(weak) >= 0.5 > suspicion(strong) == suspicion(e(3, "ok"))

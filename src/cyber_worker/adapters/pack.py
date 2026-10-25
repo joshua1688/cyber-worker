@@ -21,7 +21,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from cyber_worker.macro.schema import Click, Script
+from cyber_worker.macro.schema import Click, Hover, Script
 from cyber_worker.macro.vision.fingerprint import PageBook
 
 FORMAT = 1
@@ -190,7 +190,7 @@ def _check_file(name: str, content: bytes) -> None:
             script = Script.model_validate(raw or {})
             refs = [script.pages, script.reference, *(w.reference for w in script.windows.values())]
             refs += [s.shot for s in script.steps]
-            refs += [s.target.image for s in script.steps if isinstance(s, Click) and s.target]
+            refs += [img for s in script.steps if isinstance(s, (Click, Hover)) and s.target for img in s.target.images()]
         elif name.endswith(".pages.yaml"):
             book = PageBook.model_validate(raw or {})
             refs = [a.image for fp in [*book.pages.values(), *book.retired.values()] for a in fp.anchors]

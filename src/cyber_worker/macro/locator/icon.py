@@ -28,8 +28,13 @@ class Located:
 NEAR = 0.6
 
 
-def locate_click(step: Click | Hover, ref: np.ndarray, shot: np.ndarray, scale: float) -> Located:
-    """有好几处都像（几个一样的按钮）时，选离录制时位置最近的那个。"""
+def locate_click(step: Click | Hover, refs: list[np.ndarray], shot: np.ndarray, scale: float) -> Located:
+    """refs：目标的几种样子（目标图，以及平时没碰到它时的样子），哪张更像用哪张。
+    有好几处都像（几个一样的按钮）时，选离录制时位置最近的那个。"""
+    return max((_locate(step, ref, shot, scale) for ref in refs), key=lambda loc: (loc.found, loc.near, loc.score))
+
+
+def _locate(step: Click | Hover, ref: np.ndarray, shot: np.ndarray, scale: float) -> Located:
     t = step.target
     if t.scale != scale:
         f = scale / t.scale

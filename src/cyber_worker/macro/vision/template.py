@@ -75,3 +75,15 @@ def pick_target(frame: np.ndarray, x: float, y: float, scale: float, *, min_text
         if not others:
             return x0 / scale, y0 / scale, pw / scale, ph / scale
     return None
+
+
+def look_of(region: np.ndarray, target: np.ndarray) -> str:
+    """同一个位置截的两块图是什么关系：same = 看起来一样；other = 同一个东西换了样子（悬停、按下变了颜色）；
+    different = 已经不是同一个东西了（列表滚过、换了内容），或者尺寸对不上。"""
+    if region.shape != target.shape or region.size == 0:
+        return "different"
+    if np.abs(region.astype(np.int16) - target.astype(np.int16)).mean() < 3:
+        return "same"
+    if float(cv2.matchTemplate(region, target, cv2.TM_CCOEFF_NORMED)[0, 0]) >= 0.5:
+        return "other"
+    return "different"

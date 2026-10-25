@@ -24,7 +24,7 @@ from cyber_worker.macro.schema import MAIN, Click, Drag, Hover, Script, Scroll, 
 from cyber_worker.macro.screenshot.storage import read_image
 from cyber_worker.macro.vision.auto_anchor import pick_stable_region
 from cyber_worker.macro.vision.detect import frame_changed
-from cyber_worker.macro.vision.template import pick_target
+from cyber_worker.macro.vision.template import look_of, pick_target
 from cyber_worker.macro.vision.fingerprint import PageBook, match_page
 from cyber_worker.studio.routes.edit import studio
 from cyber_worker.studio.state import Recording, next_step_number
@@ -281,7 +281,7 @@ def _stop(st) -> dict:
             send_id = new[i].id
     # 认得出来的点击 / 悬停配上目标图：执行时按图找，界面变了也能点中、停对地方
     targets = 0
-    for s in new:
+    for i, s in enumerate(new):
         if isinstance(s, Click):
             found = rec.press_targets.get(rec.builder.press_of.get(s.id))
         elif isinstance(s, Hover):
@@ -291,6 +291,10 @@ def _stop(st) -> dict:
         if found is not None and s.target is None:
             scale, box, crop = found
             s.target = save_target_crop(path, s.id, crop, box, scale, keep_existing=bool(replaced))
+            normal = _normal_look(new, i, rec, box, scale, crop) if isinstance(s, Click) else None
+            if normal is not None:
+                s.target.alt = save_target_crop(path, f"{s.id}-normal", normal, box, scale,
+                                                keep_existing=bool(replaced)).image
             targets += 1
     _save_shots(path, new, rec, keep_existing=bool(replaced))
     script.steps = [*kept, *new]
@@ -395,6 +399,47 @@ def _step_frame(s, rec: Recording):
     if isinstance(s, (Click, Drag)):
         return rec.press_frames.get(rec.builder.press_of.get(s.id))
     return rec.step_frames.get(s.id)
+
+
+def _pointer_at(steps, j: int) -> tuple[float | None, float | None]:
+    """第 j 步的画面截下来那一刻鼠标大概在哪：点击、滚动、悬停在它自己的位置，拖动在起点；
+    输入、按键这类没有位置的，沿用前面最后一个有位置的步骤（拖动取终点）。"""
+    for k in range(j, -1, -1):
+        st = steps[k]
+        if isinstance(st, Drag):
+            return (st.x, st.y) if k == j else (st.x2, st.y2)
+        if isinstance(st, (Click, Scroll, Hover)) and st.x is not None:
+            return st.x, st.y
+    return None, None
+
+
+def _normal_look(steps, i: int, rec: Recording, box, scale: float, crop):
+    """点击的目标图截在按下那一刻：按钮这时多半带着悬停 / 按下的颜色，平时的样子不一样（「关闭」按钮平时只有 0.78 分，
+    要靠先把鼠标移过去才找得到）。从这一步之前、同一个窗口、鼠标不在它上面时的画面里截同一块，当作它平时的样子。
+    那一块和目标图看起来一样（按钮没有悬停效果）就不用另存，返回 None；内容都变了（列表滚过了）的画面不算。"""
+    key = steps[i].win or MAIN
+    x, y, w, h = box
+    pad = 8
+
+    def pointer_on(j: int) -> bool:
+        px, py = _pointer_at(steps, j)
+        return px is not None and x - pad <= px <= x + w + pad and y - pad <= py <= y + h + pad
+
+    frames = [_step_frame(steps[j], rec) for j in range(i - 1, -1, -1)
+              if (steps[j].win or MAIN) == key and not pointer_on(j)]
+    if (first := _first_frames(rec.frames).get(key)) is not None:  # 鼠标在哪不知道，放最后
+        frames.append((key, *first))
+    for frame in frames:
+        if frame is None or frame[1] != scale:
+            continue
+        img = frame[2]
+        region = img[int(y * scale):int(y * scale) + crop.shape[0], int(x * scale):int(x * scale) + crop.shape[1]]
+        look = look_of(region, crop)
+        if look == "same":
+            return None  # 平时也长这样
+        if look == "other":
+            return region.copy()
+    return None
 
 
 def _first_step_frames(steps, rec: Recording) -> dict[str, tuple[float, object]]:

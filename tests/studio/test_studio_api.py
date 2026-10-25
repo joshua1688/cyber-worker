@@ -1315,3 +1315,62 @@ def test_audit_screenshots_are_served_as_webp(client):
     r = client.get(url)
     assert ".webp" in url and r.status_code == 200 and r.headers["content-type"] == "image/webp"
     assert client.get("/api/file?path=state.db").status_code == 400
+
+
+def _macro_with_targets(client):
+    """一个草稿宏：一次点击、一次悬停，都按图找（目标是画面上 (50, 40) 那块纹理）。"""
+    d = new_script(client)
+    sid = d["id"]
+    script = d["script"]
+    script["steps"] = [{"id": "s01", "action": "click", "x": 70, "y": 55},
+                       {"id": "s02", "action": "hover", "x": 70, "y": 55, "seconds": 1}]
+    client.put(f"/api/scripts/{sid}/detail", json=script)
+    client.post(f"/api/scripts/{sid}/capture")
+    for step in ("s01", "s02"):
+        r = client.post(f"/api/scripts/{sid}/targets", json={"step_id": step, "x": 50, "y": 40, "w": 40, "h": 30})
+        assert r.status_code == 200, r.text
+    return sid
+
+
+def test_moving_a_macro_keeps_hover_targets_and_second_looks(client, tmp_path):
+    """宏改了文件名搬进宏库（同名的已经有了 → comment-2）：点击、悬停的目标图和另一种样子，路径都跟着改。"""
+    first = new_script(client)
+    client.post(f"/api/scripts/{first['id']}/commit")
+    sid = _macro_with_targets(client)
+    from cyber_worker.macro.anchors import learn_look
+    from helpers import pattern as tex
+
+    draft = client.app.state.studio.script_path(sid)
+    image = f"{draft.stem}.targets/s01.png"
+    assert learn_look(draft, "s01", image, tex(40, 30, seed=5), 1.0)
+    saved = client.post(f"/api/scripts/{sid}/commit").json()
+    lib = tmp_path / "user_data/platforms/demo/templates"
+    click, hover = saved["script"]["steps"]
+    for path in (click["target"]["image"], click["target"]["alt"], hover["target"]["image"]):
+        assert path.startswith("comment-2.targets/") and (lib / path).exists(), path
+    assert saved["targets"]["s02"]  # 悬停的目标图在界面上也看得到
+
+
+def test_recording_keeps_the_normal_look_of_a_clicked_button():
+    """录制时目标图截在按下那一刻（按钮带着按下的颜色）：从前面鼠标不在它上面的画面里截同一块，当作平时的样子。"""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from cyber_worker.macro.schema import Click, TypeText
+    from cyber_worker.studio.routes.record import _normal_look
+
+    normal = screen_with(pattern(40, 30, seed=7), at=(300, 200))
+    pressed = normal.copy()
+    pressed[200:230, 300:314] = 200  # 按下：左边一截盖上高亮
+    steps = [Click(id="s01", x=60, y=50), TypeText(id="s02", text="hi"), Click(id="s03", x=320, y=215)]
+    rec = SimpleNamespace(
+        frames=[], step_frames={"s02": ("main", 1.0, normal)},
+        press_frames={1: ("main", 1.0, normal), 2: ("main", 1.0, pressed)},
+        builder=SimpleNamespace(press_of={"s01": 1, "s03": 2}))
+    box = (300, 200, 40, 30)
+    crop = pressed[200:230, 300:340]
+    got = _normal_look(steps, 2, rec, box, 1.0, crop)
+    assert got is not None and np.array_equal(got, normal[200:230, 300:340])
+    # 按钮平时也长这样（没有悬停效果）：不用另存
+    assert _normal_look(steps, 2, rec, box, 1.0, normal[200:230, 300:340].copy()) is None

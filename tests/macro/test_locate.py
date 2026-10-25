@@ -203,3 +203,54 @@ def test_recorder_reports_presses():
     b.on_click(300, 200, "left")
     assert [(p[0], p[3], p[4]) for p in presses] == [(1, 70, 55), (2, 200, 150)]
     assert b.press_of == {"s01": 1, "s02": 2}
+
+
+def test_target_with_two_looks_matches_the_closer_one():
+    """目标图截在按下那一刻（按钮变了色），平时的样子另存一张：两张都比，取更像的。"""
+    from cyber_worker.macro.locator.icon import locate_click
+    from cyber_worker.macro.schema import Click, Target
+    from cyber_worker.macro.vision.template import look_of
+
+    normal = ICON
+    pressed = ICON.copy()
+    pressed[:, :14] = 200  # 按下去左边一截盖上了高亮底色（整体变暗变亮不影响得分，局部变了才会）
+    screen = screen_with(normal, at=(100, 80))
+    step = Click(id="s01", x=120, y=95, target=Target(image="t.png", x=100, y=80, w=40, h=30))
+    only_pressed = locate_click(step, [pressed], screen, 1.0)
+    both = locate_click(step, [pressed, normal], screen, 1.0)
+    assert only_pressed.score < 0.9  # 只认按下时的样子：勉强甚至认不出来
+    assert both.found and both.score > 0.99
+    assert (both.x, both.y) == (120, 95)
+    assert look_of(normal, normal) == "same" and look_of(pressed, normal) == "other"
+    assert look_of(pattern(40, 30, seed=99), normal) == "different"
+
+
+def test_run_remembers_a_changed_look_by_itself(env, tmp_path):
+    """按钮样子变了一点（得分 0.84：找到了，但偏低）：执行时自动记住新样子，下次两种都认，满分找到；
+    录制时的目标图不动。不用用户手动去更新。"""
+    changed = ICON.copy()
+    changed[:, :5] = 200
+    io, audit, runner, _ = env(lambda: screen_with(changed, at=(50, 40)))
+    s = click_script(tmp_path)
+    s.dump(tmp_path / "m.yaml")
+    assert runner.run(s).status is RunStatus.OK
+    assert "已自动记住新样子" in audit.entries[-1].detail
+    saved = Script.load(tmp_path / "m.yaml").steps[0].target
+    assert saved.image == "m.targets/s01.png" and saved.alt and (tmp_path / saved.alt).exists()
+
+    again = Script.load(tmp_path / "m.yaml")
+    runner.run(again)
+    assert "得分 1.00" in audit.entries[-1].detail and "已自动记住" not in audit.entries[-1].detail
+
+
+def test_run_does_not_learn_when_several_places_look_alike(env, tmp_path):
+    """窗口里有两处都像它：分不清是哪个，不学（免得把认错的东西记下来）。"""
+    changed = ICON.copy()
+    changed[:, :5] = 200
+    screen = screen_with(changed, at=(50, 40))
+    screen[200:230, 250:290] = changed
+    io, audit, runner, _ = env(lambda: screen)
+    s = click_script(tmp_path)
+    s.dump(tmp_path / "m.yaml")
+    runner.run(s)
+    assert Script.load(tmp_path / "m.yaml").steps[0].target.alt is None

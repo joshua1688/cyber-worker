@@ -341,7 +341,8 @@ def collect_garbage(path: Path, *, now: float | None = None, min_age: float = GA
     script = Script.load(path)
     base = path.parent
     refs = {script.reference, *(w.reference for w in script.windows.values()), *(s.shot for s in script.steps)}
-    refs |= {s.target.image for s in script.steps if isinstance(s, (Click, Hover)) and s.target is not None}
+    refs |= {img for s in script.steps if isinstance(s, (Click, Hover)) and s.target is not None
+             for img in s.target.images()}
     _, pages, anchors = _own_files(path, script)
     dirs = [base / targets_dir(path), base / refs_dir(path), base / shots_dir(path)]
     if pages is not None and pages.exists():
@@ -418,9 +419,11 @@ def relocate_macro(src: Path, dst_dir: Path, stem: str) -> Path:
     old_t, new_t = targets_dir(src), targets_dir(dst)
     if (src.parent / old_t).exists():
         shutil.move(src.parent / old_t, dst_dir / new_t)
-    for step in script.steps:
-        if isinstance(step, Click) and step.target and step.target.image.startswith(old_t + "/"):
-            step.target.image = new_t + step.target.image[len(old_t):]
+    for step in script.steps:  # 点击和悬停都可能有目标图，两种样子都要改路径
+        t = step.target if isinstance(step, (Click, Hover)) else None
+        if t is not None:
+            t.image = new_t + t.image[len(old_t):] if t.image.startswith(old_t + "/") else t.image
+            t.alt = new_t + t.alt[len(old_t):] if t.alt and t.alt.startswith(old_t + "/") else t.alt
     script.dump(dst)
     src.unlink()
     return dst

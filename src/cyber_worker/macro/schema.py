@@ -52,6 +52,9 @@ class Target(BaseModel):
     """
 
     image: str  # 目标图，相对脚本文件（<宏名>.targets/<步骤>.png）
+    # 同一个目标的另一种样子：录制时目标图截在按下那一刻，按钮带着悬停 / 按下的颜色，平时的样子另存一张。
+    # 执行时两张都比，取更像的；没有就只比 image
+    alt: str | None = None
     x: float  # 录制时目标所在的区域（窗口内，点）
     y: float
     w: float
@@ -59,6 +62,9 @@ class Target(BaseModel):
     scale: float = 1.0  # 目标图截取时的缩放倍率
     threshold: float = Field(0.8, ge=0.5, le=1.0)
     timeout: float = Field(5.0, ge=0, le=120)  # 找不到时最多等几秒
+
+    def images(self) -> list[str]:
+        return [self.image, *([self.alt] if self.alt else [])]
 
 
 class Click(_StepBase):
@@ -207,6 +213,11 @@ class Script(BaseModel):
         if key not in self.windows:
             raise ValueError(f"宏里没有窗口 {key}")
         return self.windows[key]
+
+    @property
+    def path(self) -> Path | None:
+        """从哪个文件读进来的（没从文件读的是 None）。"""
+        return self._source
 
     @property
     def base_dir(self) -> Path:

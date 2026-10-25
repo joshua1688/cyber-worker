@@ -6,16 +6,26 @@
 - ok 但页面得分不够高（< 0.95）      0.4–0.7（得分越低越可疑）
 - ok 且没有做页面校验               0.2（点击、滚动这类没声明页面的步骤，最容易「点歪了还以为成功」）
 - ok 且页面得分很高                 0.05
+- ok 但按图找的得分离门槛很近（< 0.85）、又没能自动记住新样子  至少 0.5（下次可能就找不到）
 - skipped 空跑跳过 / cancelled 急停  0.0（你自己知道发生了什么）
 """
 
 from __future__ import annotations
 
 import random
+import re
 from collections.abc import Iterable, Mapping
 
 HIGH_CONFIDENCE = 0.95  # 页面得分高于这个值视为确定在正确页面
 LOW_PASS = 0.85  # 锚点默认阈值
+TARGET_WEAK = 0.85  # 按图找的得分低于这个（目标图默认门槛 0.8）：找是找到了，但差一点就找不到
+_TARGET_SCORE = re.compile(r"按图找到目标.*（得分 ([\d.]+)）")  # runner._found_text 写的
+
+
+def target_score(entry: Mapping) -> float | None:
+    """这一步按图找到目标时的得分；不是按图找的步骤返回 None。"""
+    m = _TARGET_SCORE.search(entry.get("detail") or "")
+    return float(m.group(1)) if m else None
 
 
 def suspicion(entry: Mapping) -> float:
@@ -26,6 +36,13 @@ def suspicion(entry: Mapping) -> float:
         return 0.9
     if status in ("skipped", "cancelled"):
         return 0.0
+    page = _page_suspicion(entry)
+    target = target_score(entry)
+    learned = "已自动记住新样子" in (entry.get("detail") or "")  # runner.LEARNED_NOTE：已经自己修好了
+    return max(page, 0.5) if target is not None and target < TARGET_WEAK and not learned else page
+
+
+def _page_suspicion(entry: Mapping) -> float:
     score = entry.get("page_score")
     if score is None:
         return 0.2

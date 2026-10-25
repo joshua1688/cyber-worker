@@ -1409,7 +1409,8 @@ function locateField(s) {
   let html = field("定位", seg, help);
   if (on) {
     html += field("目标", `<span class="target-thumb">${url ? `<img src="${url}" alt="目标图">` : ""}</span>
-        <button type="button" class="btn sm" data-reframe>${icon("scan")}重新框选</button>`)
+        <button type="button" class="btn sm" data-reframe>${icon("scan")}重新框选</button>`,
+        "按钮样子变了一点时，执行中会自动记住它的新样子；真的找不到了才需要「重新框选」")
       + field("最多等", `${num("target.timeout", s.target.timeout ?? 5, 1)}<span class="muted">秒，找不到就中止</span>`);
   } else if (!has) {
     html += field("", `<button type="button" class="btn sm" data-reframe>${icon("scan")}在画面上框一块目标</button>`);
@@ -1927,6 +1928,7 @@ function startTour() {
       body: "每一步都留了截图和记录；审计页按每次运行分组，失败和可疑的排在前面，按 1 / 2 标记就行。" },
   ], "cw.tour.editor", () => setTab(S.selected >= 0 ? "step" : S.tab));
 }
+      pickUpLearnedLooks();
 
 // 引导、空状态里显示的录制快捷键
 function recKbd() {
@@ -1949,6 +1951,29 @@ $("#btn-tour").addEventListener("click", startTour);
   const q = new URLSearchParams(location.search);
   await attempt(() => loadList(q.get("macro")));
   if (q.get("step") && S.script) {
+// 执行时可能自动记住了按钮的新样子（写进了宏文件的 target.alt）：页面上的宏跟着更新，
+// 不然下次自动保存会用页面上的旧内容把它盖掉。有没保存的修改就只把 alt 合进来，修改照样留着
+async function pickUpLearnedLooks() {
+  const id = S.id;
+  const d = await api("GET", `/api/scripts/${id}/detail`).catch(() => null);
+  if (!d || id !== S.id) return;
+  const fresh = new Map(d.script.steps.map((s) => [s.id, s.target]));
+  const changed = S.script.steps.filter((s) => {
+    const t = fresh.get(s.id);
+    return s.target && t && t.image === s.target.image && t.alt !== s.target.alt;
+  });
+  if (!changed.length) return;
+  if (!S.dirty) {
+    const keep = S.selected;
+    applyDetail(d);
+    S.selected = keep < S.script.steps.length ? keep : -1;
+    render();
+  } else {
+    changed.forEach((s) => (s.target.alt = fresh.get(s.id).alt));
+    scheduleSave();
+  }
+}
+
     const i = S.script.steps.findIndex((s) => s.id === q.get("step"));
     if (i >= 0) select(i);
   }

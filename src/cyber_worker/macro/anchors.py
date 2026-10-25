@@ -241,6 +241,21 @@ def save_target(script_path: Path, step_id: str, frame: np.ndarray, box: tuple[f
     return save_target_crop(script_path, step_id, crop, box, s)
 
 
+def learn_look(script_path: Path, step_id: str, image: str, crop: np.ndarray, scale: float) -> str | None:
+    """执行时按图找到了、但得分偏低（按钮样子变了一点）：把这次找到的那块存成目标的另一种样子（Target.alt），
+    下次两种都认。录制时的目标图（image）永远不动；alt 用新的换掉旧的，不会越积越多。
+    从文件重新读宏：执行期间宏可能被改过（重新录制、重新框选），目标图已经不是 image 了就不算数。返回新的 alt 路径。"""
+    script = Script.load(script_path)
+    step = next((s for s in script.steps if s.id == step_id), None)
+    t = getattr(step, "target", None)
+    if t is None or t.image != image or t.scale != scale:
+        return None
+    t.alt = save_target_crop(script_path, f"{step_id}-seen", crop, (t.x, t.y, t.w, t.h), scale,
+                             keep_existing=True).image
+    script.dump(script_path)
+    return t.alt
+
+
 def save_target_crop(script_path: Path, step_id: str, crop: np.ndarray, box: tuple[float, float, float, float],
                      scale: float, *, keep_existing: bool = False) -> Target:
     """已经截好的目标图（录制时在后台线程里截的）直接存。
